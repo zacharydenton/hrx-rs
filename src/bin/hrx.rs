@@ -1,5 +1,7 @@
 //! Native bundle provisioning and Loom compilation CLI.
 use hrx::{Error, Result};
+#[path = "hrx/pack.rs"]
+mod pack;
 fn main() -> std::process::ExitCode {
     if let Err(e) = run() {
         eprintln!("{e}");
@@ -10,6 +12,14 @@ fn main() -> std::process::ExitCode {
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("pack") if args.len() == 5 => {
+            pack::pack(
+                std::path::Path::new(&args[1]),
+                std::path::Path::new(&args[2]),
+                &args[3],
+                &args[4],
+            )?;
+        }
         Some("prepare") => {
             let manifest = hrx::bundle::default_manifest()?;
             let root = hrx::bundle::cache_root()?.join("runtime");
@@ -48,7 +58,7 @@ fn run() -> Result<()> {
         }
         _ => {
             return Err(Error::Message(
-                "usage: hrx prepare [bundle.tar.gz] | info | compile SOURCE SYMBOL [key=value ...]"
+                "usage: hrx pack RUNTIME OUTPUT URL REVISION | prepare [bundle.tar.gz] | info | compile SOURCE SYMBOL [key=value ...]"
                     .into(),
             ));
         }
