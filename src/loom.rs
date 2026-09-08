@@ -12,12 +12,15 @@ use std::{
 };
 
 #[derive(Clone, Debug)]
+/// A resolved compiler executable and pinned content identity.
 pub struct Compiler {
     executable: PathBuf,
     identity: String,
 }
 impl Compiler {
     /// Resolve an explicit compiler, LOOM_COMPILE, or the pinned native bundle.
+    /// Reads and hashes the entire compiler to pin its identity. Reuse this object
+    /// across requests; compile also checks the binary before and after execution.
     pub fn resolve(override_path: Option<&Path>) -> Result<Self> {
         let path = if let Some(path) = override_path {
             resolve_executable(path)?
@@ -32,12 +35,15 @@ impl Compiler {
             identity,
         })
     }
+    /// The canonical compiler executable path.
     pub fn path(&self) -> &Path {
         &self.executable
     }
+    /// The compiler's pinned SHA-256 identity.
     pub fn identity(&self) -> &str {
         &self.identity
     }
+    /// Compute a cache key from this compiler and a validated request.
     pub fn key(&self, request: &Request<'_>) -> Result<String> {
         request.validate()?;
         // JSON arrays preserve boundaries (newline/equals in strings cannot
@@ -50,8 +56,7 @@ impl Compiler {
             request.backend,
             request.target,
             &request.config,
-        ))
-        .map_err(|e| Error(e.to_string()))?;
+        ))?;
         Ok(bundle::digest(&identity))
     }
     /// Return a verified artifact, compiling once under a per-key process lock.
@@ -63,13 +68,15 @@ impl Compiler {
         if verified(&directory) {
             return Ok(output);
         }
-        fs::create_dir_all(cache)?;
+        bundle::create_cache_dir(cache)?;
         let _lock = Lock::acquire(&cache.join(format!("{key}.lock")))?;
         if verified(&directory) {
             return Ok(output);
         }
         if bundle::file_digest(&self.executable)? != self.identity {
-            return Err(Error("Loom compiler changed during this session".into()));
+            return Err(Error::Message(
+                "Loom compiler changed during this session".into(),
+            ));
         }
         let temporary = tempfile::tempdir_in(cache)?;
         let source = temporary.path().join("kernel.loom");
@@ -92,7 +99,9 @@ impl Compiler {
             .stdout(log.try_clone()?)
             .stderr(log)
             .status()
-            .map_err(|e| Error(format!("starting {}: {e}", self.executable.display())))?;
+            .map_err(|e| {
+                Error::from(e).context(format!("starting {}", self.executable.display()))
+            })?;
         if !status.success() || !result.is_file() || fs::metadata(&result)?.len() == 0 {
             use std::io::{Read, Seek, SeekFrom};
             let mut file = fs::File::open(&log_path)?;
@@ -100,14 +109,16 @@ impl Compiler {
             file.seek(SeekFrom::Start(length.saturating_sub(8192)))?;
             let mut tail = Vec::new();
             file.read_to_end(&mut tail)?;
-            return Err(Error(format!(
+            return Err(Error::Message(format!(
                 "Loom compilation failed for {} ({status}):\n{}",
                 request.symbol,
                 String::from_utf8_lossy(&tail)
             )));
         }
         if bundle::file_digest(&self.executable)? != self.identity {
-            return Err(Error("Loom compiler changed while compiling".into()));
+            return Err(Error::Message(
+                "Loom compiler changed while compiling".into(),
+            ));
         }
         fs::write(
             temporary.path().join("kernel.sha256"),
@@ -117,7 +128,10 @@ impl Compiler {
         if directory.exists() {
             fs::remove_dir_all(&directory)?;
         }
-        fs::rename(temporary.path(), &directory)?;
+        fs::File::open(temporary.path().join("kernel.sha256"))?.sync_all()?;
+        fs::File::open(temporary.path())?.sync_all()?;
+        bundle::publish(temporary, &directory)?;
+        fs::File::open(cache)?.sync_all()?;
         Ok(output)
     }
 }
@@ -141,18 +155,25 @@ fn resolve_executable(path: &Path) -> Result<PathBuf> {
             }
         }
     }
-    fs::canonicalize(path).map_err(|e| Error(format!("compiler {}: {e}", path.display())))
+    fs::canonicalize(path)
+        .map_err(|e| Error::from(e).context(format!("compiler {}", path.display())))
 }
 
+/// Source, export and target configuration for one compiled artifact.
 pub struct Request<'a> {
+    /// Loom source text.
     pub source: &'a str,
+    /// Root export to compile.
     pub symbol: &'a str,
+    /// Compiler backend, normally amdgpu-hal.
     pub backend: &'a str,
+    /// GPU architecture key.
     pub target: &'a str,
     /// Fully qualified keys, e.g. `h3.gemm.k_size` or `krea2.gemm.cols`.
     pub config: BTreeMap<String, String>,
 }
 impl<'a> Request<'a> {
+    /// Create a request targeting the supported AMDGPU backend and architecture.
     pub fn new(source: &'a str, symbol: &'a str) -> Self {
         Self {
             source,
@@ -169,7 +190,9 @@ impl<'a> Request<'a> {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
             {
-                return Err(Error("invalid Loom symbol, backend or target".into()));
+                return Err(Error::Message(
+                    "invalid Loom symbol, backend or target".into(),
+                ));
             }
         }
         for key in self.config.keys() {
@@ -178,7 +201,9 @@ impl<'a> Request<'a> {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
             {
-                return Err(Error(format!("invalid Loom configuration key {key}")));
+                return Err(Error::Message(format!(
+                    "invalid Loom configuration key {key}"
+                )));
             }
         }
         Ok(())

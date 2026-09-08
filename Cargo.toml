@@ -5,6 +5,10 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 description = "Owned GPU execution, Loom compilation, and portable model ABI support for HRX"
+repository = "https://github.com/zacharydenton/hrx.rs"
+readme = "README.md"
+keywords = ["gpu", "amdgpu", "compute", "loom"]
+categories = ["hardware-support", "science"]
 exclude = ["artifacts", "target"]
 
 [features]
@@ -16,6 +20,7 @@ runner = ["loom"]
 compat = ["dep:bytemuck"]
 
 [dependencies]
+thiserror = "2"
 libloading = "0.8"
 libc = "0.2"
 sha2 = "0.10"
@@ -36,3 +41,10 @@ required-features = ["runner"]
 name = "loomrun"
 path = "src/bin/loomrun.rs"
 required-features = ["runner"]
+
+[lints.clippy]
+large_stack_arrays = "warn"
+match_wildcard_for_single_variants = "warn"
+
+[lints.rust]
+missing_docs = "warn"

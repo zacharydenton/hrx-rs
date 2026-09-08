@@ -13,10 +13,13 @@ use std::{
 /// A model chooses its own stable status numbers, including cancellation.
 #[derive(Debug, Clone)]
 pub struct Failure {
+    /// Application-defined nonzero ABI failure code.
     pub code: i32,
+    /// Human-readable diagnostic copied to the caller's error buffer.
     pub message: String,
 }
 impl Failure {
+    /// Create an ABI failure with an owned diagnostic.
     pub fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -97,12 +100,12 @@ pub fn check_span<T>(p: *const T, count: usize) -> Result<()> {
     let bytes = count
         .checked_mul(std::mem::size_of::<T>())
         .filter(|n| *n <= isize::MAX as usize)
-        .ok_or_else(|| Error("foreign buffer length overflows isize".into()))?;
+        .ok_or_else(|| Error::Message("foreign buffer length overflows isize".into()))?;
     if p.is_null()
         || !(p as usize).is_multiple_of(std::mem::align_of::<T>())
         || (p as usize).checked_add(bytes).is_none()
     {
-        return Err(Error(
+        return Err(Error::Message(
             "foreign buffer is null, misaligned or wraps the address space".into(),
         ));
     }
@@ -134,13 +137,15 @@ pub unsafe fn slice_mut<'a, T>(p: *mut T, count: usize) -> Result<&'a mut [T]> {
 /// model state inconsistent, so subsequent calls must construct a fresh handle.
 pub struct Handle<T>(Mutex<T>);
 impl<T> Handle<T> {
+    /// Wrap model state in a mutex that detects panics during mutation.
     pub fn new(value: T) -> Self {
         Self(Mutex::new(value))
     }
+    /// Lock model state, reporting poison after a panicking operation.
     pub fn lock(&self) -> Result<MutexGuard<'_, T>> {
         self.0
             .lock()
-            .map_err(|_| Error("model session is poisoned; create a new session".into()))
+            .map_err(|_| Error::Message("model session is poisoned; create a new session".into()))
     }
 }
 /// # Safety
@@ -152,11 +157,14 @@ pub unsafe fn handle<'a, T>(pointer: *const T) -> Result<&'a T> {
 }
 
 #[derive(Default)]
+/// A shared cancellation flag for cooperative model operations.
 pub struct Cancellation(AtomicBool);
 impl Cancellation {
+    /// Request cancellation.
     pub fn cancel(&self) {
         self.0.store(true, Ordering::Release);
     }
+    /// Check whether cancellation has been requested.
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }

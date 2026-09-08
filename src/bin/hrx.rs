@@ -1,9 +1,11 @@
+//! Native bundle provisioning and Loom compilation CLI.
 use hrx::{Error, Result};
-fn main() {
+fn main() -> std::process::ExitCode {
     if let Err(e) = run() {
         eprintln!("{e}");
-        std::process::exit(1);
+        return std::process::ExitCode::FAILURE;
     }
+    std::process::ExitCode::SUCCESS
 }
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -34,7 +36,7 @@ fn run() -> Result<()> {
             for arg in &args[3..] {
                 let (k, v) = arg
                     .split_once('=')
-                    .ok_or_else(|| Error("config must be key=value".into()))?;
+                    .ok_or_else(|| Error::Message("config must be key=value".into()))?;
                 request.config.insert(k.into(), v.into());
             }
             println!(
@@ -45,7 +47,7 @@ fn run() -> Result<()> {
             );
         }
         _ => {
-            return Err(Error(
+            return Err(Error::Message(
                 "usage: hrx prepare [bundle.tar.gz] | info | compile SOURCE SYMBOL [key=value ...]"
                     .into(),
             ));

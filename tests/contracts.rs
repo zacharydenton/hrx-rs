@@ -1,3 +1,4 @@
+//! CPU tests for public argument, error and FFI contracts.
 #![cfg(feature = "ffi")]
 use hrx::{Constants, ffi};
 #[test]
@@ -62,4 +63,27 @@ fn reset_direct_arguments_clears_old_padding() {
     args.raw(&[1; 4]).unwrap();
     args.i64(0);
     assert_eq!(&args.as_bytes()[4..8], &[0; 4]);
+    args.clear();
+    assert!(args.as_bytes().is_empty());
+    args.i32(3).i64(4);
+    assert_eq!(&args.as_bytes()[4..8], &[0; 4]);
+}
+
+#[test]
+fn errors_preserve_io_kinds_and_sources() {
+    use std::error::Error as _;
+    let error = hrx::Error::from(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "denied",
+    ));
+    assert!(
+        matches!(&error, hrx::Error::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied)
+    );
+    let error = error.context("opening bundle");
+    assert_eq!(error.to_string(), "opening bundle: denied");
+    let source = error.source().unwrap().source().unwrap();
+    assert_eq!(
+        source.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
 }

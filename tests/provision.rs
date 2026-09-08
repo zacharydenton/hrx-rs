@@ -1,3 +1,4 @@
+//! Provisioning integrity, path validation and compiler cache tests.
 use hrx::bundle::{Manifest, digest, prepare};
 use std::{collections::BTreeMap, fs, io::Write};
 fn fixture(dir: &std::path::Path) -> Manifest {
@@ -68,6 +69,33 @@ fn invalid_manifest_paths_and_missing_components_are_refused() {
     manifest.files.remove("../evil");
     manifest.files.remove("loom-compile");
     assert!(Manifest::parse(&serde_json::to_vec(&manifest).unwrap()).is_err());
+}
+
+#[test]
+fn unchecked_manifests_are_rejected_before_any_installation_io() {
+    let dir = tempfile::tempdir().unwrap();
+    let valid = fixture(dir.path());
+    for name in ["../escaped", "/tmp/escaped", "nested/file", ".", ".."] {
+        let mut manifest = valid.clone();
+        manifest.files.insert(name.into(), digest(b"escaped"));
+        // Derived Deserialize intentionally remains available; install must
+        // enforce the same invariant as parse even for this construction path.
+        let manifest: Manifest =
+            serde_json::from_slice(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let root = dir.path().join("uncreated");
+        assert!(
+            manifest
+                .install(&dir.path().join("bundle.tar.gz"), &root)
+                .is_err()
+        );
+        assert!(prepare(&manifest, &root, false).is_err());
+        assert!(manifest.verify(dir.path()).is_err());
+        assert!(!root.exists());
+        assert!(!dir.path().join("escaped").exists());
+    }
+    let mut manifest = valid;
+    manifest.archive_sha256 = "../escaped".into();
+    assert!(prepare(&manifest, &dir.path().join("uncreated"), false).is_err());
 }
 #[cfg(feature = "loom")]
 #[test]
