@@ -32,6 +32,8 @@ assert_eq!(readback.wait(&mut stream)?, vec![7; 4096]);
 
 `Device` selects a device. `Stream` requires exclusive access for ordered work.
 `Buffer` owns an allocation; `View` checks its extent and borrows its owner.
+Buffers belong to their allocating stream. Transfers, dispatch bindings and graph
+operations reject buffers from another stream, including on the same device.
 Loading native code and dispatching a kernel are unsafe: the model must prove
 that the grid, scalar values and accessed spans match its kernel. The model's
 prepared operation types should contain that proof and expose safe operations.
@@ -39,17 +41,35 @@ prepared operation types should contain that proof and expose safe operations.
 
 Allocation uses `hrx_allocator_allocate_buffer`, which does not flush pending
 commands. Host uploads/downloads have both synchronous and owned queued forms.
-A stream retains upload staging even if a submission token is forgotten. A
+`upload` and `read` drain all pending work and reclaim completed upload staging.
+A stream retains mapped upload staging even if a submission token is forgotten.
+Completed staging is reused in a pool capped at eight buffers and 64 MiB. Queued
+uploads poll completion and apply backpressure at eight pending buffers or 64 MiB;
+a single larger upload is allowed. Readbacks stay unmapped until completion, so
+the native command buffer's storage retention makes an abandoned readback safe. A
 submission flushes before polling, since native query alone ignores pending
 commands. Scratch reuse is bounded and belongs to one stream. Fixed sequences
 record explicit ordered dependencies and use native graph instantiate/replay;
-addresses, constants and shapes are fixed. Native capture/update are not exposed.
+addresses, constants and shapes are fixed. A sequence builder borrows its stream,
+buffers and kernels through `finish`; the resulting `FixedSequence` owns native
+resources and keeps the original stream alive. Native capture/update are not exposed.
 
 `Gpu` preserves H3's existing Send, non-Sync API. `compat` preserves Krea's
 address-based API while adding scoped streams and retention of direct-argument
 allocations. It is a migration surface for trusted model kernels, not the
 recommended API for new code. Raw blobs lack pointer metadata, so their escape
-hatch conservatively retains all registered allocations through synchronization.
+hatch conservatively retains that stream's registered allocations through synchronization.
+Compatibility kernel loading and launch are unsafe: callers must validate the
+code, dimensions, argument layout, addresses and aliasing for every invocation.
+Use `Args::clear()` to reset raw mode and pointer metadata before reuse.
+
+The review fixes change several source APIs: `Error` is a non-exhaustive enum
+(`Error::Message` replaces the tuple constructor), `Args` is `Clone` without
+`Copy`, `Submission::is_complete` needs a mutable token, and `FixedSequence` no
+longer has a lifetime parameter. `Gpu::dispatch` is deprecated; migrate to
+`Stream::dispatch` with explicit `Constants`. `loomrun` now respects scalar flag
+widths exactly; use `--i64` for 64-bit Loom indices instead of relying on inferred
+widening of `--i32` arguments. The minimum Rust version remains 1.88.
 
 ## Provisioning and installation
 
@@ -88,7 +108,9 @@ archive online. Explicit directories without manifests are trusted overrides.
 
 HSA is preloaded by absolute path before HRX. The library never changes the
 process environment. An OS lock serializes global initialization across separate
-Rust copies in multiple model cdylibs. All copies must select the same canonical
+Rust copies in multiple model cdylibs. Its PID-scoped lock lives in the private
+`XDG_RUNTIME_DIR`, or a verified private per-user directory under `/tmp`, and is
+removed on normal process exit. Failed initialization can be retried. All copies must select the same canonical
 HRX path; incompatible choices fail with a diagnostic. Native libraries and the
 global device registry stay resident until process exit; session teardown only
 releases session resources. Rust objects are never exchanged across model DSOs.

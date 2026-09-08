@@ -3,7 +3,7 @@
 //!   loomrun --hsaco k.hsaco --kernel name --grid 201 --block 256 \
 //!           --i32 201 --in x.bin --in gamma.bin --in beta.bin --out y.bin:308736
 //!
-//! Arguments appear in the kernel's own declaration order: `--i32`/`--f32` are by-value arguments and
+//! Arguments appear in the kernel's own declaration order: `--i32`/`--i64`/`--f32` are by-value arguments and
 //! `--in`/`--inout`/`--out` are buffers. `--in` is uploaded, `--out path:bytes` is allocated and written
 //! back after the launch, and `--inout` is both.
 //!
@@ -29,7 +29,7 @@ enum Direction {
 }
 
 enum Arg {
-    Scalar(u32),
+    Scalar(u64, usize),
     Buffer {
         path: PathBuf,
         bytes: usize,
@@ -107,13 +107,19 @@ fn parse_args(argv: &[String]) -> Result<Options, String> {
                 let v: i32 = next(&mut i, a)?
                     .parse()
                     .map_err(|_| "--i32 wants an integer".to_string())?;
-                args.push(Arg::Scalar(v as u32));
+                args.push(Arg::Scalar(u64::from(v as u32), 4));
+            }
+            "--i64" => {
+                let v: i64 = next(&mut i, a)?
+                    .parse()
+                    .map_err(|_| "--i64 wants an integer".to_string())?;
+                args.push(Arg::Scalar(v as u64, 8));
             }
             "--f32" => {
                 let v: f32 = next(&mut i, a)?
                     .parse()
                     .map_err(|_| "--f32 wants a number".to_string())?;
-                args.push(Arg::Scalar(v.to_bits()));
+                args.push(Arg::Scalar(u64::from(v.to_bits()), 4));
             }
             "--in" | "--inout" => {
                 let direction = if a == "--in" {
@@ -188,7 +194,7 @@ fn warms_up(repeat: u32) -> bool {
 }
 
 fn run(opt: Options) -> Result<(), String> {
-    let gpu = crate::Gpu::open().map_err(|e| e.to_string())?;
+    let mut gpu = crate::Stream::open().map_err(|e| e.to_string())?;
     // Safety: loomrun exists to run a code object the caller names, which is the whole of its job.
     // The contract is the operator's: --hsaco and --kernel identify the code, and --grid, --block and
     // the operand flags describe how it is meant to be called.
@@ -196,13 +202,18 @@ fn run(opt: Options) -> Result<(), String> {
 
     // Upload in declaration order, keeping scalars and buffers in their own sequences: the export
     // reports the constant block and the binding count separately.
-    let mut scalars: Vec<u32> = Vec::new();
+    let mut scalars = crate::Constants::new();
     let mut buffers: Vec<crate::Buffer> = Vec::new();
     let mut buffer_of_arg: Vec<Option<usize>> = Vec::new();
     for arg in &opt.args {
         match arg {
-            Arg::Scalar(v) => {
-                scalars.push(*v);
+            Arg::Scalar(v, width) => {
+                if *width == 4 {
+                    scalars.push(*v as u32)
+                } else {
+                    scalars.push(*v)
+                }
+                .map_err(|e| e.to_string())?;
                 buffer_of_arg.push(None);
             }
             Arg::Buffer {
@@ -221,11 +232,10 @@ fn run(opt: Options) -> Result<(), String> {
                 } else {
                     host.len()
                 };
-                let buffer = gpu.alloc(size).map_err(|e| e.to_string())?;
-                gpu.memset(&buffer, 0, buffer.bytes())
-                    .map_err(|e| e.to_string())?;
+                let buffer = gpu.allocate(size).map_err(|e| e.to_string())?;
+                gpu.fill(&buffer, 0).map_err(|e| e.to_string())?;
                 if !host.is_empty() {
-                    gpu.h2d(&buffer, &host).map_err(|e| e.to_string())?;
+                    gpu.upload(&buffer, &host).map_err(|e| e.to_string())?;
                 }
                 buffer_of_arg.push(Some(buffers.len()));
                 buffers.push(buffer);
@@ -239,12 +249,12 @@ fn run(opt: Options) -> Result<(), String> {
         let slot = buffer_of_arg[index].expect("validated as a buffer argument");
         let source = &buffers[slot];
         for _ in 1..count {
-            let copy = gpu.alloc(source.bytes()).map_err(|e| e.to_string())?;
-            gpu.d2d(&copy, source, source.bytes())
+            let copy = gpu.allocate(source.bytes()).map_err(|e| e.to_string())?;
+            gpu.copy(&copy, 0, source, 0, source.bytes())
                 .map_err(|e| e.to_string())?;
             rotated.push(copy);
         }
-        gpu.sync().map_err(|e| e.to_string())?;
+        gpu.synchronize().map_err(|e| e.to_string())?;
     }
 
     let mut bindings: Vec<crate::View<'_>> = buffers.iter().map(|b| b.binding()).collect();
@@ -260,7 +270,7 @@ fn run(opt: Options) -> Result<(), String> {
     if warmup {
         unsafe { gpu.dispatch(&kernel, opt.grid, opt.block, &scalars, &bindings) }
             .map_err(|e| e.to_string())?;
-        gpu.sync().map_err(|e| e.to_string())?;
+        gpu.synchronize().map_err(|e| e.to_string())?;
     }
 
     let rotate_slot = opt
@@ -280,7 +290,7 @@ fn run(opt: Options) -> Result<(), String> {
         unsafe { gpu.dispatch(&kernel, opt.grid, opt.block, &scalars, &bindings) }
             .map_err(|e| e.to_string())?;
     }
-    gpu.sync().map_err(|e| e.to_string())?;
+    gpu.synchronize().map_err(|e| e.to_string())?;
     let elapsed_ms = started.elapsed().as_secs_f64() * 1e3;
 
     println!(
@@ -303,8 +313,10 @@ fn run(opt: Options) -> Result<(), String> {
                 continue;
             }
             let buffer = &buffers[*slot];
-            let mut host = vec![0u8; buffer.bytes()];
-            gpu.d2h(buffer, &mut host).map_err(|e| e.to_string())?;
+            let host = gpu
+                .read_queued(buffer.binding())
+                .and_then(|r| r.wait(&mut gpu))
+                .map_err(|e| e.to_string())?;
             std::fs::write(path, &host)
                 .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
         }
@@ -312,6 +324,7 @@ fn run(opt: Options) -> Result<(), String> {
     Ok(())
 }
 
+/// Run the command-line kernel launcher, returning a usage or runtime exit code.
 pub fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let opt = match parse_args(&argv) {
@@ -421,7 +434,7 @@ mod tests {
                 assert_eq!(*bytes, 4096);
                 assert!(*direction == Direction::Out);
             }
-            _ => panic!("expected a buffer argument"),
+            Arg::Scalar(..) => panic!("expected a buffer argument"),
         }
     }
 
@@ -460,8 +473,8 @@ mod tests {
             .args
             .iter()
             .filter_map(|a| match a {
-                Arg::Scalar(v) => Some(*v),
-                _ => None,
+                Arg::Scalar(v, _) => Some(*v as u32),
+                Arg::Buffer { .. } => None,
             })
             .collect();
         assert_eq!(scalars, vec![7u32, 0.5f32.to_bits()]);

@@ -5,7 +5,8 @@ use super::DevicePtr;
 /// The dispatch limit is 256 bytes of direct arguments.
 const CAPACITY: usize = 256;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug)]
+/// Naturally aligned direct arguments and tracked allocation addresses.
 pub struct Args {
     bytes: [u8; CAPACITY],
     size: usize,
@@ -21,6 +22,7 @@ impl Default for Args {
 }
 
 impl Args {
+    /// Create empty direct arguments.
     pub const fn new() -> Self {
         Args {
             bytes: [0; CAPACITY],
@@ -29,6 +31,11 @@ impl Args {
             pointer_count: 0,
             opaque: false,
         }
+    }
+
+    /// Reset bytes, pointer metadata and the raw-argument mode for reuse.
+    pub fn clear(&mut self) {
+        *self = Self::new();
     }
 
     fn push(&mut self, value: &[u8], align: usize) -> &mut Self {
@@ -42,14 +49,17 @@ impl Args {
         self
     }
 
+    /// Append a naturally aligned signed 32-bit argument.
     pub fn i32(&mut self, value: i32) -> &mut Self {
         self.push(&value.to_ne_bytes(), 4)
     }
 
+    /// Append a naturally aligned unsigned 32-bit argument.
     pub fn u32(&mut self, value: u32) -> &mut Self {
         self.push(&value.to_ne_bytes(), 4)
     }
 
+    /// Append a naturally aligned 32-bit floating-point argument.
     pub fn f32(&mut self, value: f32) -> &mut Self {
         self.push(&value.to_ne_bytes(), 4)
     }
@@ -72,7 +82,7 @@ impl Args {
     /// one straight through from Python.
     pub fn raw(&mut self, bytes: &[u8]) -> Result<&mut Self, super::Error> {
         if bytes.len() > CAPACITY {
-            return Err(super::Error("kernel argument overflow".into()));
+            return Err(super::Error::Message("kernel argument overflow".into()));
         }
         self.opaque = true;
         self.pointer_count = 0;
@@ -82,6 +92,7 @@ impl Args {
         Ok(self)
     }
 
+    /// The initialized direct-argument blob, including zero padding.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes[..self.size]
     }
@@ -106,6 +117,16 @@ mod tests {
         );
         assert_eq!(&bytes[8..16], &0x1000u64.to_ne_bytes());
         assert_eq!(&bytes[16..20], &2.0f32.to_ne_bytes());
+    }
+
+    #[test]
+    fn clearing_raw_arguments_restores_pointer_tracking() {
+        let mut args = Args::new();
+        args.raw(&[0xff; 16]).unwrap();
+        args.clear();
+        args.ptr(DevicePtr::from_address(0x1000));
+        assert!(!args.opaque);
+        assert_eq!(&args.pointers[..args.pointer_count], &[0x1000]);
     }
 
     #[test]

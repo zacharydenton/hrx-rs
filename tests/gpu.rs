@@ -11,7 +11,7 @@ fn queued_storage_views_and_replay() -> hrx::Result<()> {
     stream.upload_queued(&source, 0, &host)?;
     drop(host);
     stream.copy(&result, 0, &source, 0, 4096)?;
-    let submission = stream.submit()?;
+    let mut submission = stream.submit()?;
     let _ = submission.is_complete()?;
     // Completion tokens are optional. Forgetting one cannot free staging.
     #[allow(clippy::forget_non_drop)] // Protect the contract if Submission later gains Drop.
@@ -94,11 +94,12 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     );
     let mut sequence = stream.sequence()?;
     unsafe {
+        let copied_constants = constants.clone();
         sequence.dispatch(
             &kernel,
             [1; 3],
             [256, 1, 1],
-            &constants,
+            &copied_constants,
             &[sample.binding(), velocity.binding()],
         )?;
     }
@@ -110,6 +111,69 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
             .chunks_exact(2)
             .all(|b| u16::from_le_bytes([b[0], b[1]]) == 0x4000)
     );
+    let mut foreign = Stream::open()?;
+    unsafe {
+        assert!(
+            foreign
+                .dispatch(
+                    &kernel,
+                    [1; 3],
+                    [256, 1, 1],
+                    &constants,
+                    &[sample.binding(), velocity.binding()]
+                )
+                .is_err()
+        );
+        let mut graph = foreign.sequence()?;
+        assert!(
+            graph
+                .dispatch(
+                    &kernel,
+                    [1; 3],
+                    [256, 1, 1],
+                    &constants,
+                    &[sample.binding(), velocity.binding()]
+                )
+                .is_err()
+        );
+    }
+    #[cfg(feature = "runner")]
+    {
+        let input = cache.path().join("runner-input.bin");
+        let velocity = cache.path().join("runner-velocity.bin");
+        std::fs::write(&input, &ones)?;
+        std::fs::write(&velocity, &ones)?;
+        let locks = tempfile::tempdir()?;
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_loomrun"))
+            .arg("--hsaco")
+            .arg(&path)
+            .args(["--kernel", "krea2_euler", "--block", "256"])
+            .args([
+                if kernel.info().constant_byte_length == 8 {
+                    "--i32"
+                } else {
+                    "--i64"
+                },
+                "256",
+                "--f32",
+                "0.5",
+            ])
+            .arg("--inout")
+            .arg(&input)
+            .arg("--in")
+            .arg(&velocity)
+            .env("XDG_RUNTIME_DIR", locks.path())
+            .stdout(std::process::Stdio::null())
+            .spawn()?;
+        let pid = child.id();
+        assert!(child.wait()?.success());
+        assert!(!locks.path().join(format!("hrx-{pid}.lock")).exists());
+        assert!(
+            std::fs::read(input)?
+                .chunks_exact(2)
+                .all(|b| u16::from_le_bytes([b[0], b[1]]) == 0x3fc0)
+        );
+    }
     #[cfg(feature = "compat")]
     {
         let device = hrx::compat::Device::open()?;
@@ -118,7 +182,7 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
         let velocity = device.allocate(512)?;
         device.copy_from_host(sample.ptr(), &ones)?;
         device.copy_from_host(velocity.ptr(), &ones)?;
-        let direct = hrx::compat::Kernel::load(&path, "krea2_euler")?;
+        let direct = unsafe { hrx::compat::Kernel::load(&path, "krea2_euler")? };
         let mut arguments = hrx::compat::Args::new();
         if kernel.info().constant_byte_length == 8 {
             arguments.u32(256);
@@ -126,7 +190,9 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
             arguments.i64(256);
         }
         arguments.f32(0.5).ptr(sample.ptr()).ptr(velocity.ptr());
-        direct.launch([1; 3], [256, 1, 1], &arguments)?;
+        unsafe {
+            direct.launch([1; 3], [256, 1, 1], &arguments)?;
+        }
         drop(velocity);
         drop(direct);
         device.copy_to_host(&mut output, sample.ptr())?;
@@ -167,5 +233,92 @@ fn independent_compat_streams_retain_dropped_allocations() -> hrx::Result<()> {
     for worker in workers {
         worker.join().unwrap()?;
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires gfx1151"]
+fn buffers_reject_every_foreign_stream_access() -> hrx::Result<()> {
+    let mut a = Stream::open()?;
+    let mut b = Stream::open()?;
+    let source = a.allocate(16)?;
+    let destination = b.allocate(16)?;
+    a.fill(&source, 7)?;
+    assert!(b.upload(&source, &[1; 16]).is_err());
+    assert!(b.read(source.binding(), &mut [0; 16]).is_err());
+    assert!(b.fill(&source, 1).is_err());
+    assert!(b.copy(&destination, 0, &source, 0, 16).is_err());
+    assert!(b.copy(&source, 0, &destination, 0, 16).is_err());
+    assert!(b.upload_queued(&source, 0, &[1; 16]).is_err());
+    assert!(b.read_queued(source.binding()).is_err());
+    let mut graph = b.sequence()?;
+    assert!(graph.fill(source.binding(), 1).is_err());
+    assert!(graph.copy(destination.binding(), source.binding()).is_err());
+    drop(graph);
+    let mut graph = a.sequence()?;
+    graph.fill(source.binding(), 9)?;
+    let mut graph = graph.finish()?;
+    assert!(b.launch_sequence(&mut graph).is_err());
+    a.launch_sequence(&mut graph)?;
+    let mut bytes = [0; 16];
+    a.read(source.binding(), &mut bytes)?;
+    assert_eq!(bytes, [9; 16]);
+
+    let a = hrx::Gpu::open()?;
+    let b = hrx::Gpu::open()?;
+    let buffer = a.alloc(16)?;
+    assert!(b.h2d(&buffer, &[0; 16]).is_err());
+    assert!(b.h2d_at(&buffer, 0, &[]).is_err());
+    assert!(b.d2h(&buffer, &mut bytes).is_err());
+    assert!(b.d2h_ref(buffer.binding(), &mut bytes).is_err());
+    assert!(b.memset(&buffer, 0, 16).is_err());
+    assert!(b.d2d(&buffer, &buffer, 16).is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires gfx1151"]
+fn instantiated_sequences_own_their_resources() -> hrx::Result<()> {
+    let mut stream = Stream::open()?;
+    let buffer = stream.allocate(1024)?;
+    let output = stream.allocate(1024)?;
+    let mut builder = stream.sequence()?;
+    builder
+        .fill(buffer.binding(), 42)?
+        .copy(output.binding(), buffer.binding())?;
+    let mut sequence = builder.finish()?;
+    drop(buffer);
+    stream.launch_sequence(&mut sequence)?;
+    let mut bytes = [0; 1024];
+    stream.read(output.binding(), &mut bytes)?;
+    assert_eq!(bytes, [42; 1024]);
+    // Even an empty executable keeps the stream/device alive after escape.
+    drop(output);
+    drop(stream);
+    drop(sequence);
+    Ok(())
+}
+
+#[cfg(feature = "compat")]
+#[test]
+#[ignore = "requires gfx1151"]
+fn compatibility_addresses_reject_foreign_streams() -> hrx::Result<()> {
+    let a = hrx::compat::Device::open()?;
+    let b = hrx::compat::Device::open()?;
+    let source = a.allocate(16)?;
+    let destination = b.allocate(16)?;
+    a.zero(source.ptr(), 16)?;
+    assert!(b.copy_from_host(source.ptr(), &[1; 16]).is_err());
+    assert!(b.copy_to_host(&mut [0; 16], source.ptr()).is_err());
+    assert!(b.zero(source.ptr(), 16).is_err());
+    assert!(
+        b.copy_device_to_device(destination.ptr(), source.ptr(), 16)
+            .is_err()
+    );
+    assert!(
+        b.copy_device_to_device(source.ptr(), destination.ptr(), 16)
+            .is_err()
+    );
+    a.synchronize()?;
     Ok(())
 }

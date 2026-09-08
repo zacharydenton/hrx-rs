@@ -3,22 +3,28 @@ use super::{Error, Result, check, sys};
 use std::{
     collections::BTreeMap,
     ffi::{CString, c_void},
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{Arc, Mutex, Weak},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+/// A numeric GPU address; host dereferencing is never provided.
 pub struct DevicePtr(usize);
 impl DevicePtr {
+    /// The null device address.
     pub const NULL: Self = Self(0);
+    /// Wrap a numeric address; transfers validate it against live stream allocations.
     pub const fn from_address(address: usize) -> Self {
         Self(address)
     }
+    /// The numeric device address.
     pub const fn address(self) -> usize {
         self.0
     }
+    /// Whether the address is null.
     pub const fn is_null(self) -> bool {
         self.0 == 0
     }
+    /// Offset the address in bytes; panics on arithmetic overflow.
     pub const fn offset(self, bytes: usize) -> Self {
         Self(self.0.checked_add(bytes).expect("device address overflow"))
     }
@@ -27,6 +33,7 @@ struct Allocation {
     raw: sys::Buffer,
     bytes: usize,
     address: usize,
+    owner: Weak<Device>,
 }
 // Mapping is created once, before publishing the allocation. No host reference
 // to it is exposed. All GPU work uses streams; mapped storage is retained until
@@ -35,6 +42,10 @@ unsafe impl Send for Allocation {}
 unsafe impl Sync for Allocation {}
 impl Drop for Allocation {
     fn drop(&mut self) {
+        let mut registry = ALLOCATIONS.lock().unwrap_or_else(|e| e.into_inner());
+        // A newer allocation can reuse an address only after native release.
+        registry.remove(&self.address);
+        drop(registry);
         unsafe {
             sys::hrx_buffer_release(self.raw);
         }
@@ -42,35 +53,27 @@ impl Drop for Allocation {
 }
 static ALLOCATIONS: Mutex<BTreeMap<usize, Weak<Allocation>>> = Mutex::new(BTreeMap::new());
 
+/// An owned mapped compatibility allocation tied to one stream.
 pub struct Buffer {
     allocation: Arc<Allocation>,
     stream: Weak<Device>,
 }
 impl Buffer {
+    /// The base device address.
     pub fn ptr(&self) -> DevicePtr {
         DevicePtr(self.allocation.address)
     }
+    /// The allocated byte length, rounded to at least four bytes.
     pub fn len(&self) -> usize {
         self.allocation.bytes
     }
+    /// Whether the allocation has zero bytes.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// The owning stream, if it is still alive.
     pub fn stream(&self) -> Option<Arc<Device>> {
         self.stream.upgrade()
-    }
-}
-impl Drop for Buffer {
-    fn drop(&mut self) {
-        // Remove weak registry entries without waiting for GPU work. The stream
-        // keeps any direct-address references; native binding copies retain HAL buffers.
-        let mut allocations = ALLOCATIONS.lock().unwrap_or_else(|e| e.into_inner());
-        if allocations
-            .get(&self.allocation.address)
-            .is_some_and(|w| w.strong_count() == 1)
-        {
-            allocations.remove(&self.allocation.address);
-        }
     }
 }
 struct State {
@@ -78,16 +81,18 @@ struct State {
     pending: BTreeMap<usize, Arc<Allocation>>,
 }
 unsafe impl Send for State {}
+/// A thread-safe, mutex-serialized compatibility command stream.
 pub struct Device {
     device: sys::Device,
     state: Mutex<State>,
 }
 unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
-static DEFAULT: OnceLock<Result<Arc<Device>>> = OnceLock::new();
+static DEFAULT: Mutex<Option<Arc<Device>>> = Mutex::new(None);
 thread_local! { static CURRENT: std::cell::RefCell<Option<Arc<Device>>> = const { std::cell::RefCell::new(None) }; }
 /// Restores the enclosing model's stream even if a nested call unwinds. It cannot
 /// move to another thread; it does not hold a mutex across user callbacks.
+#[must_use = "keep the scope guard alive for the session"]
 pub struct Scope {
     previous: Option<Arc<Device>>,
     _thread: std::marker::PhantomData<std::rc::Rc<()>>,
@@ -97,16 +102,19 @@ impl Drop for Scope {
         CURRENT.with(|c| *c.borrow_mut() = self.previous.take());
     }
 }
+/// Get the scoped or default stream, panicking if initialization fails.
 pub fn device() -> Arc<Device> {
     try_device().unwrap_or_else(|e| panic!("{e}"))
 }
+/// Get the scoped or default stream; failed initialization remains retryable.
 pub fn try_device() -> Result<Arc<Device>> {
     if let Some(d) = CURRENT.with(|c| c.borrow().clone()) {
         return Ok(d);
     }
-    DEFAULT.get_or_init(Device::open).clone()
+    crate::cached_init(&DEFAULT, Device::open)
 }
 impl Device {
+    /// Open an independent stream on a supported GPU.
     pub fn open() -> Result<Arc<Self>> {
         crate::runtime::initialize_runtime()?;
         unsafe {
@@ -136,7 +144,7 @@ impl Device {
                 }));
             }
         }
-        Err(Error("gfx1151 GPU required".into()))
+        Err(Error::Message("gfx1151 GPU required".into()))
     }
     /// Nested block sessions inherit their pipeline's stream; standalone sessions
     /// open one of their own. Legacy low-level callers still have a default stream.
@@ -145,6 +153,7 @@ impl Device {
             .with(|c| c.borrow().clone())
             .map_or_else(Self::open, Ok)
     }
+    /// Select this stream for the current thread until the returned guard is dropped.
     pub fn enter(self: &Arc<Self>) -> Scope {
         let previous = CURRENT.with(|c| c.replace(Some(self.clone())));
         Scope {
@@ -158,23 +167,20 @@ impl Device {
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, State>> {
         self.state
             .lock()
-            .map_err(|_| Error("GPU stream is poisoned".into()))
+            .map_err(|_| Error::Message("GPU stream is poisoned".into()))
     }
     fn drain(state: &mut State) -> Result<()> {
         unsafe {
             check(sys::hrx_stream_synchronize(state.stream))?;
         }
         state.pending.clear();
-        // Bound weak entries left behind when a buffer was dropped in flight.
-        ALLOCATIONS
-            .lock()
-            .map_err(|_| Error("allocation registry poisoned".into()))?
-            .retain(|_, w| w.strong_count() != 0);
         Ok(())
     }
+    /// Wait for this stream and release its pending direct-address allocations.
     pub fn synchronize(&self) -> Result<()> {
         Self::drain(&mut *self.lock()?)
     }
+    /// Allocate mapped storage owned by this stream, rounded to at least four bytes.
     pub fn allocate(self: &Arc<Self>, bytes: usize) -> Result<Buffer> {
         let bytes = bytes.max(4);
         unsafe {
@@ -199,10 +205,11 @@ impl Device {
                 raw,
                 bytes,
                 address: pointer as usize,
+                owner: Arc::downgrade(self),
             });
             ALLOCATIONS
                 .lock()
-                .map_err(|_| Error("allocation registry poisoned".into()))?
+                .map_err(|_| Error::Message("allocation registry poisoned".into()))?
                 .insert(pointer as usize, Arc::downgrade(&allocation));
             Ok(Buffer {
                 allocation,
@@ -210,27 +217,34 @@ impl Device {
             })
         }
     }
-    fn find(pointer: DevicePtr, bytes: usize) -> Result<(Arc<Allocation>, usize)> {
+    fn find(&self, pointer: DevicePtr, bytes: usize) -> Result<(Arc<Allocation>, usize)> {
         let allocations = ALLOCATIONS
             .lock()
-            .map_err(|_| Error("allocation registry poisoned".into()))?;
+            .map_err(|_| Error::Message("allocation registry poisoned".into()))?;
         let (base, allocation) = allocations
             .range(..=pointer.address())
             .rev()
             .find_map(|(base, w)| w.upgrade().map(|a| (*base, a)))
-            .ok_or_else(|| Error("address does not name a live GPU allocation".into()))?;
+            .ok_or_else(|| Error::Message("address does not name a live GPU allocation".into()))?;
+        drop(allocations);
+        if !std::ptr::eq(allocation.owner.as_ptr(), self) {
+            return Err(Error::Message(
+                "allocation belongs to another stream".into(),
+            ));
+        }
         let offset = pointer.address() - base;
         crate::runtime::checked_span(offset, bytes, allocation.bytes)?;
         Ok((allocation, offset))
     }
+    /// Queue a checked copy between addresses owned by this stream.
     pub fn copy_device_to_device(
         &self,
         destination: DevicePtr,
         source: DevicePtr,
         bytes: usize,
     ) -> Result<()> {
-        let (dst, d) = Self::find(destination, bytes)?;
-        let (src, s) = Self::find(source, bytes)?;
+        let (dst, d) = self.find(destination, bytes)?;
+        let (src, s) = self.find(source, bytes)?;
         let mut state = self.lock()?;
         state.pending.insert(dst.address, dst.clone());
         state.pending.insert(src.address, src.clone());
@@ -245,14 +259,17 @@ impl Device {
             ))
         }
     }
+    /// Drain this stream and upload plain-data values to a checked address.
     pub fn write<T: bytemuck::Pod>(&self, destination: DevicePtr, source: &[T]) -> Result<()> {
         self.copy_from_host(destination, bytemuck::cast_slice(source))
     }
+    /// Drain this stream and read plain-data values from a checked address.
     pub fn read<T: bytemuck::Pod>(&self, destination: &mut [T], source: DevicePtr) -> Result<()> {
         self.copy_to_host(bytemuck::cast_slice_mut(destination), source)
     }
+    /// Drain this stream and upload bytes to one of its allocations.
     pub fn copy_from_host(&self, destination: DevicePtr, source: &[u8]) -> Result<()> {
-        let (dst, offset) = Self::find(destination, source.len())?;
+        let (dst, offset) = self.find(destination, source.len())?;
         let mut state = self.lock()?;
         Self::drain(&mut state)?;
         if source.is_empty() {
@@ -268,8 +285,9 @@ impl Device {
             ))
         }
     }
+    /// Drain this stream and download bytes from one of its allocations.
     pub fn copy_to_host(&self, destination: &mut [u8], source: DevicePtr) -> Result<()> {
-        let (src, offset) = Self::find(source, destination.len())?;
+        let (src, offset) = self.find(source, destination.len())?;
         let mut state = self.lock()?;
         Self::drain(&mut state)?;
         if destination.is_empty() {
@@ -285,8 +303,9 @@ impl Device {
             ))
         }
     }
+    /// Queue a zero fill over a checked span owned by this stream.
     pub fn zero(&self, destination: DevicePtr, bytes: usize) -> Result<()> {
-        let (dst, offset) = Self::find(destination, bytes)?;
+        let (dst, offset) = self.find(destination, bytes)?;
         let mut state = self.lock()?;
         state.pending.insert(dst.address, dst.clone());
         let pattern = 0u8;
@@ -301,7 +320,9 @@ impl Device {
             ))
         }
     }
-    pub(crate) fn dispatch(
+    /// # Safety
+    /// The invocation must satisfy Kernel::launch's address and layout contract.
+    pub(crate) unsafe fn dispatch(
         &self,
         executable: sys::Executable,
         ordinal: u32,
@@ -310,14 +331,19 @@ impl Device {
     ) -> Result<()> {
         let mut state = self.lock()?;
         if args.opaque {
-            // Escape hatch for existing test bridges. With no pointer metadata,
-            // conservatively retain all live allocations through completion.
-            let allocations = ALLOCATIONS
+            // Raw arguments must name only allocations owned by this stream;
+            // the unsafe launch contract covers addresses without metadata.
+            let candidates: Vec<_> = ALLOCATIONS
                 .lock()
-                .map_err(|_| Error("allocation registry poisoned".into()))?;
-            for (address, allocation) in allocations.iter() {
-                if let Some(a) = allocation.upgrade() {
-                    state.pending.insert(*address, a);
+                .map_err(|_| Error::Message("allocation registry poisoned".into()))?
+                .values()
+                .cloned()
+                .collect();
+            for allocation in candidates {
+                if let Some(a) = allocation.upgrade()
+                    && std::ptr::eq(a.owner.as_ptr(), self)
+                {
+                    state.pending.insert(a.address, a);
                 }
             }
         } else {
@@ -332,7 +358,7 @@ impl Device {
                 {
                     continue;
                 }
-                let (a, _) = Self::find(DevicePtr(address), 0)?;
+                let (a, _) = self.find(DevicePtr(address), 0)?;
                 state.pending.entry(a.address).or_insert(a);
             }
         }
@@ -363,5 +389,24 @@ impl Drop for Device {
     }
 }
 pub(crate) fn c_string(text: &str) -> Result<CString> {
-    CString::new(text).map_err(|_| Error("string contains NUL".into()))
+    CString::new(text).map_err(|_| Error::Message("string contains NUL".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires gfx1151"]
+    fn dropped_inflight_allocations_leave_no_registry_entries() -> Result<()> {
+        let device = Device::open()?;
+        let buffer = device.allocate(16)?;
+        let address = buffer.ptr().address();
+        device.zero(buffer.ptr(), 16)?;
+        drop(buffer);
+        assert!(ALLOCATIONS.lock().unwrap().contains_key(&address));
+        device.synchronize()?;
+        assert!(!ALLOCATIONS.lock().unwrap().contains_key(&address));
+        Ok(())
+    }
 }

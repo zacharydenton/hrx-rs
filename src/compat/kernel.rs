@@ -35,14 +35,19 @@ impl std::fmt::Debug for Kernel {
 
 impl Kernel {
     /// Loads `path` for gfx1151 and looks up `symbol`.
-    pub fn load(path: &std::path::Path, symbol: &str) -> Result<Kernel> {
+    /// # Safety
+    /// The code object must be trusted native code, just like a shared library.
+    /// ```compile_fail
+    /// let _ = hrx::compat::Kernel::load(std::path::Path::new("kernel.hsaco"), "k");
+    /// ```
+    pub unsafe fn load(path: &std::path::Path, symbol: &str) -> Result<Kernel> {
         let path_text = path
             .to_str()
-            .ok_or_else(|| Error(format!("{} is not UTF-8", path.display())))?;
+            .ok_or_else(|| Error::Message(format!("{} is not UTF-8", path.display())))?;
         let path_c = c_string(path_text)?;
         let symbol_c = c_string(symbol)?;
-        let family = c_string("amdgpu")?;
-        let target = c_string("gfx1151")?;
+        let family = c"amdgpu";
+        let target = c"gfx1151";
         // Safety: every string outlives the call; HRX writes the handle on
         // success, and the ordinal lookup happens on a loaded executable.
         unsafe {
@@ -69,18 +74,35 @@ impl Kernel {
     }
 
     /// One dispatch: `grid` workgroups of `block` work items, subgroup size 32.
-    pub fn launch(&self, grid: [u32; 3], block: [u32; 3], args: &Args) -> Result<()> {
+    /// # Safety
+    /// Dimensions and argument layout must match the kernel. Every accessed
+    /// address must stay within a live allocation owned by the current scoped
+    /// device, and accesses must obey the kernel's aliasing requirements.
+    /// ```compile_fail
+    /// fn unchecked(k: &hrx::compat::Kernel, args: &hrx::compat::Args) {
+    ///     k.launch([1; 3], [1; 3], args).unwrap();
+    /// }
+    /// ```
+    pub unsafe fn launch(&self, grid: [u32; 3], block: [u32; 3], args: &Args) -> Result<()> {
         crate::runtime::validate_launch(grid, block)?;
         let config = sys::hrx_dispatch_config_t {
             workgroup_count: grid,
             workgroup_size: block,
             subgroup_size: 32,
         };
-        device().dispatch(self.executable.0, self.ordinal, &config, args)
+        unsafe { device().dispatch(self.executable.0, self.ordinal, &config, args) }
     }
 
     /// The common case: a 2-D grid of 1-D workgroups.
-    pub fn launch_2d(&self, grid_x: u32, grid_y: u32, threads: u32, args: &Args) -> Result<()> {
-        self.launch([grid_x, grid_y, 1], [threads, 1, 1], args)
+    /// # Safety
+    /// The same invocation and allocation requirements as [`Self::launch`] apply.
+    pub unsafe fn launch_2d(
+        &self,
+        grid_x: u32,
+        grid_y: u32,
+        threads: u32,
+        args: &Args,
+    ) -> Result<()> {
+        unsafe { self.launch([grid_x, grid_y, 1], [threads, 1, 1], args) }
     }
 }
