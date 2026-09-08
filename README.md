@@ -161,4 +161,4 @@ The GPU suite covers queued staging, forgotten completion tokens, checked views,
 concurrent streams, dropped allocations, explicit mixed-width constants, Loom
 compilation, and repeated native graph execution. Provisioning tests cover
 corruption, offline behavior, path validation, and simultaneous processes.
-See `VALIDATION.md` for consumer checks and `tools/bundle.py` for release packaging.
+See `VALIDATION.md` for consumer checks and `hrx pack RUNTIME OUTPUT URL REVISION` for release packaging.

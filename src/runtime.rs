@@ -399,6 +399,55 @@ impl Gpu {
         }
     }
 
+    /// Dispatch with explicitly packed scalar widths on this command stream.
+    ///
+    /// # Safety
+    /// Kernel, launch dimensions, constants, and binding extents must agree.
+    /// Device addressing is not sandboxed by a binding's length.
+    pub unsafe fn dispatch_constants(
+        &self,
+        kernel: &Kernel,
+        grid: [u32; 3],
+        block: [u32; 3],
+        constants: &Constants,
+        bindings: &[View<'_>],
+    ) -> Result<()> {
+        for view in bindings {
+            owns(&self.inner, view.owner)?;
+        }
+        let mut binding_storage = [EMPTY_BINDING; 32];
+        let raw_bindings = raw_bindings(bindings, &mut binding_storage);
+        validate_launch(grid, block)?;
+        if kernel.info.binding_count as usize != bindings.len()
+            || kernel.info.constant_byte_length as usize != constants.len
+        {
+            return Err(Error::Message(
+                "kernel binding or constant byte count mismatch".into(),
+            ));
+        }
+        let config = sys::DispatchConfig {
+            workgroup_count: grid,
+            workgroup_size: block,
+            subgroup_size: 32,
+        };
+        unsafe {
+            check(
+                sys::hrx_stream_dispatch(
+                    self.inner.stream,
+                    kernel.executable,
+                    kernel.ordinal,
+                    &config,
+                    constants.bytes.as_ptr().cast(),
+                    constants.len,
+                    raw_bindings.as_ptr(),
+                    bindings.len(),
+                    0,
+                ),
+                "dispatch",
+            )
+        }
+    }
+
     /// Legacy dispatch that assumes equally sized scalar slots from the aggregate byte count.
     ///
     /// Metadata cannot distinguish mixed widths or one u64 from two u32 arguments.
@@ -915,41 +964,12 @@ impl Stream {
         constants: &Constants,
         bindings: &[View<'_>],
     ) -> Result<()> {
-        for view in bindings {
-            owns(&self.gpu.inner, view.owner)?;
-        }
-        let mut binding_storage = [EMPTY_BINDING; 32];
-        let raw_bindings = raw_bindings(bindings, &mut binding_storage);
-        validate_launch(grid, block)?;
-        if kernel.info.binding_count as usize != bindings.len()
-            || kernel.info.constant_byte_length as usize != constants.len
-        {
-            return Err(Error::Message(
-                "kernel binding or constant byte count mismatch".into(),
-            ));
-        }
-        let config = sys::DispatchConfig {
-            workgroup_count: grid,
-            workgroup_size: block,
-            subgroup_size: 32,
-        };
         unsafe {
-            check(
-                sys::hrx_stream_dispatch(
-                    self.gpu.inner.stream,
-                    kernel.executable,
-                    kernel.ordinal,
-                    &config,
-                    constants.bytes.as_ptr().cast(),
-                    constants.len,
-                    raw_bindings.as_ptr(),
-                    bindings.len(),
-                    0,
-                ),
-                "dispatch",
-            )
+            self.gpu
+                .dispatch_constants(kernel, grid, block, constants, bindings)
         }
     }
+
     /// Return scratch only after its last recorded use. A pool belongs to exactly
     /// one stream, so reuse is ordered without a host wait. No size-class strings.
     pub fn scratch(&mut self, bytes: usize) -> Result<Buffer> {
@@ -1038,6 +1058,34 @@ impl Default for Constants {
     }
 }
 impl Constants {
+    /// Pack an entry point whose scalar arguments are all unsigned Loom indices.
+    /// Loom lowers a homogeneous index list to 32- or 64-bit slots depending on
+    /// its range analysis. This adapter is only for that model contract; mixed
+    /// scalar types must use `push` with their explicit native widths.
+    pub fn indices(kernel: &Kernel, values: &[u32]) -> Result<Self> {
+        let size = kernel.info.constant_byte_length as usize;
+        let mut constants = Self::new();
+        if values.is_empty() {
+            if size != 0 {
+                return Err(Error::Message("missing index constants".into()));
+            }
+            return Ok(constants);
+        }
+        if size == values.len() * 4 {
+            for &value in values {
+                constants.push(value)?;
+            }
+        } else if size == values.len() * 8 {
+            for &value in values {
+                constants.push(u64::from(value))?;
+            }
+        } else {
+            return Err(Error::Message(
+                "export is not a homogeneous 32/64-bit index list".into(),
+            ));
+        }
+        Ok(constants)
+    }
     /// Create an empty constant block.
     pub fn new() -> Self {
         Self::default()

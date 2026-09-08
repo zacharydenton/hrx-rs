@@ -78,8 +78,8 @@ impl Args {
         self.push(&(value.address() as u64).to_ne_bytes(), 8)
     }
 
-    /// A kernarg blob a caller already has, for the test bridge that passes
-    /// one straight through from Python.
+    /// A caller-owned kernarg blob. Prefer typed arguments so HRX can track
+    /// referenced allocations precisely.
     pub fn raw(&mut self, bytes: &[u8]) -> Result<&mut Self, super::Error> {
         if bytes.len() > CAPACITY {
             return Err(super::Error::Message("kernel argument overflow".into()));
