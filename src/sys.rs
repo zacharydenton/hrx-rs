@@ -112,11 +112,6 @@ native_api! {
     fn hrx_stream_create(device: Device, flags: u32, out_stream: *mut Stream) -> Status;
     fn hrx_stream_release(stream: Stream) -> ();
     fn hrx_stream_synchronize(stream: Stream) -> Status;
-    fn hrx_buffer_allocate(stream: Stream,
-    size: usize,
-    memory_type: u32,
-    usage: u32,
-    out_buffer: *mut Buffer,) -> Status;
     fn hrx_buffer_release(buffer: Buffer) -> ();
     fn hrx_stream_fill_buffer(stream: Stream,
     buffer: Buffer,
@@ -180,11 +175,6 @@ native_api! {
     size: usize,) -> Status;
     fn hrx_stream_flush(stream: Stream) -> Status;
     fn hrx_stream_query(stream: Stream, complete: *mut bool) -> Status;
-    fn hrx_stream_update_buffer(stream: Stream,
-    source: *const c_void,
-    size: usize,
-    buffer: Buffer,
-    offset: usize,) -> Status;
     fn hrx_graph_create(device: Device, flags: u32, graph: *mut Graph) -> Status;
     fn hrx_graph_release(graph: Graph) -> ();
     fn hrx_graph_add_kernel_node(graph: Graph,
@@ -323,7 +313,7 @@ pub(crate) fn runtime_lock() -> crate::Result<crate::bundle::Lock> {
 }
 fn api() -> &'static Api {
     API.get()
-        .expect("call Gpu::open or Device::open before raw HRX functions")
+        .expect("open a Device or Stream before raw HRX functions")
 }
 
 pub const STATUS_ALREADY_EXISTS: c_int = 6;
@@ -334,7 +324,6 @@ pub const MEMORY_TYPE_HOST_LOCAL: u32 = 0x0000_0040 | MEMORY_TYPE_HOST_VISIBLE;
 pub const MEMORY_TYPE_DEVICE_VISIBLE: u32 = 0x0000_0010;
 pub const MEMORY_ACCESS_ALL: u16 = 7;
 pub const BUFFER_USAGE_MAPPING_SCOPED: u32 = 0x0100_0000;
-pub const DISPATCH_FLAG_CUSTOM_DIRECT_ARGUMENTS: u32 = 1;
 // The pinned native implementation ignores this field and uses executable metadata.
 pub const SUBGROUP_SIZE_FROM_EXECUTABLE: u32 = 0;
 

@@ -1,7 +1,7 @@
 //! GPU execution and Loom compilation without a build-time native dependency.
 //!
-//! Native libraries are verified and loaded on first use; CPU-only consumers and
-//! C ABI metadata calls never initialise the GPU. See [`bundle`] for offline setup.
+//! Native libraries are verified and loaded on first use. See [`bundle`] for
+//! offline setup.
 pub mod bundle;
 mod runtime;
 #[allow(dead_code)]
@@ -9,12 +9,6 @@ mod sys;
 mod target;
 pub use runtime::*;
 pub use target::{TARGET_FAMILY, TARGET_KEY, Target};
-/// Compatibility for address-based kernels. New code should use
-/// owned buffers and binding dispatch through [`Stream`].
-#[cfg(feature = "compat")]
-pub mod compat;
-#[cfg(feature = "ffi")]
-pub mod ffi;
 #[cfg(feature = "loom")]
 pub mod loom;
 

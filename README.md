@@ -2,7 +2,7 @@
 
 Rust GPU execution and in-process Loom compilation, built on
 [HRX](https://github.com/ROCm/hrx-system). Includes owned buffers, ordered streams,
-events, graph replay, and helpers for model C APIs.
+events and graph replay.
 
 Requires Rust 1.88 or later. GPU execution supports Linux x86_64 with an AMD kernel
 driver and access to `/dev/kfd` and the render device; gfx1151 is the tested
@@ -61,10 +61,8 @@ Once prepared, `HRX_OFFLINE=1` disables network provisioning.
 | `HRX_OFFLINE` | Disable network provisioning when set |
 | `HRX_LOOM_LIBRARY` | Override the path to `libloomc.so` |
 
-Default features are `download`, `loom`, and `ffi`. Enable `runner` for the `hrx`
-and `loomrun` CLIs, or `compat` for the legacy address-based API. The `ffi` module
-provides helpers for application-defined C entrypoints; models define their own
-exported functions and request types.
+Default features are `download` and `loom`. Enable `runner` for the `hrx` and
+`loomrun` CLIs. `Stream` is the execution API; dispatch takes explicit `Constants`.
 
 ## Development
 
@@ -74,6 +72,6 @@ cargo clippy --all-features --all-targets -- -D warnings
 cargo doc --all-features --no-deps --open
 ```
 
-See [VALIDATION.md](VALIDATION.md) for GPU tests and the feature matrix,
+See [VALIDATION.md](VALIDATION.md) for GPU tests, stream benchmarks and the feature matrix,
 [CHANGELOG.md](CHANGELOG.md) for API changes, and [THIRD-PARTY.md](THIRD-PARTY.md)
 for native distribution status. The Rust code is [MIT licensed](LICENSE).

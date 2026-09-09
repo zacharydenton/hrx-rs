@@ -8,17 +8,17 @@ and without runtime, compiler or HSA library overrides.
 
 | Check | Result |
 | --- | --- |
-| CPU tests | 31 passed |
-| Rust API doctests | 3 passed |
-| Ignored runtime and compiler tests | 15 passed |
-| Feature matrix | All 32 subsets build, including on Rust 1.88 |
+| CPU tests | 23 passed |
+| Rust API doctests | 1 passed |
+| Ignored runtime and compiler tests | 13 passed |
+| Feature matrix | All 8 subsets build, including on Rust 1.88 |
 | Clippy | Passes with warnings denied on stable and Rust 1.88 |
 | Rustdoc | Passes with warnings denied |
 | Package contents | Internal review documents excluded |
 
 The native tests cover queued transfers, staging batching and reuse, event
-ordering between streams, rejection of shared scratch allocations, argument
-packing, workgroup validation,
+ordering between streams, moving pending streams between threads, rejection of
+shared scratch allocations, argument packing, workgroup validation,
 resource retention, graph replay, compiler caching and diagnostics.
 
 The tested archive SHA-256 is:
@@ -29,7 +29,8 @@ c151a978eff1c7def5c54b9acfd595cc1e8ca21b793b4613864a18281d846bb1
 
 A cached directory matched every file digest in `bundle.json`. Repacking it
 reproduced this archive hash and replaced the stale `34591d78…` archive in
-`artifacts/`. The anonymous release URL still returns 404. Dependency provenance
+`artifacts/`. The anonymous release URL returned 404 during the initial bundle
+check; availability was not rechecked for the Stream refactor. Dependency provenance
 and notices remain incomplete; see [THIRD-PARTY.md](THIRD-PARTY.md).
 
 To repeat the bundle check with an empty cache:
@@ -46,6 +47,47 @@ HRX_OFFLINE=1 cargo test --all-features -- --ignored --test-threads=1
 These results cover this crate. Consumer model quality and performance were not
 retested. Only gfx1151 was exercised; GPU timestamp profiling is not implemented.
 
+## Stream performance
+
+Release builds on the same Ryzen AI MAX+ 395 / Radeon 8060S (gfx1151), using
+Rust 1.95.0-nightly (5fb2ff861), Linux 7.2.3 and the bundle above. The baseline is
+commit `af2f7c7`; the candidate removes `Gpu`, `compat` and the application C API
+helpers. Both run the same [benchmark](examples/stream_bench.rs) through `Stream`.
+
+| Operation | Baseline | Stream after removal |
+| --- | ---: | ---: |
+| Queued upload, 256 MiB in 4 MiB chunks | 23.80 GiB/s | 24.08 GiB/s |
+| Dispatch recording, host time per kernel | 131 ns | 131 ns |
+| Dispatch batch through completion, per kernel | 2.158 µs | 2.154 µs |
+| Graph replay, host time per 32-kernel replay | 815 ns | 815 ns |
+| Graph batch through completion, per kernel | 2.200 µs | 2.194 µs |
+| Scratch acquire/recycle, 1 MiB | 43.1 ns | 43.8 ns |
+| Allocate/drop, 1 MiB | 367 ns | 361 ns |
+
+Each process discards three warmups and takes the median of nine samples. The
+table takes the median of five processes per version, alternating execution
+order. Compilation, loading and initial data setup are outside the timed sections.
+Each dispatch sample records 2,048 kernels; each graph sample replays 32 kernels
+256 times. Samples end with stream synchronization. Upload and kernel outputs
+are checked. Scratch samples contain 50,000 acquire/recycle pairs; allocation
+samples contain 2,000 allocate/drop pairs.
+
+The measured medians differ by less than 2%. Graph replay reduces host recording
+work to roughly 25 ns per kernel here, but does not improve completed throughput
+for this tiny, serial Euler kernel. These are wall-clock measurements, including
+native runtime costs, not GPU timestamps or model benchmarks. The upload result
+includes the host staging copy on this integrated GPU; it is not PCIe bandwidth.
+
+To run after preparing the bundle:
+
+```sh
+HRX_OFFLINE=1 cargo run --release --example stream_bench
+```
+
+To compare another revision, copy `examples/stream_bench.rs` into its checkout,
+build both with the same Rust toolchain, and alternate their release binaries.
+Keep other GPU work idle and use the same native bundle for both.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on pushes and pull requests using stable
@@ -61,4 +103,4 @@ The GPU job provisions an empty cache and runs every ignored test, including
 compiler and library tests. It fails if provisioning fails. The optional
 repository variable `HRX_BUNDLE_MANIFEST` is an HTTPS URL to a mirror manifest;
 the workflow downloads it and sets the process environment variable to its local
-path. Without a mirror, the job uses the currently unavailable pinned release.
+path. Without a mirror, the job uses the pinned release.

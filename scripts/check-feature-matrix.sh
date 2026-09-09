@@ -2,10 +2,10 @@
 # Check every subset, including runner without an explicit loom feature.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-features=(download loom ffi runner compat)
-for ((mask=0; mask<32; mask++)); do
+features=(download loom runner)
+for ((mask=0; mask<(1 << ${#features[@]}); mask++)); do
   selected=()
-  for ((bit=0; bit<5; bit++)); do
+  for ((bit=0; bit<${#features[@]}; bit++)); do
     if ((mask & (1 << bit))); then
       selected+=("${features[bit]}")
     fi
