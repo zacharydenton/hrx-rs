@@ -17,6 +17,15 @@ bundle or a documented host library. The Arch library chain and `loom-compile`
 are absent. Source hashes match the recorded upstream manifests; this does not
 claim byte-identical reconstruction of AMD's CI build.
 
+The final archive also passed all 13 native tests from an isolated checkout of
+commit `2530451`. The public default URL installed into a second empty cache
+without GitHub authentication, and `HRX_OFFLINE=1 hrx info` initialized gfx1151.
+The source archive returns HTTP 200 anonymously; GitHub reports matching SHA-256
+digests for both uploaded archives.
+
+Cargo's publishing dry run passed, packaging 70 files (185.1 KiB compressed) and
+successfully compiling the packaged crate. No crates.io upload was performed.
+
 See [native/RELEASE.md](native/RELEASE.md) for source and build evidence.
 
 ## Original bundle results, 2026-09-09
