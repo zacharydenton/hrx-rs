@@ -57,7 +57,7 @@ fn parse_triple(text: &str, what: &str) -> Result<[u32; 3], String> {
         out[i] = part
             .trim()
             .parse()
-            .map_err(|_| format!("{what} component {:?} is not a number", part))?;
+            .map_err(|_| format!("{what} component {part:?} is not a number"))?;
     }
     Ok(out)
 }

@@ -123,7 +123,7 @@ pub unsafe fn slice<'a, T>(p: *const T, count: usize) -> Result<&'a [T]> {
     }
 }
 /// # Safety
-/// As [`slice`], with exclusive writable access for `'a`.
+/// As [`slice()`], with exclusive writable access for `'a`.
 pub unsafe fn slice_mut<'a, T>(p: *mut T, count: usize) -> Result<&'a mut [T]> {
     check_span(p, count)?;
     if count == 0 {
@@ -168,13 +168,4 @@ impl Cancellation {
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
-}
-
-/// Only expands a call body; exported names and C declarations remain visible
-/// to cbindgen. The caller supplies its ABI's status mapping.
-#[macro_export]
-macro_rules! ffi_call {
-    ($out:expr, $capacity:expr, $panic_code:expr, $body:expr) => {
-        $crate::ffi::boundary($out, $capacity, $panic_code, $body)
-    };
 }

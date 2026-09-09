@@ -21,7 +21,8 @@ fn foreign_spans_and_error_buffers() {
     let status = unsafe { ffi::boundary(error.as_mut_ptr(), error.len(), 1, || Ok(())) };
     assert_eq!(status, 0);
     assert_eq!(error[0], 0);
-    let status = unsafe { hrx::ffi_call!(error.as_mut_ptr(), error.len(), 7, || panic!("boom")) };
+    let status =
+        unsafe { hrx::ffi::boundary(error.as_mut_ptr(), error.len(), 7, || panic!("boom")) };
     assert_eq!(status, 7);
 }
 #[test]

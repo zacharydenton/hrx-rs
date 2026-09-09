@@ -1,0 +1,30 @@
+name: gfx1151
+on: [push, workflow_dispatch]
+permissions:
+  contents: read
+concurrency:
+  group: gfx1151
+  cancel-in-progress: false
+jobs:
+  native:
+    runs-on: [self-hosted, linux, x64, gfx1151]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - name: Provision and test the native bundle
+        env:
+          BUNDLE_MIRROR: ${{ vars.HRX_BUNDLE_MANIFEST }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HRX_CACHE_DIR="$RUNNER_TEMP/hrx-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          unset HRX_RUNTIME_DIR KREA2_RUNTIME HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST HRX_OFFLINE IREE_HAL_AMDGPU_LIBHSA_PATH
+          if [[ -n "$BUNDLE_MIRROR" ]]; then
+            curl --fail --location --proto '=https' "$BUNDLE_MIRROR" --output "$RUNNER_TEMP/hrx-manifest.json"
+            export HRX_BUNDLE_MANIFEST="$RUNNER_TEMP/hrx-manifest.json"
+          fi
+          cargo +stable run --locked --all-features --bin hrx -- prepare
+          export HRX_OFFLINE=1
+          cargo +stable run --locked --all-features --bin hrx -- info
+          cargo +stable test --locked --all-features -- --ignored --test-threads=1

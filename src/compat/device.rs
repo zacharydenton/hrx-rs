@@ -79,11 +79,13 @@ impl Buffer {
 struct State {
     stream: sys::Stream,
     pending: BTreeMap<usize, Arc<Allocation>>,
+    allocations: Vec<Weak<Allocation>>,
 }
 unsafe impl Send for State {}
 /// A thread-safe, mutex-serialized compatibility command stream.
 pub struct Device {
     device: sys::Device,
+    target: crate::Target,
     state: Mutex<State>,
 }
 unsafe impl Send for Device {}
@@ -114,40 +116,51 @@ pub fn try_device() -> Result<Arc<Device>> {
     crate::cached_init(&DEFAULT, Device::open)
 }
 impl Device {
-    /// Open an independent stream on a supported GPU.
+    /// Open a stream on the first GPU matching the default compiler target.
     pub fn open() -> Result<Arc<Self>> {
+        Self::open_for_target(&crate::Target::default())
+    }
+    /// Open a stream on the first GPU reporting the requested architecture.
+    pub fn open_for_target(target: &crate::Target) -> Result<Arc<Self>> {
         crate::runtime::initialize_runtime()?;
+        let mut count = 0;
         unsafe {
-            let mut count = 0;
             check(sys::hrx_gpu_device_count(&mut count))?;
-            for index in 0..count {
-                let mut device = std::ptr::null_mut();
-                check(sys::hrx_gpu_device_get(index, &mut device))?;
-                let mut arch = [0u8; 64];
-                check(sys::hrx_device_get_property(
-                    device,
-                    1,
-                    arch.as_mut_ptr().cast(),
-                    arch.len(),
-                ))?;
-                if arch.split(|b| *b == 0).next() != Some(b"gfx1151") {
-                    continue;
-                }
-                let mut stream = std::ptr::null_mut();
-                check(sys::hrx_stream_create(device, 0, &mut stream))?;
-                return Ok(Arc::new(Self {
-                    device,
-                    state: Mutex::new(State {
-                        stream,
-                        pending: BTreeMap::new(),
-                    }),
-                }));
+        }
+        for index in 0..count {
+            let (_, architecture) = crate::runtime::open_device(index)?;
+            if &architecture == target {
+                return Self::open_device(index);
             }
         }
-        Err(Error::Message("gfx1151 GPU required".into()))
+        Err(Error::Message(format!(
+            "no GPU matching {}",
+            target.as_str()
+        )))
     }
-    /// Nested block sessions inherit their pipeline's stream; standalone sessions
-    /// open one of their own. Legacy low-level callers still have a default stream.
+    /// Open an independent stream on the selected GPU index.
+    pub fn open_device(index: i32) -> Result<Arc<Self>> {
+        let (device, target) = crate::runtime::open_device(index)?;
+        unsafe {
+            let mut stream = std::ptr::null_mut();
+            check(sys::hrx_stream_create(device, 0, &mut stream))?;
+            Ok(Arc::new(Self {
+                device,
+                target,
+                state: Mutex::new(State {
+                    stream,
+                    pending: BTreeMap::new(),
+                    allocations: Vec::new(),
+                }),
+            }))
+        }
+    }
+    /// Architecture reported by the selected device.
+    pub fn target(&self) -> &crate::Target {
+        &self.target
+    }
+    /// Return the current thread's scoped stream, or open an independent stream
+    /// when no scope is active.
     pub fn current_or_new() -> Result<Arc<Self>> {
         CURRENT
             .with(|c| c.borrow().clone())
@@ -188,9 +201,9 @@ impl Device {
             check(sys::hrx_allocator_allocate_buffer(
                 sys::hrx_device_allocator(self.device),
                 sys::BufferParams {
-                    memory_type: 0x30 | 2,
-                    access: 7,
-                    usage: 0xc03 | 0x0100_0000,
+                    memory_type: sys::MEMORY_TYPE_DEVICE_LOCAL | sys::MEMORY_TYPE_HOST_VISIBLE,
+                    access: sys::MEMORY_ACCESS_ALL,
+                    usage: sys::BUFFER_USAGE_DEFAULT | sys::BUFFER_USAGE_MAPPING_SCOPED,
                     queue_affinity: u64::MAX,
                 },
                 bytes,
@@ -211,6 +224,14 @@ impl Device {
                 .lock()
                 .map_err(|_| Error::Message("allocation registry poisoned".into()))?
                 .insert(pointer as usize, Arc::downgrade(&allocation));
+            {
+                let mut state = self.lock()?;
+                // Bound dead weak entries even when this stream never uses raw arguments.
+                if state.allocations.len() % 64 == 0 {
+                    state.allocations.retain(|a| a.strong_count() != 0);
+                }
+                state.allocations.push(Arc::downgrade(&allocation));
+            }
             Ok(Buffer {
                 allocation,
                 stream: Arc::downgrade(self),
@@ -331,21 +352,21 @@ impl Device {
     ) -> Result<()> {
         let mut state = self.lock()?;
         if args.opaque {
-            // Raw arguments must name only allocations owned by this stream;
-            // the unsafe launch contract covers addresses without metadata.
-            let candidates: Vec<_> = ALLOCATIONS
-                .lock()
-                .map_err(|_| Error::Message("allocation registry poisoned".into()))?
-                .values()
-                .cloned()
-                .collect();
-            for allocation in candidates {
-                if let Some(a) = allocation.upgrade()
-                    && std::ptr::eq(a.owner.as_ptr(), self)
-                {
-                    state.pending.insert(a.address, a);
+            // O(live allocations on this stream), independent of other sessions.
+            // Explicit pointer arguments avoid this conservative raw-blob fallback.
+            let State {
+                allocations,
+                pending,
+                ..
+            } = &mut *state;
+            allocations.retain(|allocation| {
+                if let Some(a) = allocation.upgrade() {
+                    pending.entry(a.address).or_insert(a);
+                    true
+                } else {
+                    false
                 }
-            }
+            });
         } else {
             for &address in &args.pointers[..args.pointer_count] {
                 // Prepared model dispatches normally reuse already-retained
@@ -372,7 +393,7 @@ impl Device {
                 args.as_bytes().len(),
                 std::ptr::null(),
                 0,
-                1,
+                sys::DISPATCH_FLAG_CUSTOM_DIRECT_ARGUMENTS,
             ))
         }
     }

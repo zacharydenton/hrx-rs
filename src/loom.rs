@@ -37,15 +37,22 @@ pub struct Diagnostic {
     /// One-based source column, or zero when unavailable.
     pub column: u32,
 }
-/// Limits for reusable compiler scratch. No background work is started.
+/// Compiler target and limits for concurrent workspaces and cached modules.
 #[derive(Clone, Debug)]
 pub struct CompilerOptions {
     /// Maximum number of simultaneous compilations through this compiler.
     pub workers: NonZeroUsize,
+    /// Architecture used by the Loom target profile and artifact cache.
+    pub target: crate::Target,
+    /// Maximum retained source modules; zero disables module caching.
+    /// Eviction chooses an arbitrary entry, not the least recently used module.
+    pub module_cache_capacity: usize,
 }
 impl Default for CompilerOptions {
     fn default() -> Self {
         Self {
+            target: crate::Target::default(),
+            module_cache_capacity: 64,
             workers: NonZeroUsize::new(
                 std::thread::available_parallelism()
                     .map_or(1, NonZeroUsize::get)
@@ -59,6 +66,8 @@ struct Inner {
     // Indexes are released before prepared compiler state when the session ends.
     modules: Mutex<HashMap<String, Arc<ModuleData>>>,
     native: native::Prepared,
+    target: crate::Target,
+    module_cache_capacity: usize,
     path: PathBuf,
     identity: String,
 }
@@ -92,7 +101,8 @@ impl Compiler {
             None => fs::canonicalize(bundle::resolve()?.join("libloomc.so"))?,
         };
         let identity = bundle::file_digest(&path)?;
-        let native = native::Prepared::open(&path, &identity, options.workers.get())?;
+        let native =
+            native::Prepared::open(&path, &identity, options.workers.get(), &options.target)?;
         if bundle::file_digest(&path)? != identity {
             return Err(Error::Message(
                 "compiler library changed while loading".into(),
@@ -101,9 +111,15 @@ impl Compiler {
         Ok(Self(Arc::new(Inner {
             modules: Mutex::new(HashMap::new()),
             native,
+            target: options.target,
+            module_cache_capacity: options.module_cache_capacity,
             path,
             identity,
         })))
+    }
+    /// Architecture selected for every compilation by this compiler.
+    pub fn target(&self) -> &crate::Target {
+        &self.0.target
     }
     /// Content identity of the loaded compiler library.
     pub fn identity(&self) -> &str {
@@ -118,16 +134,23 @@ impl Compiler {
     pub fn module(&self, source: &str) -> Module {
         let digest = bundle::digest(source.as_bytes());
         let mut modules = self.0.modules.lock().unwrap_or_else(|e| e.into_inner());
-        let data = modules
-            .entry(digest.clone())
-            .or_insert_with(|| {
-                Arc::new(ModuleData {
-                    source: source.into(),
-                    digest,
-                    index: Mutex::new(None),
-                })
-            })
-            .clone();
+        let data = if let Some(data) = modules.get(&digest) {
+            data.clone()
+        } else {
+            let data = Arc::new(ModuleData {
+                source: source.into(),
+                digest: digest.clone(),
+                index: Mutex::new(None),
+            });
+            if self.0.module_cache_capacity != 0 {
+                if modules.len() >= self.0.module_cache_capacity {
+                    let victim = modules.keys().next().cloned().unwrap();
+                    modules.remove(&victim);
+                }
+                modules.insert(digest, data.clone());
+            }
+            data
+        };
         Module {
             compiler: self.clone(),
             data,
@@ -236,7 +259,7 @@ impl Artifact {
     }
 }
 struct Compiled {
-    bytes: Vec<u8>,
+    bytes: Arc<[u8]>,
     diagnostics: Vec<Diagnostic>,
     report: Option<serde_json::Value>,
 }
@@ -253,7 +276,7 @@ impl Module {
             self.compiler.identity(),
             self.identity(),
             &spec.symbol,
-            crate::TARGET_KEY,
+            self.compiler.0.target.as_str(),
             &spec.config,
             spec.report,
         ))?))
@@ -290,7 +313,7 @@ impl Module {
         let record = Record {
             key,
             compiler: self.compiler.identity().into(),
-            target: crate::TARGET_KEY.into(),
+            target: self.compiler.0.target.as_str().into(),
             symbol: spec.symbol.clone(),
             sha256: bundle::digest(&compiled.bytes),
             diagnostics,
@@ -315,7 +338,7 @@ impl Module {
         bundle::publish(staging, &dir)?;
         fs::File::open(cache)?.sync_all()?;
         Ok(Artifact {
-            bytes: compiled.bytes.into(),
+            bytes: compiled.bytes,
             path: dir.join("kernel.hsaco"),
             record,
         })
@@ -340,4 +363,35 @@ fn cached(dir: &Path, key: &str) -> Option<Artifact> {
         path,
         record,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires libloomc.so, no GPU"]
+    fn module_cache_eviction_preserves_live_modules() -> Result<()> {
+        let compiler = Compiler::with_options(
+            None,
+            CompilerOptions {
+                module_cache_capacity: 2,
+                ..Default::default()
+            },
+        )?;
+        let first = compiler.module(include_str!("../tests/kernels/euler.loom"));
+        let first_id = first.identity().to_owned();
+        for i in 0..8 {
+            compiler.module(&format!("// source {i}"));
+            assert!(compiler.0.modules.lock().unwrap().len() <= 2);
+        }
+        compiler.trim();
+        assert!(compiler.0.modules.lock().unwrap().is_empty());
+        assert_eq!(first.identity(), first_id);
+        let cache = tempfile::tempdir()?;
+        let mut spec = Specialization::new("krea2_euler");
+        spec.config.insert("krea2.euler.grid_x".into(), "1".into());
+        spec.config.insert("krea2.euler.grid_y".into(), "1".into());
+        assert!(!first.compile(&spec, cache.path())?.bytes().is_empty());
+        Ok(())
+    }
 }

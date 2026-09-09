@@ -67,6 +67,7 @@ fn concurrent_specializations_use_exclusive_workspaces() -> hrx::Result<()> {
         None,
         CompilerOptions {
             workers: NonZeroUsize::new(2).unwrap(),
+            ..CompilerOptions::default()
         },
     )?;
     let m = c.module(SOURCE);

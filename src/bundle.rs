@@ -103,11 +103,12 @@ impl Manifest {
     /// Validate public fields even when constructed directly or deserialized.
     pub fn validate(&self) -> Result<()> {
         let m = self;
-        if m.schema != 1 || m.target != "x86_64-unknown-linux-gnu-gfx1151" {
+        if m.schema != 1 {
             return Err(Error::Message(
                 "unsupported runtime manifest schema or target".into(),
             ));
         }
+        m.gpu_target()?;
         fn sha(s: &str) -> bool {
             s.len() == 64
                 && s.bytes()
@@ -129,6 +130,14 @@ impl Manifest {
             }
         }
         Ok(())
+    }
+    /// Parse the GPU architecture from the supported host platform identifier.
+    pub fn gpu_target(&self) -> Result<crate::Target> {
+        let key = self
+            .target
+            .strip_prefix("x86_64-unknown-linux-gnu-")
+            .ok_or_else(|| Error::Message("unsupported bundle platform".into()))?;
+        crate::Target::new(key)
     }
     /// Validate the manifest and verify every expected regular file in a directory.
     pub fn verify(&self, directory: &Path) -> Result<()> {
@@ -218,7 +227,7 @@ pub fn default_manifest() -> Result<Manifest> {
 pub fn resolve() -> Result<PathBuf> {
     if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         return Err(Error::Message(
-            "this HRX release supports Linux x86_64 / gfx1151".into(),
+            "this HRX release supports Linux x86_64".into(),
         ));
     }
     if let Some(path) =
