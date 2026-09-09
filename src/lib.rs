@@ -23,6 +23,15 @@ pub enum Error {
     /// Invalid input or a contextual diagnostic.
     #[error("{0}")]
     Message(String),
+    /// Structured diagnostics from a failed Loom compiler invocation.
+    #[cfg(feature = "loom")]
+    #[error("Loom compilation failed: {message}")]
+    Compile {
+        /// Rendered diagnostic summary.
+        message: String,
+        /// Complete structured diagnostics.
+        diagnostics: Vec<loom::Diagnostic>,
+    },
     /// An operating-system failure, preserving its error kind and source.
     #[error("{0}")]
     Io(#[from] std::io::Error),

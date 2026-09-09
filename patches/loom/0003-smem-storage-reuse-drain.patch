@@ -1,0 +1,254 @@
+From aa5f5c66acbf2c3ed3caf43fe8f1ab1c20db68e0 Mon Sep 17 00:00:00 2001
+From: Zach Denton <z@chdenton.com>
+Date: Wed, 9 Sep 2026 12:57:26 +0200
+Subject: [PATCH] Fix unordered SMEM completion when reusing destination
+ registers
+
+---
+ .../target/arch/amdgpu/planning/wait_plan.c   |  7 ++-
+ .../amdgpu/test/assembly_allocation.loom-test | 34 ++++++++++
+ .../test/repro/smem_storage_reuse/README.md   | 52 +++++++++++++++
+ .../test/repro/smem_storage_reuse/kernel.loom | 34 ++++++++++
+ .../test/repro/smem_storage_reuse/main.c      | 63 +++++++++++++++++++
+ 5 files changed, 189 insertions(+), 1 deletion(-)
+ create mode 100644 loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/README.md
+ create mode 100644 loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/kernel.loom
+ create mode 100644 loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/main.c
+
+diff --git a/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c b/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c
+index 57df4bdef..b5009d01e 100644
+--- a/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c
++++ b/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c
+@@ -2682,7 +2682,8 @@ static iree_status_t loom_amdgpu_wait_plan_handle_storage_release_action(
+   uint16_t target_count = 0;
+   const uint32_t producer_block =
+       builder->schedule->nodes[lease_record->node_index].block_index;
+-  if (producer_block == action->block_index) {
++  if (producer_block == action->block_index &&
++      action->release_class_id != LOOM_AMDGPU_WAIT_COUNTER_SMEM) {
+     const uint32_t slot =
+         loom_amdgpu_wait_counter_slot_from_id(action->release_class_id);
+     if (!loom_amdgpu_wait_plan_producer_target_count(
+@@ -2690,6 +2691,10 @@ static iree_status_t loom_amdgpu_wait_plan_handle_storage_release_action(
+       target_count = 0;
+     }
+   }
++  // SMEM packets may complete out of order. Releasing their destination
++  // storage requires a full drain, just like consuming their SSA results.
++  // A partial wait here would also mark the producer complete and suppress
++  // the full wait that the following SSA consumer would otherwise request.
+   if (action->release_class_id == LOOM_AMDGPU_WAIT_COUNTER_X &&
+       loom_amdgpu_wait_plan_node_xcnt_group(
+           &builder->node_states[action->insertion_node_index]) ==
+diff --git a/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test b/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test
+index 39ecacc23..7d2bf9e85 100644
+--- a/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test
++++ b/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test
+@@ -190,3 +190,37 @@ low.func.def target<amdgpu.rdna3_5.core>(@target) @d16_tied_sources_assemble_ali
+   ds_write_b32 v0, v14 offset:88
+   ds_write_b32 v0, v15 offset:92
+   s_endpgm
++
++// ====
++
++// RUN: emit amdgpu-assembly @smem_destination_reuse strategy=source
++amdgpu.target<gfx1151> @target
++
++// Reusing the oldest load's destination must drain all scalar-memory packets.
++// The two younger packets may complete first; their count proves no readiness.
++low.func.def target<amdgpu.rdna3_5.core>(@target) @smem_destination_reuse(%base: reg<amdgpu.sgpr x2>, %offset: reg<amdgpu.sgpr>, %input: reg<amdgpu.sgpr>) -> (reg<amdgpu.sgpr>) asm {
++  %first = s_load_dword %base, %offset
++  %second = s_load_dword %base, %offset {offset = 4}
++  %third = s_load_dword %base, %offset {offset = 8}
++  %sum = s_add_u32 %first, %input
++  %sum2 = s_add_u32 %sum, %second
++  %sum3 = s_add_u32 %sum2, %third
++  %later = s_load_dword %base, %offset {offset = 12}
++  %sum4 = s_add_u32 %sum3, %input
++  %result = s_add_u32 %sum4, %later
++  return %result
++}
++
++// ----
++  s_load_dword s4, s[0:1], s2 offset:0
++  s_load_dword s5, s[0:1], s2 offset:4
++  s_load_dword s6, s[0:1], s2 offset:8
++  s_waitcnt vmcnt(63) lgkmcnt(0)
++  s_add_u32 s4, s4, s3
++  s_add_u32 s4, s4, s5
++  s_add_u32 s4, s4, s6
++  s_load_dword s5, s[0:1], s2 offset:12
++  s_add_u32 s0, s4, s3
++  s_waitcnt vmcnt(63) lgkmcnt(0)
++  s_add_u32 s0, s0, s5
++  s_endpgm
+diff --git a/loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/README.md b/loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/README.md
+new file mode 100644
+index 000000000..122425eaa
+--- /dev/null
++++ b/loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/README.md
+@@ -0,0 +1,52 @@
++# Scalar-memory destination reuse
++
++The automatic CPU regression is the `smem_destination_reuse` case in
++`../../assembly_allocation.loom-test`. Run it with a rebuilt `loom-check`:
++
++```sh
++loom-check loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test
++```
++
++Before the fix, the oldest of three pending scalar loads is consumed in an
++instruction that reuses its destination after `s_waitcnt lgkmcnt(2)`. That partial
++wait cannot establish that this particular load completed: scalar-memory packets
++may complete out of order. The storage-release action also marks the producer
++complete, suppressing the full wait normally required by the SSA consumer.
++The fix requires a full SMEM drain for storage reuse, matching SSA consumption.
++Ordered VMEM and LDS waits retain their existing partial-progress behavior.
++
++## Source kernel and optional hardware check
++
++`kernel.loom` is a standalone 34-line source reproducer for the same invalid
++pointer wait. It computes `out = a*t0 + b*t1 + c*t2 + t3`, with four 1 MiB buffers
++and four scalar parameters. Compile it from the repository root:
++
++```sh
++loom-compile loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/kernel.loom \
++  --product=kernel --format=amdgpu-hsaco --target=amdgpu:gfx1151 \
++  --root=@smem_reuse --output=/tmp/smem-reuse.hsaco
++llvm-objdump -d --mcpu=gfx1151 /tmp/smem-reuse.hsaco
++```
++
++The unfixed compiler emits `lgkmcnt(1)` immediately before overwriting `s8:s9`,
++which contain the first input pointer. The fixed compiler emits `lgkmcnt(0)`.
++This assembly difference is deterministic. A GPU fault is timing dependent:
++this reduced kernel completed correctly in the observed run with either binary.
++The original larger conditioning projection faulted in two independent processes
++before the fix and passed its bitwise CPU oracle afterward on gfx1151.
++
++`main.c` is an optional numerical runner using only the public libhrx C API. It
++checks every output against 10.0 with inputs of 1.0 and coefficients 1, 2, 3, 4.
++It exits immediately on a runtime error instead of reusing a faulted queue.
++Running an unfixed binary can fault the GPU; use the CPU fixture for regression
++checks on a machine driving a desktop.
++
++```sh
++# HRX_RUNTIME_DIR is a directory containing libhrx.so and its HSA dependencies.
++cc -std=c11 -Wall -Wextra -Werror -O2 -I libhrx/include \
++  loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/main.c \
++  -L "$HRX_RUNTIME_DIR" -lhrx -o /tmp/smem-repro
++LD_LIBRARY_PATH="$HRX_RUNTIME_DIR" \
++IREE_HAL_AMDGPU_LIBHSA_PATH="$HRX_RUNTIME_DIR/libhsa-runtime64.so.1" \
++  timeout 20s /tmp/smem-repro /tmp/smem-reuse.hsaco
++```
+diff --git a/loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/kernel.loom b/loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/kernel.loom
+new file mode 100644
+index 000000000..ae17447b0
+--- /dev/null
++++ b/loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/kernel.loom
+@@ -0,0 +1,34 @@
++amdgpu.target<gfx1151> @target {subgroup_size = 32}
++kernel.def target(@target) export("smem_reuse") @smem_reuse() {
++  %groups = index.constant 1024 : index
++  %threads = index.constant 256 : index
++  %one = index.constant 1 : index
++  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
++} launch(%t0: f32, %t1: f32, %t2: f32, %t3: f32, %a: buffer, %b: buffer, %c: buffer, %out: buffer) {
++  %zero = index.constant 0 : offset
++  %threads = index.constant 256 : index
++  %group = kernel.workgroup.id<x> : index
++  %lane = kernel.workitem.id<x> : index
++  %base = index.mul %group, %threads : index
++  %i0 = index.add %base, %lane : index
++  %i = index.assume %i0 [range(%i0, 0, 262144)] : index
++  %ag = buffer.assume.memory_space<global> %a : buffer
++  %bg = buffer.assume.memory_space<global> %b : buffer
++  %cg = buffer.assume.memory_space<global> %c : buffer
++  %og = buffer.assume.memory_space<global> %out : buffer
++  %av = buffer.view %ag[%zero] : buffer -> view<262144xf32>
++  %bv = buffer.view %bg[%zero] : buffer -> view<262144xf32>
++  %cv = buffer.view %cg[%zero] : buffer -> view<262144xf32>
++  %ov = buffer.view %og[%zero] : buffer -> view<262144xf32>
++  %x = view.load %av[%i] : view<262144xf32> -> f32
++  %y = view.load %bv[%i] : view<262144xf32> -> f32
++  %z = view.load %cv[%i] : view<262144xf32> -> f32
++  %p0 = scalar.mulf %x, %t0 : f32
++  %p1 = scalar.mulf %y, %t1 : f32
++  %p2 = scalar.mulf %z, %t2 : f32
++  %v0 = scalar.addf %p0, %p1 : f32
++  %v1 = scalar.addf %v0, %p2 : f32
++  %value = scalar.addf %v1, %t3 : f32
++  view.store %value, %ov[%i] : f32, view<262144xf32>
++  kernel.return
++}
+diff --git a/loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/main.c b/loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/main.c
+new file mode 100644
+index 000000000..1d12efd32
+--- /dev/null
++++ b/loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/main.c
+@@ -0,0 +1,63 @@
++// Copyright 2026 The IREE Authors
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++// Standalone hardware reproducer, deliberately outside the automatic CPU tests.
++#include "hrx_runtime.h"
++#include <stdio.h>
++#include <stdlib.h>
++
++static void check(hrx_status_t status) {
++  if (hrx_status_is_ok(status)) return;
++  char* message = NULL;
++  size_t length = 0;
++  hrx_status_t format_status = hrx_status_to_string(status, &message, &length);
++  fprintf(stderr, "%.*s\n", (int)length, message ? message : "");
++  hrx_status_free_message(message);
++  hrx_status_ignore(format_status);
++  hrx_status_ignore(status);
++  // A faulted queue is not reused or synchronized again.
++  exit(1);
++}
++
++int main(int argc, char** argv) {
++  if (argc != 2) {
++    fprintf(stderr, "usage: smem-repro kernel.hsaco\n");
++    return 2;
++  }
++  const size_t count = 262144;
++  const size_t bytes = count * sizeof(float);
++  float* host = malloc(bytes);
++  if (!host) return 2;
++  for (size_t i = 0; i < count; ++i) host[i] = 1.0f;
++  check(hrx_gpu_initialize(0));
++  hrx_device_t device = NULL;
++  check(hrx_gpu_device_get(0, &device));
++  hrx_stream_t stream = NULL;
++  check(hrx_stream_create(device, 0, &stream));
++  hrx_buffer_t buffers[4] = {0};
++  hrx_buffer_ref_t bindings[4] = {0};
++  for (int i = 0; i < 4; ++i) {
++    check(hrx_buffer_allocate(stream, bytes, HRX_MEMORY_TYPE_DEVICE_LOCAL,
++                             HRX_BUFFER_USAGE_DEFAULT, &buffers[i]));
++    check(hrx_synchronous_h2d(device, host, buffers[i], 0, bytes));
++    bindings[i] = (hrx_buffer_ref_t){buffers[i], 0, bytes};
++  }
++  hrx_executable_t executable = NULL;
++  check(hrx_executable_load_file(device, argv[1], "amdgpu", "gfx1151", &executable));
++  uint32_t ordinal = 0;
++  check(hrx_executable_lookup_export_by_name(executable, "smem_reuse", &ordinal));
++  const float constants[4] = {1, 2, 3, 4};
++  const hrx_dispatch_config_t config = {{1024, 1, 1}, {256, 1, 1}, 32};
++  check(hrx_stream_dispatch(stream, executable, ordinal, &config, constants,
++                           sizeof(constants), bindings, 4, 0));
++  check(hrx_stream_synchronize(stream));
++  check(hrx_synchronous_d2h(device, buffers[3], 0, host, bytes));
++  size_t wrong = 0;
++  for (size_t i = 0; i < count; ++i) wrong += host[i] != 10.0f;
++  fprintf(stderr, "%zu / %zu outputs differ from 10.0\n", wrong, count);
++  hrx_executable_release(executable);
++  for (int i = 0; i < 4; ++i) hrx_buffer_release(buffers[i]);
++  hrx_stream_release(stream);
++  hrx_device_release(device);
++  free(host);
++  return wrong ? 1 : 0;
++}
+-- 
+2.55.0
+

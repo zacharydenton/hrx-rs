@@ -124,6 +124,12 @@ native_api! {
     src_offset: usize,
     host_dst: *mut c_void,
     size: usize,) -> Status;
+    fn hrx_executable_load_data(device: Device,
+    data: *const c_void,
+    size: usize,
+    family: *const c_char,
+    key: *const c_char,
+    executable: *mut Executable,) -> Status;
     fn hrx_executable_load_file(device: Device,
     path: *const c_char,
     target_family: *const c_char,

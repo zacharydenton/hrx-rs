@@ -1,0 +1,95 @@
+From f91ad76548f1bbc4738f42f213e7d43c64d617fd Mon Sep 17 00:00:00 2001
+From: Zach Denton <z@chdenton.com>
+Date: Wed, 9 Sep 2026 13:38:56 +0200
+Subject: [PATCH] loom: preserve fragment operand read order with lowering
+ coverage
+
+---
+ .../test/source_low/source_low_mma.loom-test  | 20 +++++++++----------
+ .../source_low_mma_gfx950.loom-test           |  8 ++++----
+ .../transforms/vector/sink_single_use_reads.c |  7 +++++++
+ 3 files changed, 21 insertions(+), 14 deletions(-)
+
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma.loom-test
+index bc24d955e..fe6d283b0 100644
+--- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma.loom-test
++++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma.loom-test
+@@ -3396,18 +3396,18 @@ low.kernel.def target<amdgpu.rdna4.gfx125x.core>(@target) workgroup_size(32, 1,
+   %scale_b_view = resource<hal_binding> {index = 3, source_type = hal.buffer, extent = 4} : reg<amdgpu.sgpr x2>
+   %out_view = resource<hal_binding> {index = 4, source_type = hal.buffer, extent = 1024} : reg<amdgpu.sgpr x2>
+   %32 = v_mov_b32 0
++  %33 = global_load_b128_saddr %32, %lhs_view
++  %35 = global_load_b128_saddr %32, %lhs_view {offset = 16}
++  %37 = global_load_b128_saddr %32, %lhs_view {offset = 32}
++  %39 = global_load_b128_saddr %32, %lhs_view {offset = 48}
++  %lhs = concat(%33, %35, %37, %39) : (reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>) -> reg<amdgpu.vgpr x16>
++  %42 = global_load_b128_saddr %32, %rhs_view
++  %44 = global_load_b128_saddr %32, %rhs_view {offset = 16}
++  %46 = global_load_b128_saddr %32, %rhs_view {offset = 32}
++  %48 = global_load_b128_saddr %32, %rhs_view {offset = 48}
++  %rhs = concat(%42, %44, %46, %48) : (reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>) -> reg<amdgpu.vgpr x16>
+   %scale_a = global_load_b32_saddr %32, %scale_a_view
+   %scale_b = global_load_b32_saddr %32, %scale_b_view
+-  %37 = global_load_b128_saddr %32, %lhs_view
+-  %39 = global_load_b128_saddr %32, %lhs_view {offset = 16}
+-  %41 = global_load_b128_saddr %32, %lhs_view {offset = 32}
+-  %43 = global_load_b128_saddr %32, %lhs_view {offset = 48}
+-  %lhs = concat(%37, %39, %41, %43) : (reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>) -> reg<amdgpu.vgpr x16>
+-  %46 = global_load_b128_saddr %32, %rhs_view
+-  %48 = global_load_b128_saddr %32, %rhs_view {offset = 16}
+-  %50 = global_load_b128_saddr %32, %rhs_view {offset = 32}
+-  %52 = global_load_b128_saddr %32, %rhs_view {offset = 48}
+-  %rhs = concat(%46, %48, %50, %52) : (reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>, reg<amdgpu.vgpr x4>) -> reg<amdgpu.vgpr x16>
+   %init = concat(%32, %32, %32, %32, %32, %32, %32, %32) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>, reg<amdgpu.vgpr>, reg<amdgpu.vgpr>, reg<amdgpu.vgpr>, reg<amdgpu.vgpr>, reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x8>
+   %63 = copy %init : reg<amdgpu.vgpr x8> -> reg<amdgpu.vgpr x8>
+   %result = v_wmma_scale_f32_16x16x128_f8f6f4_f8_f8 %lhs, %rhs, %63, %scale_a, %scale_b {matrix_a_fmt = 1, matrix_b_fmt = 1, matrix_a_scale_fmt = 2, matrix_b_scale_fmt = 2}
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma_gfx950.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma_gfx950.loom-test
+index 039fecb68..b6c339382 100644
+--- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma_gfx950.loom-test
++++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma_gfx950.loom-test
+@@ -793,13 +793,13 @@ low.kernel.def target<amdgpu.cdna4.core>(@target) workgroup_size(64, 1, 1) workg
+   %out_view = resource<hal_binding> {index = 4, source_type = hal.buffer, extent = 1024} : reg<amdgpu.sgpr x2>
+   %32 = v_mov_b32 0
+   %33 = s_mov_b32_m0_imm 0
+-  %scale_a = global_load_dword_saddr %32, %scale_a_view, %33
++  %lhs = global_load_dwordx4_saddr %32, %lhs_view, %33
+   %36 = s_mov_b32_m0_imm 0
+-  %scale_b = global_load_dword_saddr %32, %scale_b_view, %36
++  %rhs = global_load_dwordx4_saddr %32, %rhs_view, %36
+   %39 = s_mov_b32_m0_imm 0
+-  %lhs = global_load_dwordx4_saddr %32, %lhs_view, %39
++  %scale_a = global_load_dword_saddr %32, %scale_a_view, %39
+   %42 = s_mov_b32_m0_imm 0
+-  %rhs = global_load_dwordx4_saddr %32, %rhs_view, %42
++  %scale_b = global_load_dword_saddr %32, %scale_b_view, %42
+   %init = concat(%32, %32, %32, %32) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>, reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x4>
+   %49 = copy %init : reg<amdgpu.vgpr x4> -> reg<amdgpu.vgpr x4>
+   %result = v_mfma_scale_f32_16x16x128_f8f6f4_f4_f4 %lhs, %rhs, %49, %scale_a, %scale_b {matrix_a_fmt = 4, matrix_b_fmt = 4}
+diff --git a/loom/src/loom/transforms/vector/sink_single_use_reads.c b/loom/src/loom/transforms/vector/sink_single_use_reads.c
+index 870d27877..44853fa84 100644
+--- a/loom/src/loom/transforms/vector/sink_single_use_reads.c
++++ b/loom/src/loom/transforms/vector/sink_single_use_reads.c
+@@ -9,6 +9,7 @@
+ #include "loom/analysis/motion.h"
+ #include "loom/ir/module.h"
+ #include "loom/ops/op_defs.h"
++#include "loom/ops/vector/ops.h"
+ #include "loom/rewrite/rewriter.h"
+ 
+ //===----------------------------------------------------------------------===//
+@@ -201,6 +202,12 @@ static bool loom_sink_single_use_reads_find_same_block_user(
+       user_op->block_ordinal <= op->block_ordinal) {
+     return false;
+   }
++  // A read feeding a matrix fragment is an operand-latency load: the source
++  // placed it early on purpose (the LDS or global latency is covered by the
++  // matrix multiplies between the read and its fragment), and sinking it next
++  // to the fragment leaves the multiply waiting on the read. Keep it where the
++  // source put it.
++  if (loom_vector_fragment_isa(user_op)) return false;
+   const loom_trait_flags_t user_traits =
+       loom_op_effective_traits(context->module, user_op);
+   if (!iree_any_bit_set(user_traits, LOOM_TRAIT_PURE) ||
+-- 
+2.55.0
+

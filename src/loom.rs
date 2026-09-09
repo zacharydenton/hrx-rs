@@ -1,211 +1,343 @@
-//! Content-addressed Loom compilation. Prepared kernels stay outside this cold
-//! path; no compiler process, file read, or hash is necessary during dispatch.
+//! In-process Loom compilation with reusable indexed modules and verified disk artifacts.
+#[allow(
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    dead_code,
+    missing_docs,
+    unsafe_op_in_unsafe_fn,
+    clippy::all
+)]
+mod ffi;
+mod native;
 use crate::{
     Error, Result,
     bundle::{self, Lock},
 };
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
-    process::Command,
+    sync::{Arc, Mutex},
 };
 
+/// A compiler diagnostic copied out of native result storage.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Diagnostic {
+    /// Native diagnostic severity (remark, warning, or error).
+    pub severity: u32,
+    /// Stable compiler diagnostic code.
+    pub code: String,
+    /// Rendered diagnostic message.
+    pub message: String,
+    /// One-based source line, or zero when unavailable.
+    pub line: u32,
+    /// One-based source column, or zero when unavailable.
+    pub column: u32,
+}
+/// Limits for reusable compiler scratch. No background work is started.
 #[derive(Clone, Debug)]
-/// A resolved compiler executable and pinned content identity.
-pub struct Compiler {
-    executable: PathBuf,
+pub struct CompilerOptions {
+    /// Maximum number of simultaneous compilations through this compiler.
+    pub workers: NonZeroUsize,
+}
+impl Default for CompilerOptions {
+    fn default() -> Self {
+        Self {
+            workers: NonZeroUsize::new(
+                std::thread::available_parallelism()
+                    .map_or(1, NonZeroUsize::get)
+                    .min(4),
+            )
+            .unwrap(),
+        }
+    }
+}
+struct Inner {
+    // Indexes are released before prepared compiler state when the session ends.
+    modules: Mutex<HashMap<String, Arc<ModuleData>>>,
+    native: native::Prepared,
+    path: PathBuf,
     identity: String,
 }
+/// A pinned compiler library and reusable native state, shared by cheap clones.
+#[derive(Clone)]
+pub struct Compiler(Arc<Inner>);
+impl std::fmt::Debug for Compiler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Compiler")
+            .field("library", &self.0.path)
+            .field("identity", &self.0.identity)
+            .finish_non_exhaustive()
+    }
+}
 impl Compiler {
-    /// Resolve an explicit compiler, LOOM_COMPILE, or the pinned native bundle.
-    /// Reads and hashes the entire compiler to pin its identity. Reuse this object
-    /// across requests; compile also checks the binary before and after execution.
-    pub fn resolve(override_path: Option<&Path>) -> Result<Self> {
-        let path = if let Some(path) = override_path {
-            resolve_executable(path)?
-        } else if let Some(path) = std::env::var_os("LOOM_COMPILE") {
-            resolve_executable(Path::new(&path))?
-        } else {
-            bundle::resolve()?.join("loom-compile")
+    /// Select an explicit library, HRX_LOOM_LIBRARY, or the pinned native bundle.
+    /// This loads CPU compiler code but never opens a GPU. Library mappings stay
+    /// resident until process exit; contexts and workspaces remain session-owned.
+    /// To upgrade a loaded library, select a new path or restart the process.
+    pub fn resolve(library: Option<&Path>) -> Result<Self> {
+        Self::with_options(library, CompilerOptions::default())
+    }
+    /// Resolve a compiler with a bounded number of exclusive workspaces.
+    pub fn with_options(library: Option<&Path>, options: CompilerOptions) -> Result<Self> {
+        let path = match library
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::var_os("HRX_LOOM_LIBRARY").map(PathBuf::from))
+        {
+            Some(p) => fs::canonicalize(&p)
+                .map_err(|e| Error::from(e).context(format!("compiler library {}", p.display())))?,
+            None => fs::canonicalize(bundle::resolve()?.join("libloomc.so"))?,
         };
         let identity = bundle::file_digest(&path)?;
-        Ok(Self {
-            executable: path,
+        let native = native::Prepared::open(&path, &identity, options.workers.get())?;
+        if bundle::file_digest(&path)? != identity {
+            return Err(Error::Message(
+                "compiler library changed while loading".into(),
+            ));
+        }
+        Ok(Self(Arc::new(Inner {
+            modules: Mutex::new(HashMap::new()),
+            native,
+            path,
             identity,
-        })
+        })))
     }
-    /// The canonical compiler executable path.
-    pub fn path(&self) -> &Path {
-        &self.executable
-    }
-    /// The compiler's pinned SHA-256 identity.
+    /// Content identity of the loaded compiler library.
     pub fn identity(&self) -> &str {
-        &self.identity
+        &self.0.identity
     }
-    /// Compute a cache key from this compiler and a validated request.
-    pub fn key(&self, request: &Request<'_>) -> Result<String> {
-        request.validate()?;
-        // JSON arrays preserve boundaries (newline/equals in strings cannot
-        // create collisions), and BTreeMap canonicalizes config ordering.
-        let identity = serde_json::to_vec(&(
-            1,
-            &self.identity,
-            request.source,
-            request.symbol,
-            request.backend,
-            request.target,
-            &request.config,
-        ))?;
-        Ok(bundle::digest(&identity))
+    /// Selected compiler library path.
+    pub fn library_path(&self) -> &Path {
+        &self.0.path
     }
-    /// Return a verified artifact, compiling once under a per-key process lock.
-    /// Failures clean up staging and never publish partial output.
-    pub fn compile(&self, request: &Request<'_>, cache: &Path) -> Result<PathBuf> {
-        let key = self.key(request)?;
-        let directory = cache.join(&key);
-        let output = directory.join("kernel.hsaco");
-        if verified(&directory) {
-            return Ok(output);
+    /// Retain a source module, sharing its parsed index across specializations.
+    /// Parsing is deferred until the first artifact-cache miss.
+    pub fn module(&self, source: &str) -> Module {
+        let digest = bundle::digest(source.as_bytes());
+        let mut modules = self.0.modules.lock().unwrap_or_else(|e| e.into_inner());
+        let data = modules
+            .entry(digest.clone())
+            .or_insert_with(|| {
+                Arc::new(ModuleData {
+                    source: source.into(),
+                    digest,
+                    index: Mutex::new(None),
+                })
+            })
+            .clone();
+        Module {
+            compiler: self.clone(),
+            data,
         }
-        bundle::create_cache_dir(cache)?;
-        let _lock = Lock::acquire(&cache.join(format!("{key}.lock")))?;
-        if verified(&directory) {
-            return Ok(output);
-        }
-        if bundle::file_digest(&self.executable)? != self.identity {
-            return Err(Error::Message(
-                "Loom compiler changed during this session".into(),
-            ));
-        }
-        let temporary = tempfile::tempdir_in(cache)?;
-        let source = temporary.path().join("kernel.loom");
-        let result = temporary.path().join("kernel.hsaco");
-        fs::write(&source, request.source)?;
-        let mut command = Command::new(&self.executable);
-        command
-            .arg(&source)
-            .arg(format!("--backend={}", request.backend))
-            .arg(format!("--target={}", request.target))
-            .arg(format!("--root=@{}", request.symbol))
-            .arg(format!("--output={}", result.display()));
-        for (key, value) in &request.config {
-            command.arg(format!("--config={key}={value}"));
-        }
-        // Write diagnostics to disk rather than accumulating unbounded compiler output.
-        let log_path = temporary.path().join("compile.log");
-        let log = fs::File::create(&log_path)?;
-        let status = command
-            .stdout(log.try_clone()?)
-            .stderr(log)
-            .status()
-            .map_err(|e| {
-                Error::from(e).context(format!("starting {}", self.executable.display()))
-            })?;
-        if !status.success() || !result.is_file() || fs::metadata(&result)?.len() == 0 {
-            use std::io::{Read, Seek, SeekFrom};
-            let mut file = fs::File::open(&log_path)?;
-            let length = file.metadata()?.len();
-            file.seek(SeekFrom::Start(length.saturating_sub(8192)))?;
-            let mut tail = Vec::new();
-            file.read_to_end(&mut tail)?;
-            return Err(Error::Message(format!(
-                "Loom compilation failed for {} ({status}):\n{}",
-                request.symbol,
-                String::from_utf8_lossy(&tail)
-            )));
-        }
-        if bundle::file_digest(&self.executable)? != self.identity {
-            return Err(Error::Message(
-                "Loom compiler changed while compiling".into(),
-            ));
-        }
-        fs::write(
-            temporary.path().join("kernel.sha256"),
-            bundle::file_digest(&result)?,
-        )?;
-        fs::File::open(&result)?.sync_all()?;
-        if directory.exists() {
-            fs::remove_dir_all(&directory)?;
-        }
-        fs::File::open(temporary.path().join("kernel.sha256"))?.sync_all()?;
-        fs::File::open(temporary.path())?.sync_all()?;
-        bundle::publish(temporary, &directory)?;
-        fs::File::open(cache)?.sync_all()?;
-        Ok(output)
+    }
+    /// Release idle workspace blocks and cached module references. Existing
+    /// Module handles remain valid; active compilations are unaffected.
+    pub fn trim(&self) {
+        self.0
+            .modules
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.0.native.trim();
     }
 }
-fn verified(path: &Path) -> bool {
-    match (
-        fs::read_to_string(path.join("kernel.sha256")),
-        bundle::file_digest(&path.join("kernel.hsaco")),
-    ) {
-        (Ok(want), Ok(got)) => want == got,
-        _ => false,
-    }
+struct ModuleData {
+    source: Arc<str>,
+    digest: String,
+    index: Mutex<Option<(Arc<native::Index>, Vec<Diagnostic>)>>,
 }
-fn resolve_executable(path: &Path) -> Result<PathBuf> {
-    if path.components().count() == 1
-        && let Some(search) = std::env::var_os("PATH")
-    {
-        for dir in std::env::split_paths(&search) {
-            let candidate = dir.join(path);
-            if candidate.is_file() {
-                return Ok(fs::canonicalize(candidate)?);
-            }
-        }
-    }
-    fs::canonicalize(path)
-        .map_err(|e| Error::from(e).context(format!("compiler {}", path.display())))
+/// Immutable source plus compiler ownership. Clones share the frozen native index.
+#[derive(Clone)]
+pub struct Module {
+    // Release the index before the last compiler/context owner.
+    data: Arc<ModuleData>,
+    compiler: Compiler,
 }
-
-/// Source, export and target configuration for one compiled artifact.
-pub struct Request<'a> {
-    /// Loom source text.
-    pub source: &'a str,
-    /// Root export to compile.
-    pub symbol: &'a str,
-    /// Compiler backend, normally amdgpu-hal.
-    pub backend: &'a str,
-    /// GPU architecture key.
-    pub target: &'a str,
-    /// Fully qualified keys, e.g. `h3.gemm.k_size` or `krea2.gemm.cols`.
+/// One export and its exact configuration within a module.
+#[derive(Clone, Debug, Default)]
+pub struct Specialization {
+    /// Export/root symbol to compile.
+    pub symbol: String,
+    /// Fully qualified configuration keys and Loom value spellings.
     pub config: BTreeMap<String, String>,
+    /// Request a native resource manifest in the resulting artifact.
+    pub report: bool,
 }
-impl<'a> Request<'a> {
-    /// Create a request targeting the supported AMDGPU backend and architecture.
-    pub fn new(source: &'a str, symbol: &'a str) -> Self {
+impl Specialization {
+    /// Select an export with no configuration overrides.
+    pub fn new(symbol: impl Into<String>) -> Self {
         Self {
-            source,
-            symbol,
-            backend: "amdgpu-hal",
-            target: crate::TARGET_KEY,
-            config: BTreeMap::new(),
+            symbol: symbol.into(),
+            ..Self::default()
         }
     }
     fn validate(&self) -> Result<()> {
-        for value in [self.symbol, self.backend, self.target] {
-            if value.is_empty()
-                || !value
-                    .bytes()
+        let valid = |s: &str| {
+            !s.is_empty()
+                && s.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-            {
-                return Err(Error::Message(
-                    "invalid Loom symbol, backend or target".into(),
-                ));
-            }
-        }
-        for key in self.config.keys() {
-            if key.is_empty()
-                || !key
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-            {
-                return Err(Error::Message(format!(
-                    "invalid Loom configuration key {key}"
-                )));
-            }
+        };
+        if !valid(&self.symbol) || self.config.keys().any(|k| !valid(k)) {
+            return Err(Error::Message(
+                "invalid Loom export or configuration key".into(),
+            ));
         }
         Ok(())
     }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Record {
+    key: String,
+    compiler: String,
+    target: String,
+    symbol: String,
+    sha256: String,
+    diagnostics: Vec<Diagnostic>,
+    report: Option<serde_json::Value>,
+}
+/// Owned native executable bytes and their verified compilation metadata.
+#[derive(Clone, Debug)]
+pub struct Artifact {
+    bytes: Arc<[u8]>,
+    path: PathBuf,
+    record: Record,
+}
+impl Artifact {
+    /// Native executable bytes, independent of compiler/result lifetimes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+    /// Durable verified cache artifact path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    /// Compiler library content identity.
+    pub fn compiler_identity(&self) -> &str {
+        &self.record.compiler
+    }
+    /// Exact GPU target key.
+    pub fn target(&self) -> &str {
+        &self.record.target
+    }
+    /// Export compiled into this artifact.
+    pub fn symbol(&self) -> &str {
+        &self.record.symbol
+    }
+    /// Diagnostics retained from successful preparation and compilation.
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.record.diagnostics
+    }
+    /// Optional native resource manifest.
+    pub fn report(&self) -> Option<&serde_json::Value> {
+        self.record.report.as_ref()
+    }
+}
+struct Compiled {
+    bytes: Vec<u8>,
+    diagnostics: Vec<Diagnostic>,
+    report: Option<serde_json::Value>,
+}
+impl Module {
+    /// Identity of the exact source bytes.
+    pub fn identity(&self) -> &str {
+        &self.data.digest
+    }
+    /// Cache identity including compiler, pipeline contract, source and specialization.
+    pub fn key(&self, spec: &Specialization) -> Result<String> {
+        spec.validate()?;
+        Ok(bundle::digest(&serde_json::to_vec(&(
+            "loomc-v1",
+            self.compiler.identity(),
+            self.identity(),
+            &spec.symbol,
+            crate::TARGET_KEY,
+            &spec.config,
+            spec.report,
+        ))?))
+    }
+    /// Compile in process or return verified cached bytes. Publication is atomic
+    /// and serialized per key across threads and processes; failures are retryable.
+    pub fn compile(&self, spec: &Specialization, cache: &Path) -> Result<Artifact> {
+        let key = self.key(spec)?;
+        let dir = cache.join(&key);
+        if let Some(a) = cached(&dir, &key) {
+            return Ok(a);
+        }
+        bundle::create_cache_dir(cache)?;
+        let _lock = Lock::acquire(&cache.join(format!("{key}.lock")))?;
+        if let Some(a) = cached(&dir, &key) {
+            return Ok(a);
+        }
+        let (index, mut diagnostics) = {
+            let mut slot = self.data.index.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_none() {
+                let (index, diagnostics) = self.compiler.0.native.index(&self.data.source)?;
+                *slot = Some((Arc::new(index), diagnostics));
+            }
+            slot.as_ref().unwrap().clone()
+        };
+        let compiled = self.compiler.0.native.compile(&index, spec).map_err(|e| {
+            e.context(format!(
+                "compiling {} with {}",
+                spec.symbol,
+                self.compiler.library_path().display()
+            ))
+        })?;
+        diagnostics.extend(compiled.diagnostics);
+        let record = Record {
+            key,
+            compiler: self.compiler.identity().into(),
+            target: crate::TARGET_KEY.into(),
+            symbol: spec.symbol.clone(),
+            sha256: bundle::digest(&compiled.bytes),
+            diagnostics,
+            report: compiled.report,
+        };
+        let staging = tempfile::tempdir_in(cache)?;
+        let output = staging.path().join("kernel.hsaco");
+        fs::write(&output, &compiled.bytes)?;
+        let metadata = serde_json::to_vec(&record)?;
+        fs::write(staging.path().join("artifact.json"), &metadata)?;
+        fs::write(
+            staging.path().join("artifact.sha256"),
+            bundle::digest(&metadata),
+        )?;
+        for file in ["kernel.hsaco", "artifact.json", "artifact.sha256"] {
+            fs::File::open(staging.path().join(file))?.sync_all()?;
+        }
+        fs::File::open(staging.path())?.sync_all()?;
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        bundle::publish(staging, &dir)?;
+        fs::File::open(cache)?.sync_all()?;
+        Ok(Artifact {
+            bytes: compiled.bytes.into(),
+            path: dir.join("kernel.hsaco"),
+            record,
+        })
+    }
+}
+fn cached(dir: &Path, key: &str) -> Option<Artifact> {
+    let metadata = fs::read(dir.join("artifact.json")).ok()?;
+    if fs::read_to_string(dir.join("artifact.sha256")).ok()? != bundle::digest(&metadata) {
+        return None;
+    }
+    let record: Record = serde_json::from_slice(&metadata).ok()?;
+    if record.key != key {
+        return None;
+    }
+    let path = dir.join("kernel.hsaco");
+    let bytes = fs::read(&path).ok()?;
+    if bytes.is_empty() || bundle::digest(&bytes) != record.sha256 {
+        return None;
+    }
+    Some(Artifact {
+        bytes: bytes.into(),
+        path,
+        record,
+    })
 }

@@ -2,7 +2,7 @@
 use hrx::bundle::{Manifest, digest, prepare};
 use std::{collections::BTreeMap, fs, io::Write};
 fn fixture(dir: &std::path::Path) -> Manifest {
-    let names = ["loom-compile", "libhrx.so", "libhsa-runtime64.so.1"];
+    let names = ["libloomc.so", "libhrx.so", "libhsa-runtime64.so.1"];
     let archive = dir.join("bundle.tar.gz");
     let encoder = flate2::write::GzEncoder::new(
         fs::File::create(&archive).unwrap(),
@@ -67,7 +67,7 @@ fn invalid_manifest_paths_and_missing_components_are_refused() {
     manifest.files.insert("../evil".into(), digest(b"evil"));
     assert!(Manifest::parse(&serde_json::to_vec(&manifest).unwrap()).is_err());
     manifest.files.remove("../evil");
-    manifest.files.remove("loom-compile");
+    manifest.files.remove("libloomc.so");
     assert!(Manifest::parse(&serde_json::to_vec(&manifest).unwrap()).is_err());
 }
 
@@ -97,52 +97,6 @@ fn unchecked_manifests_are_rejected_before_any_installation_io() {
     manifest.archive_sha256 = "../escaped".into();
     assert!(prepare(&manifest, &dir.path().join("uncreated"), false).is_err());
 }
-#[cfg(feature = "loom")]
-#[test]
-fn compiler_cache_includes_content_and_repairs_corrupt_outputs() {
-    use hrx::loom::{Compiler, Request};
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    let executable = dir.path().join("compiler");
-    fs::write(&executable, "#!/bin/sh\nfor arg in \"$@\"; do case \"$arg\" in --output=*) printf artifact > \"${arg#--output=}\";; esac; done\n").unwrap();
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-    let compiler = Compiler::resolve(Some(&executable)).unwrap();
-    let source = Request::new("source", "kernel");
-    let cache = dir.path().join("cache");
-    let first = compiler.compile(&source, &cache).unwrap();
-    fs::write(&first, "corrupt").unwrap();
-    let repaired = compiler.compile(&source, &cache).unwrap();
-    assert_eq!(fs::read(repaired).unwrap(), b"artifact");
-    assert_ne!(
-        compiler.key(&source).unwrap(),
-        compiler.key(&Request::new("changed", "kernel")).unwrap()
-    );
-    let mut changed = Request::new("source", "kernel");
-    changed.config.insert("k.value".into(), "one\ntwo".into());
-    assert_ne!(
-        compiler.key(&source).unwrap(),
-        compiler.key(&changed).unwrap()
-    );
-    let original = fs::read(&executable).unwrap();
-    fs::write(
-        &executable,
-        String::from_utf8(original)
-            .unwrap()
-            .replace("artifact", "ARTIFACT"),
-    )
-    .unwrap();
-    let new_compiler = Compiler::resolve(Some(&executable)).unwrap();
-    assert_ne!(
-        compiler.key(&source).unwrap(),
-        new_compiler.key(&source).unwrap()
-    );
-    assert!(
-        compiler
-            .compile(&Request::new("uncached", "kernel"), &cache)
-            .is_err()
-    );
-}
-
 #[cfg(feature = "runner")]
 #[test]
 fn separate_processes_provision_the_same_cache() {

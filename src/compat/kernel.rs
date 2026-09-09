@@ -73,6 +73,42 @@ impl Kernel {
         }
     }
 
+    /// Load compiler-owned executable bytes directly into the scoped device.
+    ///
+    /// # Safety
+    /// The artifact must be trusted native code, as for [`Kernel::load`].
+    #[cfg(feature = "loom")]
+    pub unsafe fn load_artifact(artifact: &crate::loom::Artifact) -> Result<Kernel> {
+        if artifact.target() != crate::TARGET_KEY {
+            return Err(Error::Message(
+                "artifact target does not match this runtime".into(),
+            ));
+        }
+        let symbol = c_string(artifact.symbol())?;
+        unsafe {
+            let mut raw = std::ptr::null_mut();
+            check(sys::hrx_executable_load_data(
+                device().raw(),
+                artifact.bytes().as_ptr().cast(),
+                artifact.bytes().len(),
+                c"amdgpu".as_ptr(),
+                c"gfx1151".as_ptr(),
+                &mut raw,
+            ))?;
+            let executable = Executable(raw);
+            let mut ordinal = 0;
+            check(sys::hrx_executable_lookup_export_by_name(
+                executable.0,
+                symbol.as_ptr(),
+                &mut ordinal,
+            ))?;
+            Ok(Kernel {
+                executable: Arc::new(executable),
+                ordinal,
+            })
+        }
+    }
+
     /// One dispatch: `grid` workgroups of `block` work items, subgroup size 32.
     /// # Safety
     /// Dimensions and argument layout must match the kernel. Every accessed

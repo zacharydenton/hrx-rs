@@ -123,7 +123,7 @@ impl Manifest {
                 return Err(Error::Message(format!("invalid bundle entry {name}")));
             }
         }
-        for name in ["libhrx.so", "libhsa-runtime64.so.1", "loom-compile"] {
+        for name in ["libhrx.so", "libhsa-runtime64.so.1", "libloomc.so"] {
             if !m.files.contains_key(name) {
                 return Err(Error::Message(format!("bundle is missing {name}")));
             }

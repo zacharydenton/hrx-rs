@@ -1,5 +1,44 @@
 # Validation record
 
+## In-process public compiler rollout, 2026-09-09
+
+Bundle `c151a978eff1c7def5c54b9acfd595cc1e8ca21b793b4613864a18281d846bb1` contains the runtime and Loom
+compiler built from public `ROCm/hrx-system` commit
+`ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d` with the seven patches in
+[patches/loom](patches/loom/README.md). Compiler SHA-256:
+`431baaff0d36c9d61a9a91a04100c6a2ef63f4aa782f0cf05cfdc058e28969b6`. The archive records every patch digest.
+HSA/support libraries retain their previous bytes and provenance limitations.
+
+- All seven patches apply to the pinned public base; patched tracked sources
+  match the sources used for the build.
+- All 138 AMDGPU descriptor tests and 582 non-WASM fixture suites pass.
+  Nine WASM suites require a backend not enabled in this build.
+- The minimal GFX11 source-reuse regression fails before its fix and passes
+  afterward. The fix is published separately as fork commit `beaff74b2`.
+- HRX CPU tests, doctests, Clippy with warnings denied and the build without
+  default features pass. The final archive installs through the normal verifier;
+  its three native compiler tests pass with network access disabled.
+- H3 workspace tests, Clippy and 17 GPU tests pass. Krea's GPU test suite passes.
+- Ten alternating decoder comparisons produce byte-identical RGB, with medians
+  of 4.49 s for the candidate and 4.50 s for the previous compiler at 480x864,
+  22 frames. The discarded extra-wait workaround was about 3.4% slower.
+- For 25 Euler specializations, native compilation and the standalone public
+  CLI produce identical executable bytes. Median compilation is 0.549 ms in
+  process and 1.763 ms through the CLI; verified cache hits take 0.013 ms.
+
+H3's ComfyUI release gate passes both block comparisons and the trajectory
+criterion: relative error after five evaluations is 0.0135 (limit 0.02). Final
+latent cosine is 0.8774; the gate tests early-trajectory agreement and does not
+assert full-trajectory numerical equivalence. This late divergence is also
+documented for earlier H3 runs. Krea's full quality gate passes against the
+installed bundle: cosine 0.997044, relative RMS 0.076912, image PSNR 31.777828 dB
+and zero PSNR loss against the accepted baseline. All six HRX GPU tests pass
+using the installed bundle. The C client compiled against both generated
+headers passes caller-error, concurrent-runtime and drop/reopen checks for
+independently loaded H3 and Krea libraries.
+
+Release: `native-ecaaf7376f7d-loomc` in the private HRX repository.
+
 ## Compiler update, 2026-09-09
 
 Bundle `34591d78d625f9c696657820d04615f3f55a134010a9354c0e455a4c2e60caa0`
@@ -67,7 +106,7 @@ cc -Wall -Wextra -Werror -O2 -I../minimax-h3-loom/include -Ibuild/include \
   ../hrx.rs/tests/c/models.c -ldl -pthread -o /tmp/hrx-models-smoke
 HRX_OFFLINE=1 /tmp/hrx-models-smoke \
   "$PWD/../minimax-h3-loom/target/release/libh3.so" \
-  "$PWD/target/release/libkrea2.so" "$PWD/target/release/libnative_ops_test.so"
+  "$PWD/target/release/libkrea2.so"
 ```
 
 `cargo run --release --example allocator_bench` measured 1000 interleaved idle

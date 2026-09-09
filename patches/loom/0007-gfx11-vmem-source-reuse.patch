@@ -1,0 +1,373 @@
+From beaff74b24ed68eeb63abcf9644f047c4d3643ff Mon Sep 17 00:00:00 2001
+From: Zach Denton <z@chdenton.com>
+Date: Wed, 9 Sep 2026 13:40:12 +0200
+Subject: [PATCH] loom: avoid VMEM completion waits for interlocked GFX11 SGPR
+ sources
+
+GFX11 VMEM address/resource SGPR reads are interlocked against later
+register writes. Holding these sources until VMEM load/store completion
+adds false storage dependencies, delays useful work, and can invalidate
+the cyclic wait frontier when the physical allocator reuses an address.
+
+Publish this target fact for RDNA3, RDNA3.5, generic GFX11 and RDNA4m.
+Keep asynchronous result-write leases, SMEM completion handling, tensor
+leases and GFX12.5 XCNT source tracking intact.
+
+LLVM enables FeatureVMEMtoScalarWriteHazard for GFX10.1, not GFX11.
+Its fixVMEMtoScalarWriteHazards uses source-consumption synchronization,
+not a general rule that memory completion precedes source-register reuse:
+https://github.com/llvm/llvm-project/blob/main/llvm/lib/Target/AMDGPU/AMDGPU.td
+https://github.com/llvm/llvm-project/blob/main/llvm/lib/Target/AMDGPU/GCNHazardRecognizer.cpp
+
+Add a minimal gfx1151 assembly regression that reuses a load's address
+SGPR immediately but waits before consuming its destination VGPR.
+Update branch, allocation and spill fixtures for the shorter SGPR lifetime;
+parameterize descriptor tests to cover both source-lifetime policies.
+
+Validation against the public ecaaf7376 base plus HRX's carried fixes:
+138 descriptor tests, 582 non-WASM fixture suites, 17 H3 GPU tests.
+Ten alternating decoder comparisons produce byte-identical RGB and a
+4.49 s candidate median versus 4.50 s with the previous compiler.
+---
+ .../target/arch/amdgpu/descriptors/api.py     | 27 +++++++++-
+ .../target/arch/amdgpu/descriptors_test.py    | 13 +++--
+ ...low_allocation_rematerialization.loom-test | 20 +++----
+ .../test/source_low/low_wait_plan.loom-test   | 52 +++++++++++++------
+ .../amdgpu/test/allocation_json.loom-test     |  6 +--
+ 5 files changed, 85 insertions(+), 33 deletions(-)
+
+diff --git a/loom/py/loom/target/arch/amdgpu/descriptors/api.py b/loom/py/loom/target/arch/amdgpu/descriptors/api.py
+index f8bc6f6da..30e2ec8ee 100644
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/api.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/api.py
+@@ -1209,6 +1209,7 @@ def _amdgpu_descriptor_storage_leases(
+     descriptor: Descriptor,
+     *,
+     enable_gfx125x_xcnt: bool,
++    vmem_sgpr_sources_interlocked: bool,
+ ) -> tuple[StorageLease, ...]:
+     if descriptor.storage_leases:
+         raise ValueError(
+@@ -1248,6 +1249,16 @@ def _amdgpu_descriptor_storage_leases(
+         _AMDGPU_WAIT_COUNTER_MASKS[_COUNTER_VMEM_STORE]
+         | _AMDGPU_WAIT_COUNTER_MASKS[_COUNTER_TENSOR]
+     )
++    # GFX11 interlocks VMEM SGPR source reads against later register writes.
++    # Their lifetime ends at operand consumption, not memory completion. Keep
++    # result-write leases and the separate tensor/XCNT contracts unchanged.
++    if vmem_sgpr_sources_interlocked:
++        memory_source_read_counter_mask &= ~_AMDGPU_WAIT_COUNTER_MASKS[
++            _COUNTER_VMEM_LOAD
++        ]
++        memory_source_write_counter_mask &= ~_AMDGPU_WAIT_COUNTER_MASKS[
++            _COUNTER_VMEM_STORE
++        ]
+     xcnt_source_counter_mask = (
+         _AMDGPU_WAIT_COUNTER_MASKS[_COUNTER_X]
+         if enable_gfx125x_xcnt
+@@ -1294,7 +1305,10 @@ def _descriptor_result_count(descriptor: Descriptor) -> int:
+ 
+ 
+ def _with_storage_lease_rows(
+-    descriptor_set: DescriptorSet, *, enable_gfx125x_xcnt: bool = False
++    descriptor_set: DescriptorSet,
++    *,
++    enable_gfx125x_xcnt: bool = False,
++    vmem_sgpr_sources_interlocked: bool = False,
+ ) -> DescriptorSet:
+     schedule_classes = {
+         schedule_class.name: schedule_class
+@@ -1307,6 +1321,7 @@ def _with_storage_lease_rows(
+             schedule_classes,
+             descriptor,
+             enable_gfx125x_xcnt=enable_gfx125x_xcnt,
++            vmem_sgpr_sources_interlocked=vmem_sgpr_sources_interlocked,
+         )
+         if storage_leases == descriptor.storage_leases:
+             descriptors.append(descriptor)
+@@ -1440,6 +1455,8 @@ class _AmdgpuCoreDescriptorSetBuilder:
+     source_instruction_names: tuple[str, ...] = ()
+     # Target-owned descriptors that have no XML overlay.
+     extra_descriptors: tuple[Descriptor, ...] = ()
++    # VMEM address/resource SGPR reuse needs no memory-completion wait.
++    vmem_sgpr_sources_interlocked: bool = False
+     # Builder behavior flags.
+     flags: int = 0
+ 
+@@ -1469,12 +1486,14 @@ _AMDGPU_CORE_DESCRIPTOR_SET_BUILDERS = {
+         overlay_descriptors=_gfx9_4_generic_core_overlay_descriptors,
+     ),
+     "rdna3": _AmdgpuCoreDescriptorSetBuilder(
++        vmem_sgpr_sources_interlocked=True,
+         base=_AMDGPU_RDNA3_CORE_DESCRIPTOR_SET_BASE,
+         overlay_rows=_gfx11_core_overlays,
+         overlay_descriptors=_gfx11_core_overlay_descriptors,
+         extra_descriptors=(_s_delay_alu_descriptor(),),
+     ),
+     "gfx11_generic": _AmdgpuCoreDescriptorSetBuilder(
++        vmem_sgpr_sources_interlocked=True,
+         base=_AMDGPU_GFX11_GENERIC_CORE_DESCRIPTOR_SET_BASE,
+         overlay_rows=_gfx11_core_overlays,
+         overlay_descriptors=_gfx11_core_overlay_descriptors,
+@@ -1494,12 +1513,14 @@ _AMDGPU_CORE_DESCRIPTOR_SET_BUILDERS = {
+         flags=_AMDGPU_CORE_DESCRIPTOR_SET_BUILDER_FLAG_GFX125X,
+     ),
+     "rdna3_5": _AmdgpuCoreDescriptorSetBuilder(
++        vmem_sgpr_sources_interlocked=True,
+         base=_AMDGPU_RDNA3_5_CORE_DESCRIPTOR_SET_BASE,
+         overlay_rows=_gfx115x_core_overlays,
+         overlay_descriptors=_gfx115x_core_overlay_descriptors,
+         extra_descriptors=(_s_delay_alu_descriptor(),),
+     ),
+     "rdna4m": _AmdgpuCoreDescriptorSetBuilder(
++        vmem_sgpr_sources_interlocked=True,
+         base=_AMDGPU_RDNA4M_CORE_DESCRIPTOR_SET_BASE,
+         overlay_rows=_rdna4m_core_overlays,
+         overlay_descriptors=_rdna4m_core_overlay_descriptors,
+@@ -1606,7 +1627,9 @@ def _build_amdgpu_core_descriptor_set_from_spec(
+     if is_gfx125x:
+         descriptor_set = _with_gfx125x_vgpr_msb_address_states(descriptor_set)
+     descriptor_set = _with_storage_lease_rows(
+-        descriptor_set, enable_gfx125x_xcnt=is_gfx125x
++        descriptor_set,
++        enable_gfx125x_xcnt=is_gfx125x,
++        vmem_sgpr_sources_interlocked=builder.vmem_sgpr_sources_interlocked,
+     )
+     descriptor_set = _with_instruction_classes(descriptor_set)
+     _validate_descriptor_encoding_formats(target, spec, descriptor_set)
+diff --git a/loom/py/loom/target/arch/amdgpu/descriptors_test.py b/loom/py/loom/target/arch/amdgpu/descriptors_test.py
+index 2c8e3f6c1..02235707c 100644
+--- a/loom/py/loom/target/arch/amdgpu/descriptors_test.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors_test.py
+@@ -353,7 +353,8 @@ def _storage_lease_signature(
+     )
+ 
+ 
+-def test_storage_lease_rows_project_memory_dependencies() -> None:
++@pytest.mark.parametrize("interlocked", (False, True))
++def test_storage_lease_rows_project_memory_dependencies(interlocked: bool) -> None:
+     schedule_class = ScheduleClass(
+         name="amdgpu.test.memory",
+         latency_kind=LatencyKind.VARIABLE,
+@@ -401,7 +402,9 @@ def test_storage_lease_rows_project_memory_dependencies() -> None:
+         _descriptor_set(descriptor), schedule_classes=(schedule_class,)
+     )
+ 
+-    descriptor = _with_storage_lease_rows(descriptor_set).descriptors[0]
++    descriptor = _with_storage_lease_rows(
++        descriptor_set, vmem_sgpr_sources_interlocked=interlocked
++    ).descriptors[0]
+ 
+     pressure_flags = (
+         StorageLeaseFlag.STARTS_AT_ISSUE,
+@@ -412,7 +415,7 @@ def test_storage_lease_rows_project_memory_dependencies() -> None:
+         StorageLeaseFlag.STARTS_AT_ISSUE,
+         StorageLeaseFlag.MAY_CARRY_ACROSS_BOUNDARY,
+     )
+-    assert _storage_lease_signature(descriptor) == (
++    expected = (
+         (
+             StorageLeaseKind.RESULT_WRITE,
+             StorageLeaseAttachment.RESULT,
+@@ -442,6 +445,10 @@ def test_storage_lease_rows_project_memory_dependencies() -> None:
+         ),
+     )
+ 
++    assert _storage_lease_signature(descriptor) == (
++        expected[:1] if interlocked else expected
++    )
++
+ 
+ def test_storage_lease_rows_project_xcnt_over_packet_inputs() -> None:
+     schedule_class = ScheduleClass(
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/low_allocation_rematerialization.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/low_allocation_rematerialization.loom-test
+index c65e97773..e935b91a2 100644
+--- a/loom/src/loom/target/arch/amdgpu/test/source_low/low_allocation_rematerialization.loom-test
++++ b/loom/src/loom/target/arch/amdgpu/test/source_low/low_allocation_rematerialization.loom-test
+@@ -28,38 +28,38 @@ low.func.def target<amdgpu.rdna3.core>(@target) @rematerialization_budget_falls_
+   s_mov_b64 exec, s[4:5]
+   global_load_b32 v0, v3, s[0:1] offset:0
+   global_load_b32 v1, v3, s[0:1] offset:4
+-  s_mov_b64_exec_read s[4:5]
++  s_mov_b64_exec_read s[0:1]
+   s_mov_b64 exec, -1
+   s_waitcnt_vscnt vscnt(0)
+   scratch_load_b32 v4, off, off offset:4 glc:0 slc:0 dlc:0
+-  s_mov_b64 exec, s[4:5]
++  s_mov_b64 exec, s[0:1]
+   s_waitcnt vmcnt(0) lgkmcnt(63)
+   v_add_u32 v2, v2, v4
+   v_mov_b32 v4, 7
+   s_delay_alu instid0(VALU_DEP_1) | instid1(VALU_DEP_2)
+   v_add_u32 v2, v2, v4
+-  s_mov_b64_exec_read s[4:5]
++  s_mov_b64_exec_read s[0:1]
+   s_mov_b64 exec, -1
+   scratch_store_b32 off, v2, off offset:8 glc:0 slc:0 dlc:0
+-  s_mov_b64 exec, s[4:5]
+-  s_mov_b64_exec_read s[4:5]
++  s_mov_b64 exec, s[0:1]
++  s_mov_b64_exec_read s[0:1]
+   s_mov_b64 exec, -1
+   s_waitcnt_vscnt vscnt(0)
+   scratch_load_b32 v2, off, off offset:0 glc:0 slc:0 dlc:0
+-  s_mov_b64 exec, s[4:5]
+-  s_mov_b64_exec_read s[4:5]
++  s_mov_b64 exec, s[0:1]
++  s_mov_b64_exec_read s[0:1]
+   s_mov_b64 exec, -1
+   scratch_load_b32 v4, off, off offset:4 glc:0 slc:0 dlc:0
+-  s_mov_b64 exec, s[4:5]
++  s_mov_b64 exec, s[0:1]
+   s_waitcnt vmcnt(0) lgkmcnt(63)
+   v_add_u32 v2, v4, v2
+   v_mov_b32 v4, 7
+   s_delay_alu instid0(VALU_DEP_1) | instid1(VALU_DEP_2)
+   v_add_u32 v2, v2, v4
+-  s_mov_b64_exec_read s[4:5]
++  s_mov_b64_exec_read s[0:1]
+   s_mov_b64 exec, -1
+   scratch_load_b32 v4, off, off offset:8 glc:0 slc:0 dlc:0
+-  s_mov_b64 exec, s[4:5]
++  s_mov_b64 exec, s[0:1]
+   s_waitcnt vmcnt(0) lgkmcnt(63)
+   v_add_u32 v0, v0, v4
+   v_add_u32 v1, v1, v2
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_plan.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_plan.loom-test
+index f13eb502e..aab5ad1c9 100644
+--- a/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_plan.loom-test
++++ b/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_plan.loom-test
+@@ -164,11 +164,11 @@ low.func.def target<amdgpu.rdna3.core>(@target) @global_load_saddr_source_reuse_
+ 
+ // ----
+   global_load_b32 v3, v2, s[0:1] offset:0
+-  s_waitcnt vmcnt(0) lgkmcnt(63)
+   v_cmp_lt_i32 s[0:1], v0, v1
+   s_delay_alu instid0(VALU_DEP_1)
+   s_and_saveexec_b64 s[0:1], s[0:1]
+   s_add_u32 s0, s2, s3
++  s_waitcnt vmcnt(0) lgkmcnt(63)
+   v_add_u32 v0, v3, v2
+   s_endpgm
+ 
+@@ -225,15 +225,15 @@ low.func.def target<amdgpu.rdna3.core>(@target) @global_load_saddr_source_reuse_
+   s_add_u32 s0, s0, s2
+   s_addc_u32 s1, s1, s3
+   global_load_b32 v3, v2, s[0:1] offset:0
+-  v_cmp_lt_i32 s[2:3], v0, v1
++  v_cmp_lt_i32 s[0:1], v0, v1
+   s_delay_alu instid0(VALU_DEP_1)
+-  s_and_saveexec_b64 s[2:3], s[2:3]
++  s_and_saveexec_b64 s[0:1], s[0:1]
+   s_cbranch_scc0 .Lbb2
+ .Lbb1:
+-  s_add_u32 s2, s2, s2
++  s_add_u32 s0, s0, s0
++  v_cmp_eq_i32 s[2:3], v0, v1
++  s_add_u32 s0, s1, s1
+   s_waitcnt vmcnt(0) lgkmcnt(63)
+-  v_cmp_eq_i32 s[0:1], v0, v1
+-  s_add_u32 s0, s3, s3
+   v_add_u32 v0, v3, v2
+ .Lbb2:
+   s_endpgm
+@@ -477,33 +477,33 @@ low.func.def target<amdgpu.rdna3.core>(@target) @nested_loop_invariant_loads_wai
+ 
+ // ----
+   global_load_b32 v1, v0, s[0:1] offset:0
+-  s_mov_b32 s8, 0
++  s_mov_b32 s0, 0
+   v_mov_b32 v2, 0
+   s_waitcnt vmcnt(0) lgkmcnt(63)
+   s_delay_alu instid0(VALU_DEP_1)
+-  s_mov_b32 s9, s8
++  s_mov_b32 s1, s0
+ .Lbb1:
+-  s_cmp_lt_i32 s9, s4
++  s_cmp_lt_i32 s1, s4
+   s_delay_alu instid0(SALU_CYCLE_1)
+   s_cbranch_scc0 .Lbb6
+ .Lbb2:
+   global_load_b32 v3, v0, s[2:3] offset:0
+   s_waitcnt vmcnt(0) lgkmcnt(63)
+-  s_mov_b32 s10, s8
++  s_mov_b32 s8, s0
+ .Lbb3:
+-  s_cmp_lt_i32 s10, s5
++  s_cmp_lt_i32 s8, s5
+   s_delay_alu instid0(SALU_CYCLE_1)
+   s_cbranch_scc0 .Lbb5
+ .Lbb4:
+   v_add_f32 v2, v2, v1
+   s_delay_alu instid0(VALU_DEP_1)
+   v_add_f32 v2, v2, v3
+-  s_mov_b32 s11, 1
+-  s_add_u32 s10, s10, s11
++  s_mov_b32 s9, 1
++  s_add_u32 s8, s8, s9
+   s_branch .Lbb3
+ .Lbb5:
+-  s_mov_b32 s10, 1
+-  s_add_u32 s9, s9, s10
++  s_mov_b32 s8, 1
++  s_add_u32 s1, s1, s8
+   s_branch .Lbb1
+ .Lbb6:
+   global_store_b32 v0, v2, s[6:7] offset:0
+@@ -1184,3 +1184,25 @@ low.func.def target<amdgpu.rdna3.core>(@target) @explicit_lgkm_wait_keeps_vmem_p
+   global_store_b128 v4, v[0:3], s[2:3] offset:0
+   s_waitcnt_vscnt vscnt(0)
+   s_endpgm
++
++// ====
++// RUN: emit amdgpu-assembly @global_load_address_reuse_gfx1151 strategy=source fixed=%base:physical_register:0:2 fixed=%output:physical_register:2:2 fixed=%replacement:physical_register:0:1
++
++amdgpu.target<gfx1151> @target
++
++low.func.def target<amdgpu.rdna3_5.core>(@target) @global_load_address_reuse_gfx1151(%addr: reg<amdgpu.vgpr>, %base: reg<amdgpu.sgpr x2>, %output: reg<amdgpu.sgpr x2>) asm {
++  %loaded = global_load_b32_saddr %addr, %base
++  %replacement = s_mov_b32 0
++  global_store_b32_saddr %addr, %loaded, %output
++  return
++}
++
++// SGPR address consumption is interlocked on GFX11. Replacing the address
++// low half does not wait for memory completion; consuming the loaded VGPR does.
++// ----
++  global_load_b32 v1, v0, s[0:1] offset:0
++  s_mov_b32 s0, 0
++  s_waitcnt vmcnt(0) lgkmcnt(63)
++  global_store_b32 v0, v1, s[2:3] offset:0
++  s_waitcnt_vscnt vscnt(0)
++  s_endpgm
+diff --git a/loom/src/loom/target/emit/native/amdgpu/test/allocation_json.loom-test b/loom/src/loom/target/emit/native/amdgpu/test/allocation_json.loom-test
+index a7cda3557..9da1823ba 100644
+--- a/loom/src/loom/target/emit/native/amdgpu/test/allocation_json.loom-test
++++ b/loom/src/loom/target/emit/native/amdgpu/test/allocation_json.loom-test
+@@ -129,7 +129,7 @@ low.func.def target<amdgpu.rdna3.core>(@gfx11_target) @gfx11_allocation_json_glo
+ }
+ 
+ // ----
+-{"format":"loom.low.allocation.v0","function":"gfx11_allocation_json_global_store_vgpr_sources_issue_consumed","target":"gfx11_target","descriptor_set":"amdgpu.rdna3.core","allocation_mode":"virtual","assignment_count":4,"remark_count":0,"copy_decision_count":0,"spill_count":0,"spill_plan_count":0,"coalesced_copy_count":0,"materialized_copy_count":0,"storage_lease_count":2,"storage_lease_instance_count":2,"storage_release_action_count":0,"assignments":[{"index":0,"value":{"id":0,"name":"addr","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":4,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}},{"index":1,"value":{"id":1,"name":"view","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":0,"end_point":4,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":2,"value":{"id":2,"name":"value0","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":1,"end_point":2,"unit_count":1,"location":{"kind":"physical_register","base":1,"count":1}},{"index":3,"value":{"id":3,"name":"value1","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":3,"end_point":4,"unit_count":1,"location":{"kind":"physical_register","base":1,"count":1}}],"storage_leases":[{"index":0,"packet":1,"node":1,"block":0,"scheduled_ordinal":1,"kind":1,"kind_name":"source_read","attachment":1,"attachment_name":"operand","attachment_index":2,"unit_offset":0,"unit_count":2,"release_scope":1,"release_scope_name":"progress_class","release_class_id":2,"release_class_name":"amdgpu.vmem_store","release_action_id":1,"release_action_name":"amdgpu.wait_packet","release_reason_id":10,"release_reason_name":"amdgpu.memory_source_reuse","flags":5,"starts_at_issue":true,"release_before_boundary":false,"may_carry_across_boundary":true,"release_for_pressure":false},{"index":1,"packet":3,"node":3,"block":0,"scheduled_ordinal":3,"kind":1,"kind_name":"source_read","attachment":1,"attachment_name":"operand","attachment_index":2,"unit_offset":0,"unit_count":2,"release_scope":1,"release_scope_name":"progress_class","release_class_id":2,"release_class_name":"amdgpu.vmem_store","release_action_id":1,"release_action_name":"amdgpu.wait_packet","release_reason_id":10,"release_reason_name":"amdgpu.memory_source_reuse","flags":5,"starts_at_issue":true,"release_before_boundary":false,"may_carry_across_boundary":true,"release_for_pressure":false}],"storage_lease_instances":[{"index":0,"lease_record":0,"assignment":1,"value":{"id":1,"name":"view","type":"reg<amdgpu.sgpr x2>"},"start_point":1,"end_point":5,"release_action":null,"reg_class_id":0,"reg_class_name":"amdgpu.sgpr","location":{"kind":"physical_register","base":0,"count":2}},{"index":1,"lease_record":1,"assignment":1,"value":{"id":1,"name":"view","type":"reg<amdgpu.sgpr x2>"},"start_point":3,"end_point":5,"release_action":null,"reg_class_id":0,"reg_class_name":"amdgpu.sgpr","location":{"kind":"physical_register","base":0,"count":2}}],"storage_release_actions":[],"spill_plans":[],"copy_decisions":[],"remarks":[]}
++{"format":"loom.low.allocation.v0","function":"gfx11_allocation_json_global_store_vgpr_sources_issue_consumed","target":"gfx11_target","descriptor_set":"amdgpu.rdna3.core","allocation_mode":"virtual","assignment_count":4,"remark_count":0,"copy_decision_count":0,"spill_count":0,"spill_plan_count":0,"coalesced_copy_count":0,"materialized_copy_count":0,"assignments":[{"index":0,"value":{"id":0,"name":"addr","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":4,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}},{"index":1,"value":{"id":1,"name":"view","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":0,"end_point":4,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":2,"value":{"id":2,"name":"value0","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":1,"end_point":2,"unit_count":1,"location":{"kind":"physical_register","base":1,"count":1}},{"index":3,"value":{"id":3,"name":"value1","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":3,"end_point":4,"unit_count":1,"location":{"kind":"physical_register","base":1,"count":1}}],"spill_plans":[],"copy_decisions":[],"remarks":[]}
+ 
+ // ====
+ 
+@@ -144,7 +144,7 @@ low.func.def target<amdgpu.rdna3.core>(@gfx11_target) @gfx11_allocation_json_glo
+ }
+ 
+ // ----
+-{"format":"loom.low.allocation.v0","function":"gfx11_allocation_json_global_load_saddr_source_reuse","target":"gfx11_target","descriptor_set":"amdgpu.rdna3.core","allocation_mode":"virtual","assignment_count":9,"remark_count":0,"copy_decision_count":0,"spill_count":0,"spill_plan_count":0,"coalesced_copy_count":0,"materialized_copy_count":0,"storage_lease_count":2,"storage_lease_instance_count":2,"storage_release_action_count":1,"assignments":[{"index":0,"value":{"id":0,"name":"addr","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":1,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}},{"index":1,"value":{"id":1,"name":"load_base","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":0,"end_point":1,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":2,"value":{"id":3,"name":"lhs","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":2,"unit_count":1,"location":{"kind":"physical_register","base":1,"count":1}},{"index":3,"value":{"id":4,"name":"rhs","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":2,"unit_count":1,"location":{"kind":"physical_register","base":2,"count":1}},{"index":4,"value":{"id":2,"name":"keep","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":0,"end_point":4,"unit_count":2,"location":{"kind":"physical_register","base":2,"count":2}},{"index":5,"value":{"id":7,"name":"loaded","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":1,"end_point":4,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}},{"index":6,"value":{"id":8,"name":"mask","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":2,"end_point":3,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":7,"value":{"id":9,"name":"saved_exec","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":3,"end_point":4,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":8,"value":{"id":10,"name":"active","type":"reg<amdgpu.scc>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.scc"},"start_point":3,"end_point":4,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}}],"storage_leases":[{"index":0,"packet":0,"node":0,"block":0,"scheduled_ordinal":0,"kind":2,"kind_name":"result_write","attachment":2,"attachment_name":"result","attachment_index":0,"unit_offset":0,"unit_count":1,"release_scope":1,"release_scope_name":"progress_class","release_class_id":1,"release_class_name":"amdgpu.vmem_load","release_action_id":1,"release_action_name":"amdgpu.wait_packet","release_reason_id":5,"release_reason_name":"amdgpu.read_result_reuse","flags":11,"starts_at_issue":true,"release_before_boundary":true,"may_carry_across_boundary":false,"release_for_pressure":true},{"index":1,"packet":0,"node":0,"block":0,"scheduled_ordinal":0,"kind":1,"kind_name":"source_read","attachment":1,"attachment_name":"operand","attachment_index":1,"unit_offset":0,"unit_count":2,"release_scope":1,"release_scope_name":"progress_class","release_class_id":1,"release_class_name":"amdgpu.vmem_load","release_action_id":1,"release_action_name":"amdgpu.wait_packet","release_reason_id":10,"release_reason_name":"amdgpu.memory_source_reuse","flags":5,"starts_at_issue":true,"release_before_boundary":false,"may_carry_across_boundary":true,"release_for_pressure":false}],"storage_lease_instances":[{"index":0,"lease_record":0,"assignment":5,"value":{"id":7,"name":"loaded","type":"reg<amdgpu.vgpr>"},"start_point":0,"end_point":4,"release_action":null,"reg_class_id":1,"reg_class_name":"amdgpu.vgpr","location":{"kind":"physical_register","base":0,"count":1}},{"index":1,"lease_record":1,"assignment":1,"value":{"id":1,"name":"load_base","type":"reg<amdgpu.sgpr x2>"},"start_point":0,"end_point":1,"release_action":0,"reg_class_id":0,"reg_class_name":"amdgpu.sgpr","location":{"kind":"physical_register","base":0,"count":2}}],"storage_release_actions":[{"index":0,"insertion_packet":1,"insertion_node":1,"block":0,"scheduled_ordinal":1,"release_class_id":1,"release_class_name":"amdgpu.vmem_load","release_action_id":1,"release_action_name":"amdgpu.wait_packet","release_reason_id":10,"release_reason_name":"amdgpu.memory_source_reuse","required_progress":1,"lease_record":1}],"spill_plans":[],"copy_decisions":[],"remarks":[]}
++{"format":"loom.low.allocation.v0","function":"gfx11_allocation_json_global_load_saddr_source_reuse","target":"gfx11_target","descriptor_set":"amdgpu.rdna3.core","allocation_mode":"virtual","assignment_count":9,"remark_count":0,"copy_decision_count":0,"spill_count":0,"spill_plan_count":0,"coalesced_copy_count":0,"materialized_copy_count":0,"storage_lease_count":1,"storage_lease_instance_count":1,"storage_release_action_count":0,"assignments":[{"index":0,"value":{"id":0,"name":"addr","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":1,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}},{"index":1,"value":{"id":1,"name":"load_base","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":0,"end_point":1,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":2,"value":{"id":3,"name":"lhs","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":2,"unit_count":1,"location":{"kind":"physical_register","base":1,"count":1}},{"index":3,"value":{"id":4,"name":"rhs","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":2,"unit_count":1,"location":{"kind":"physical_register","base":2,"count":1}},{"index":4,"value":{"id":2,"name":"keep","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":0,"end_point":4,"unit_count":2,"location":{"kind":"physical_register","base":2,"count":2}},{"index":5,"value":{"id":7,"name":"loaded","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":1,"end_point":4,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}},{"index":6,"value":{"id":8,"name":"mask","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":2,"end_point":3,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":7,"value":{"id":9,"name":"saved_exec","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":3,"end_point":4,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":8,"value":{"id":10,"name":"active","type":"reg<amdgpu.scc>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.scc"},"start_point":3,"end_point":4,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}}],"storage_leases":[{"index":0,"packet":0,"node":0,"block":0,"scheduled_ordinal":0,"kind":2,"kind_name":"result_write","attachment":2,"attachment_name":"result","attachment_index":0,"unit_offset":0,"unit_count":1,"release_scope":1,"release_scope_name":"progress_class","release_class_id":1,"release_class_name":"amdgpu.vmem_load","release_action_id":1,"release_action_name":"amdgpu.wait_packet","release_reason_id":5,"release_reason_name":"amdgpu.read_result_reuse","flags":11,"starts_at_issue":true,"release_before_boundary":true,"may_carry_across_boundary":false,"release_for_pressure":true}],"storage_lease_instances":[{"index":0,"lease_record":0,"assignment":5,"value":{"id":7,"name":"loaded","type":"reg<amdgpu.vgpr>"},"start_point":0,"end_point":4,"release_action":null,"reg_class_id":1,"reg_class_name":"amdgpu.vgpr","location":{"kind":"physical_register","base":0,"count":1}}],"storage_release_actions":[],"spill_plans":[],"copy_decisions":[],"remarks":[]}
+ 
+ // ====
+ 
+@@ -159,4 +159,4 @@ low.func.def target<amdgpu.rdna3.core>(@gfx11_target) @gfx11_allocation_json_glo
+ }
+ 
+ // ----
+-{"format":"loom.low.allocation.v0","function":"gfx11_allocation_json_global_store_saddr_source_reuse","target":"gfx11_target","descriptor_set":"amdgpu.rdna3.core","allocation_mode":"virtual","assignment_count":9,"remark_count":0,"copy_decision_count":0,"spill_count":0,"spill_plan_count":0,"coalesced_copy_count":0,"materialized_copy_count":0,"storage_lease_count":1,"storage_lease_instance_count":1,"storage_release_action_count":1,"assignments":[{"index":0,"value":{"id":0,"name":"addr","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":1,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}},{"index":1,"value":{"id":1,"name":"store_base","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":0,"end_point":1,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":2,"value":{"id":3,"name":"value","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":1,"unit_count":1,"location":{"kind":"physical_register","base":1,"count":1}},{"index":3,"value":{"id":4,"name":"lhs","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":2,"unit_count":1,"location":{"kind":"physical_register","base":2,"count":1}},{"index":4,"value":{"id":5,"name":"rhs","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":2,"unit_count":1,"location":{"kind":"physical_register","base":3,"count":1}},{"index":5,"value":{"id":2,"name":"keep","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":0,"end_point":4,"unit_count":2,"location":{"kind":"physical_register","base":2,"count":2}},{"index":6,"value":{"id":7,"name":"mask","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":2,"end_point":3,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":7,"value":{"id":8,"name":"saved_exec","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":3,"end_point":4,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":8,"value":{"id":9,"name":"active","type":"reg<amdgpu.scc>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.scc"},"start_point":3,"end_point":4,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}}],"storage_leases":[{"index":0,"packet":0,"node":0,"block":0,"scheduled_ordinal":0,"kind":1,"kind_name":"source_read","attachment":1,"attachment_name":"operand","attachment_index":2,"unit_offset":0,"unit_count":2,"release_scope":1,"release_scope_name":"progress_class","release_class_id":2,"release_class_name":"amdgpu.vmem_store","release_action_id":1,"release_action_name":"amdgpu.wait_packet","release_reason_id":10,"release_reason_name":"amdgpu.memory_source_reuse","flags":5,"starts_at_issue":true,"release_before_boundary":false,"may_carry_across_boundary":true,"release_for_pressure":false}],"storage_lease_instances":[{"index":0,"lease_record":0,"assignment":1,"value":{"id":1,"name":"store_base","type":"reg<amdgpu.sgpr x2>"},"start_point":0,"end_point":1,"release_action":0,"reg_class_id":0,"reg_class_name":"amdgpu.sgpr","location":{"kind":"physical_register","base":0,"count":2}}],"storage_release_actions":[{"index":0,"insertion_packet":1,"insertion_node":1,"block":0,"scheduled_ordinal":1,"release_class_id":2,"release_class_name":"amdgpu.vmem_store","release_action_id":1,"release_action_name":"amdgpu.wait_packet","release_reason_id":10,"release_reason_name":"amdgpu.memory_source_reuse","required_progress":1,"lease_record":0}],"spill_plans":[],"copy_decisions":[],"remarks":[]}
++{"format":"loom.low.allocation.v0","function":"gfx11_allocation_json_global_store_saddr_source_reuse","target":"gfx11_target","descriptor_set":"amdgpu.rdna3.core","allocation_mode":"virtual","assignment_count":9,"remark_count":0,"copy_decision_count":0,"spill_count":0,"spill_plan_count":0,"coalesced_copy_count":0,"materialized_copy_count":0,"assignments":[{"index":0,"value":{"id":0,"name":"addr","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":1,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}},{"index":1,"value":{"id":1,"name":"store_base","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":0,"end_point":1,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":2,"value":{"id":3,"name":"value","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":1,"unit_count":1,"location":{"kind":"physical_register","base":1,"count":1}},{"index":3,"value":{"id":4,"name":"lhs","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":2,"unit_count":1,"location":{"kind":"physical_register","base":2,"count":1}},{"index":4,"value":{"id":5,"name":"rhs","type":"reg<amdgpu.vgpr>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.vgpr"},"start_point":0,"end_point":2,"unit_count":1,"location":{"kind":"physical_register","base":3,"count":1}},{"index":5,"value":{"id":2,"name":"keep","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":0,"end_point":4,"unit_count":2,"location":{"kind":"physical_register","base":2,"count":2}},{"index":6,"value":{"id":7,"name":"mask","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":2,"end_point":3,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":7,"value":{"id":8,"name":"saved_exec","type":"reg<amdgpu.sgpr x2>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.sgpr"},"start_point":3,"end_point":4,"unit_count":2,"location":{"kind":"physical_register","base":0,"count":2}},{"index":8,"value":{"id":9,"name":"active","type":"reg<amdgpu.scc>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"amdgpu.scc"},"start_point":3,"end_point":4,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}}],"spill_plans":[],"copy_decisions":[],"remarks":[]}
+-- 
+2.55.0
+
