@@ -205,6 +205,85 @@ impl Manifest {
         Ok(destination)
     }
 }
+/// What a cache sweep reclaimed.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Reclaimed {
+    /// Superseded runtime bundle directories removed.
+    pub bundles: usize,
+    /// Bytes freed by removing those bundles.
+    pub bundle_bytes: u64,
+    /// Compiled kernel artifacts removed.
+    pub artifacts: usize,
+    /// Bytes freed by removing those artifacts.
+    pub artifact_bytes: u64,
+}
+
+fn directory_bytes(path: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => directory_bytes(&entry.path()),
+            Ok(kind) if kind.is_file() => entry.metadata().map(|m| m.len()).unwrap_or(0),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Remove cached runtime bundles other than `keep`, and compiled kernel
+/// artifacts untouched for longer than `unused_for`.
+///
+/// Provisioning publishes but never evicts, so a developer machine accumulates
+/// every bundle it has ever prepared. This is deliberately explicit: nothing
+/// here runs from `prepare`, because another checkout may still be using a
+/// bundle this one has moved past. Removing a directory whose libraries are
+/// already mapped is safe; the mapping holds the inode open.
+pub fn collect(cache: &Path, keep: &str, unused_for: std::time::Duration) -> Result<Reclaimed> {
+    let mut reclaimed = Reclaimed::default();
+    let runtime = cache.join("runtime");
+    if let Ok(entries) = fs::read_dir(&runtime) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            // Lock files stay: another process may be waiting on the inode.
+            if name == keep || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let _lock = Lock::acquire(&runtime.join(format!("{name}.lock")))?;
+            let bytes = directory_bytes(&entry.path());
+            fs::remove_dir_all(entry.path())?;
+            reclaimed.bundles += 1;
+            reclaimed.bundle_bytes += bytes;
+        }
+    }
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(unused_for)
+        .ok_or_else(|| Error::Message("cache age exceeds the system clock".into()))?;
+    if let Ok(entries) = fs::read_dir(cache.join("kernels")) {
+        for entry in entries.flatten() {
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            // Cache hits refresh this timestamp, so it tracks last use, not age.
+            let used = entry
+                .path()
+                .join("artifact.json")
+                .metadata()
+                .and_then(|m| m.modified());
+            if used.is_ok_and(|used| used >= cutoff) {
+                continue;
+            }
+            let bytes = directory_bytes(&entry.path());
+            fs::remove_dir_all(entry.path())?;
+            reclaimed.artifacts += 1;
+            reclaimed.artifact_bytes += bytes;
+        }
+    }
+    Ok(reclaimed)
+}
+
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
@@ -306,4 +385,55 @@ pub(crate) fn create_cache_dir(path: &Path) -> Result<()> {
         .mode(0o700)
         .create(path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod gc_tests {
+    use super::*;
+    #[test]
+    fn sweeps_superseded_bundles_and_stale_artifacts_but_never_the_pinned_one() {
+        let cache = tempfile::tempdir().unwrap();
+        let runtime = cache.path().join("runtime");
+        for name in ["keepme", "oldone", "olderone"] {
+            fs::create_dir_all(runtime.join(name)).unwrap();
+            fs::write(runtime.join(name).join("libhrx.so"), vec![0u8; 1024]).unwrap();
+        }
+        let kernels = cache.path().join("kernels");
+        for (name, age_days) in [("fresh", 0u64), ("stale", 90)] {
+            let dir = kernels.join(name);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("kernel.hsaco"), vec![0u8; 512]).unwrap();
+            let record = dir.join("artifact.json");
+            fs::write(&record, "{}").unwrap();
+            let when = std::time::SystemTime::now()
+                - std::time::Duration::from_secs(age_days * 24 * 60 * 60);
+            File::options()
+                .write(true)
+                .open(&record)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_accessed(when).set_modified(when))
+                .unwrap();
+        }
+        let reclaimed = collect(
+            cache.path(),
+            "keepme",
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+        )
+        .unwrap();
+        assert_eq!(reclaimed.bundles, 2);
+        assert!(reclaimed.bundle_bytes >= 2048);
+        assert_eq!(reclaimed.artifacts, 1);
+        assert!(runtime.join("keepme").is_dir(), "pinned bundle survives");
+        assert!(!runtime.join("oldone").exists());
+        assert!(kernels.join("fresh").is_dir());
+        assert!(!kernels.join("stale").exists());
+        // A second sweep is a no-op rather than an error.
+        let again = collect(
+            cache.path(),
+            "keepme",
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+        )
+        .unwrap();
+        assert_eq!((again.bundles, again.artifacts), (0, 0));
+    }
 }

@@ -152,11 +152,7 @@ impl Handle<loomc_result_t> {
                 .collect();
             if !self.api.loomc_result_succeeded(self.raw) {
                 return Err(Error::Compile {
-                    message: diagnostics
-                        .iter()
-                        .map(|d| d.message.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
+                    message: super::summarize(&diagnostics),
                     diagnostics,
                 });
             }

@@ -315,7 +315,7 @@ fn execute(opt: Options) -> Result<(), String> {
             }
             let buffer = &buffers[*slot];
             let host = gpu
-                .read_queued(buffer.binding())
+                .read(buffer.binding())
                 .and_then(|r| r.wait(&mut gpu))
                 .map_err(|e| e.to_string())?;
             std::fs::write(path, &host)

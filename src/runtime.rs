@@ -584,7 +584,7 @@ impl Stream {
         }
     }
     /// Drain all pending work before a synchronous read and reclaim staging.
-    pub fn read(&mut self, src: View<'_>, bytes: &mut [u8]) -> Result<()> {
+    pub fn read_blocking(&mut self, src: View<'_>, bytes: &mut [u8]) -> Result<()> {
         self.owns(src.owner)?;
         checked_span(0, bytes.len(), src.len())?;
         self.synchronize()?;
@@ -1273,7 +1273,7 @@ pub struct Readback {
 }
 impl Stream {
     /// Queue a download into owned, initially unmapped host-visible storage.
-    pub fn read_queued(&mut self, source: View<'_>) -> Result<Readback> {
+    pub fn read(&mut self, source: View<'_>) -> Result<Readback> {
         self.owns(source.owner)?;
         let buffer = self.allocate_host(source.len())?;
         let raw = buffer.raw;
@@ -1427,7 +1427,7 @@ mod staging_tests {
         stream.upload(buffer.binding(), &[7; 1024])?;
         let original = stream.staging[0].raw;
         let mut output = [0; 1024];
-        stream.read(buffer.binding(), &mut output)?;
+        stream.read_blocking(buffer.binding(), &mut output)?;
         assert_eq!(output, [7; 1024]);
         assert!(stream.staging.is_empty());
         stream.upload(buffer.binding(), &[9; 1024])?;

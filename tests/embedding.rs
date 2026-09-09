@@ -134,3 +134,57 @@ fn replaced_library_cannot_relabel_a_resident_compiler() -> hrx::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+#[ignore = "requires public libloomc.so, no GPU"]
+fn compile_all_returns_request_order_and_reports_failures_individually() -> hrx::Result<()> {
+    let c = Compiler::with_options(
+        None,
+        CompilerOptions {
+            workers: NonZeroUsize::new(3).unwrap(),
+            ..CompilerOptions::default()
+        },
+    )?;
+    let m = c.module(SOURCE);
+    let cache = tempfile::tempdir()?;
+    let specs: Vec<Specialization> = (0..6)
+        .map(|i| {
+            let mut s = spec();
+            // One request names an export that does not exist.
+            if i == 3 {
+                s.symbol = "missing_export".into();
+            } else {
+                s.config
+                    .insert("krea2.euler.grid_x".into(), (i + 1).to_string());
+            }
+            s
+        })
+        .collect();
+    let requests: Vec<(&hrx::loom::Module, &Specialization)> =
+        specs.iter().map(|s| (&m, s)).collect();
+    let results = c.compile_all(&requests, cache.path());
+    assert_eq!(results.len(), specs.len());
+    // One failure does not cancel or reorder its neighbours.
+    assert!(results[3].is_err(), "the bad export must fail");
+    for (i, result) in results.iter().enumerate() {
+        if i == 3 {
+            continue;
+        }
+        let artifact = result.as_ref().expect("independent request succeeds");
+        assert!(artifact.bytes().starts_with(b"\x7fELF"));
+        // Request order is preserved: slot i holds slot i's specialization.
+        assert_eq!(artifact.symbol(), specs[i].symbol);
+        assert_eq!(
+            artifact.bytes(),
+            m.compile(&specs[i], cache.path())?.bytes()
+        );
+    }
+    // Distinct configurations really produced distinct artifacts.
+    let distinct: std::collections::BTreeSet<_> = results
+        .iter()
+        .filter_map(|r| r.as_ref().ok())
+        .map(|a| a.path().to_path_buf())
+        .collect();
+    assert_eq!(distinct.len(), specs.len() - 1);
+    Ok(())
+}

@@ -17,15 +17,15 @@ Native licenses, source provenance, and rebuild instructions are documented in
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.1.0" }
+hrx = { package = "hrx-rs", version = "0.2" }
 ```
 
-```rust
+```rust,no_run
 fn main() -> hrx::Result<()> {
     let mut stream = hrx::Stream::open()?;
     let buffer = stream.allocate(4096)?;
     stream.upload(buffer.binding(), &[7; 4096])?;
-    let readback = stream.read_queued(buffer.binding())?;
+    let readback = stream.read(buffer.binding())?;
     assert_eq!(readback.wait(&mut stream)?, vec![7; 4096]);
     Ok(())
 }
@@ -40,8 +40,20 @@ dispatching them, and sharing buffers across streams are unsafe: callers must
 validate code, arguments, memory access, and synchronization.
 
 `hrx::loom::Compiler` compiles Loom in process and caches artifacts. Select the
-compiler target from `Device::target()` when compiling for a GPU. Compiler setup
+compiler target from `Device::target()` when compiling for a GPU.
+`Compiler::compile_all` runs a batch across `CompilerOptions::workers`
+workspaces and returns results in request order; `Module::compile` is blocking,
+so a single-threaded caller never reaches that bound on its own. Compiler setup
 and source pins are in [patches/loom](patches/loom/README.md).
+
+Two different things are called the target, and they are chosen independently.
+The **profile** target is `hrx::Target` — the architecture a device reports and
+the one the compiler emits for. It is a bare architecture key such as `gfx1151`;
+`Target::new` rejects generic names. The **source-level** target is what Loom
+source writes as `amdgpu.target<...>`, which does accept generic names such as
+`gfx11-generic` and compiles fine under a bare profile. A generic source target
+has no low-asm contract, so hand-written asm needs a bare architecture there
+too.
 
 ## CLI and native setup
 

@@ -62,7 +62,7 @@ fn main() -> Result<()> {
         bytes as f64 / (1024f64.powi(3) * ns * 1e-9),
     );
     let mut check = [0u8; 16];
-    stream.read(
+    stream.read_blocking(
         weights.try_slice(bytes - check.len(), check.len())?,
         &mut check,
     )?;
@@ -125,7 +125,7 @@ fn main() -> Result<()> {
     metrics.insert("graph_enqueue_ns_per_replay", enqueue * 32.0);
     metrics.insert("graph_complete_ns_per_kernel", ns);
     let mut output = vec![0; 512];
-    stream.read(sample.binding(), &mut output)?;
+    stream.read_blocking(sample.binding(), &mut output)?;
     assert_eq!(output, ones);
     println!("{}", serde_json::to_string(&metrics)?);
     Ok(())

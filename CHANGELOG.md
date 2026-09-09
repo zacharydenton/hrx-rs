@@ -2,6 +2,25 @@
 
 ## 0.2.0 (unreleased)
 
+- Add `Compiler::compile_all`, which runs a batch of specializations across
+  `CompilerOptions::workers` workspaces and returns results in request order.
+  `Module::compile` blocks, so that option previously did nothing unless the
+  caller built its own thread pool; the compiler is the one place that knows how
+  many workspaces it can afford.
+- Rename the draining `read` to `read_blocking` and the queued `read_queued` to
+  `read`, so the bare name means queued on both sides of a transfer. Previously
+  `upload(..); read(..)` looked symmetric while silently draining the stream.
+- Loom compile errors now lead with the first error, add a hint for a generic
+  target used with hand-written asm, and report the count of cascading errors
+  instead of printing them. The full list stays in `Error::Compile::diagnostics`.
+- Add `hrx gc [DAYS]`, removing runtime bundles that `bundle.json` does not pin
+  and kernel artifacts unused for longer than DAYS (default 30). Provisioning
+  published but never evicted; cache hits now refresh an artifact's timestamp so
+  the sweep tracks last use. Nothing evicts implicitly.
+- Compile the README as a doctest, so an API change that invalidates its example
+  fails the build. Document that the `hrx::Target` profile and the source-level
+  `amdgpu.target<...>` are chosen independently, and that only the latter accepts
+  generic families.
 - Replace the `loomrun` binary with an `hrx run` subcommand. It was a four-line
   shim over the same entry point, kept only for name compatibility with a C++
   tool that no consumer in this repository invokes any more. `runner::main()`

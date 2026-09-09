@@ -67,6 +67,7 @@ struct Inner {
     modules: Mutex<HashMap<String, Arc<ModuleData>>>,
     native: native::Prepared,
     target: crate::Target,
+    workers: NonZeroUsize,
     module_cache_capacity: usize,
     path: PathBuf,
     identity: String,
@@ -112,11 +113,63 @@ impl Compiler {
             modules: Mutex::new(HashMap::new()),
             native,
             target: options.target,
+            workers: options.workers,
             module_cache_capacity: options.module_cache_capacity,
             path,
             identity,
         })))
     }
+    /// Maximum simultaneous compilations, and the workspace pool's bound.
+    pub fn workers(&self) -> NonZeroUsize {
+        self.0.workers
+    }
+
+    /// Compile several specializations, up to [`CompilerOptions::workers`] at a
+    /// time, and return their outcomes in request order.
+    ///
+    /// [`Module::compile`] blocks, so a single-threaded caller never reaches the
+    /// workspace pool's bound. This is the entry point that does: it owns the
+    /// thread budget rather than leaving every consumer to rebuild the same pool.
+    /// Each request is independent; one failure does not cancel the others.
+    pub fn compile_all(
+        &self,
+        requests: &[(&Module, &Specialization)],
+        cache: &Path,
+    ) -> Vec<Result<Artifact>> {
+        let limit = self.0.workers.get().min(requests.len());
+        if limit <= 1 {
+            return requests
+                .iter()
+                .map(|(module, spec)| module.compile(spec, cache))
+                .collect();
+        }
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let slots: Vec<Mutex<Option<Result<Artifact>>>> =
+            requests.iter().map(|_| Mutex::new(None)).collect();
+        std::thread::scope(|scope| {
+            for _ in 0..limit {
+                scope.spawn(|| {
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some((module, spec)) = requests.get(index) else {
+                            return;
+                        };
+                        let outcome = module.compile(spec, cache);
+                        *slots[index].lock().unwrap_or_else(|e| e.into_inner()) = Some(outcome);
+                    }
+                });
+            }
+        });
+        slots
+            .into_iter()
+            .map(|slot| {
+                slot.into_inner()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .expect("every request slot is filled before the scope ends")
+            })
+            .collect()
+    }
+
     /// Architecture selected for every compilation by this compiler.
     pub fn target(&self) -> &crate::Target {
         &self.0.target
@@ -167,6 +220,87 @@ impl Compiler {
         self.0.native.trim();
     }
 }
+/// Native error severity; notes and warnings are 0 and 1.
+const SEVERITY_ERROR: u32 = 2;
+
+/// Render the diagnostic a caller should act on, not the whole cascade.
+///
+/// A single rejected construct makes the rest of its block unparseable, so the
+/// compiler reports one real error followed by a run of consequences. Leading
+/// with all of them buries the cause; every diagnostic stays available through
+/// [`Error::Compile::diagnostics`].
+fn summarize(diagnostics: &[Diagnostic]) -> String {
+    let errors = || diagnostics.iter().filter(|d| d.severity >= SEVERITY_ERROR);
+    let Some(first) = errors().next() else {
+        return diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+    };
+    let mut message = if first.line == 0 {
+        first.message.clone()
+    } else {
+        format!("{}:{}: {}", first.line, first.column, first.message)
+    };
+    if let Some(hint) = hint(&first.message) {
+        message.push_str("\nhint: ");
+        message.push_str(hint);
+    }
+    let suppressed = errors().count() - 1;
+    if suppressed > 0 {
+        message.push_str(&format!(
+            "\n({suppressed} later error(s) suppressed as cascade; see Error::Compile diagnostics)"
+        ));
+    }
+    message
+}
+
+/// Diagnostics whose cause is a configuration mistake rather than a source bug.
+fn hint(message: &str) -> Option<&'static str> {
+    if message.contains("Low representation contract") && message.contains(".generic.") {
+        return Some(
+            "a generic target has no low-asm contract; name a bare architecture \
+             such as gfx1151 in amdgpu.target<...> to use hand-written asm",
+        );
+    }
+    None
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::{Diagnostic, summarize};
+    fn diagnostic(severity: u32, line: u32, message: &str) -> Diagnostic {
+        Diagnostic {
+            severity,
+            code: String::new(),
+            message: message.into(),
+            line,
+            column: 1,
+        }
+    }
+    #[test]
+    fn the_first_error_leads_and_its_cascade_is_counted_not_printed() {
+        let mut all = vec![
+            diagnostic(1, 3, "unused binding"),
+            diagnostic(
+                2,
+                7,
+                "unknown Low representation contract amdgpu.gfx11.generic.core",
+            ),
+        ];
+        all.extend((0..12).map(|i| diagnostic(2, 8 + i, "expected expression")));
+        let rendered = summarize(&all);
+        assert!(rendered.starts_with("7:1: unknown Low representation contract"));
+        assert!(rendered.contains("hint: a generic target has no low-asm contract"));
+        assert!(rendered.contains("12 later error(s) suppressed"));
+        assert!(!rendered.contains("expected expression"));
+        // A cascade-free failure gains no suppression line and no hint.
+        let single = summarize(&[diagnostic(2, 4, "type mismatch")]);
+        assert_eq!(single, "4:1: type mismatch");
+    }
+}
+
 struct ModuleData {
     source: Arc<str>,
     digest: String,
@@ -352,6 +486,11 @@ fn cached(dir: &Path, key: &str) -> Option<Artifact> {
     let record: Record = serde_json::from_slice(&metadata).ok()?;
     if record.key != key {
         return None;
+    }
+    // Refresh the timestamp `bundle::collect` prunes by, so it means last use.
+    if let Ok(file) = fs::File::open(dir.join("artifact.json")) {
+        let now = std::time::SystemTime::now();
+        let _ = file.set_times(fs::FileTimes::new().set_accessed(now).set_modified(now));
     }
     let path = dir.join("kernel.hsaco");
     let bytes = fs::read(&path).ok()?;
