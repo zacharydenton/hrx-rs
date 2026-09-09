@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Transfers, fills and copies now take `View` regions. `View::slice` checks a
+  subregion relative to its parent; `offset` and `owner` expose its allocation origin.
+  Stream copies require equal, nonempty views, matching sequence copies.
+- Rename the synchronous `upload` to `upload_blocking`, and `upload_queued` to
+  `upload`. Both write at the start of the destination view. Replace a buffer and
+  offset with `buffer.binding().slice(offset, length)?`.
+- `Constants::push` returns `Result<()>`; append each scalar in a separate call.
 - `hrx pack` refuses an inventory whose `status` is not `"complete"` or that leaves
   any component's license unconfirmed, so an unfinished review cannot be packaged.
 - Add docs.rs metadata and a publication checklist in THIRD-PARTY.md.

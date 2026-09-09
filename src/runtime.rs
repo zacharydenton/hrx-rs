@@ -184,6 +184,7 @@ impl Stream {
 
 /// An owned device allocation. Use [`Buffer::binding`] or [`Buffer::try_slice`]
 /// to borrow a binding; this API does not expose host pointers.
+/// Each handle belongs to one stream; cross-stream use requires [`Buffer::share_on`].
 pub struct Buffer {
     raw: sys::Buffer,
     bytes: usize,
@@ -213,6 +214,29 @@ pub struct View<'a> {
 impl<'a> View<'a> {
     fn new(raw: sys::BufferRef, owner: &'a Buffer) -> Self {
         Self { raw, owner }
+    }
+    /// Borrow a region relative to this view, rejecting overflow and overruns.
+    /// An empty region at the end of the view is valid.
+    pub fn slice(self, offset: usize, length: usize) -> Result<Self> {
+        checked_span(offset, length, self.len())?;
+        Ok(Self::new(
+            sys::BufferRef {
+                offset: self.raw.offset + offset,
+                length,
+                ..self.raw
+            },
+            self.owner,
+        ))
+    }
+    /// Byte offset from the start of the owning allocation.
+    #[must_use]
+    pub fn offset(self) -> usize {
+        self.raw.offset
+    }
+    /// The buffer handle from which this view was borrowed.
+    #[must_use]
+    pub fn owner(self) -> &'a Buffer {
+        self.owner
     }
     /// The bytes this view covers.
     #[must_use]
@@ -256,15 +280,7 @@ impl Buffer {
 
     /// Borrow a span, rejecting overflow and allocation overruns.
     pub fn try_slice(&self, offset: usize, length: usize) -> Result<View<'_>> {
-        checked_span(offset, length, self.bytes)?;
-        Ok(View::new(
-            sys::BufferRef {
-                buffer: self.raw,
-                offset,
-                length,
-            },
-            self,
-        ))
+        self.binding().slice(offset, length)
     }
 
     /// The whole allocation.
@@ -297,6 +313,8 @@ impl Drop for Buffer {
 }
 
 /// A loaded executable export with immutable dispatch metadata.
+/// Kernels can be dispatched on any stream on their device; buffer handles belong
+/// to individual streams.
 pub struct Kernel {
     executable: sys::Executable,
     ordinal: u32,
@@ -543,10 +561,11 @@ impl Stream {
         self.reclaim_staging();
         Ok(())
     }
-    /// Drain all pending work before a synchronous upload and reclaim staging.
-    pub fn upload(&mut self, dst: &Buffer, bytes: &[u8]) -> Result<()> {
-        self.owns(dst)?;
-        checked_span(0, bytes.len(), dst.bytes)?;
+    /// Drain pending work, then upload bytes at the start of a view and wait for completion.
+    /// The input must fit within the view. Completed staging is reclaimed.
+    pub fn upload_blocking(&mut self, dst: View<'_>, bytes: &[u8]) -> Result<()> {
+        self.owns(dst.owner)?;
+        checked_span(0, bytes.len(), dst.len())?;
         self.synchronize()?;
         if bytes.is_empty() {
             return Ok(());
@@ -556,8 +575,8 @@ impl Stream {
                 sys::hrx_synchronous_h2d(
                     self.inner.device,
                     bytes.as_ptr().cast(),
-                    dst.raw,
-                    0,
+                    dst.raw.buffer,
+                    dst.raw.offset,
                     bytes.len(),
                 ),
                 "hrx_synchronous_h2d",
@@ -585,16 +604,19 @@ impl Stream {
             )
         }
     }
-    /// Queue a byte-pattern fill over an allocation owned by this stream.
-    pub fn fill(&mut self, dst: &Buffer, value: u8) -> Result<()> {
-        self.owns(dst)?;
+    /// Queue a byte-pattern fill over a nonempty view owned by this stream.
+    pub fn fill(&mut self, dst: View<'_>, value: u8) -> Result<()> {
+        self.owns(dst.owner)?;
+        if dst.is_empty() {
+            return Err(Error::Message("empty stream fill".into()));
+        }
         unsafe {
             check(
                 sys::hrx_stream_fill_buffer(
                     self.inner.stream,
-                    dst.raw,
-                    0,
-                    dst.bytes,
+                    dst.raw.buffer,
+                    dst.raw.offset,
+                    dst.len(),
                     &value as *const u8 as *const c_void,
                     1,
                 ),
@@ -602,28 +624,24 @@ impl Stream {
             )
         }
     }
-    /// Queue a bounds-checked copy between allocations owned by this stream.
-    pub fn copy(
-        &mut self,
-        dst: &Buffer,
-        dst_offset: usize,
-        src: &Buffer,
-        src_offset: usize,
-        bytes: usize,
-    ) -> Result<()> {
-        self.owns(dst)?;
-        self.owns(src)?;
-        checked_span(dst_offset, bytes, dst.bytes)?;
-        checked_span(src_offset, bytes, src.bytes)?;
+    /// Queue a copy between equal, nonempty views owned by this stream.
+    pub fn copy(&mut self, dst: View<'_>, src: View<'_>) -> Result<()> {
+        self.owns(dst.owner)?;
+        self.owns(src.owner)?;
+        if dst.len() != src.len() || dst.is_empty() {
+            return Err(Error::Message(
+                "stream copy requires equal nonempty spans".into(),
+            ));
+        }
         unsafe {
             check(
                 sys::hrx_stream_copy_buffer(
                     self.inner.stream,
-                    src.raw,
-                    src_offset,
-                    dst.raw,
-                    dst_offset,
-                    bytes,
+                    src.raw.buffer,
+                    src.raw.offset,
+                    dst.raw.buffer,
+                    dst.raw.offset,
+                    src.len(),
                 ),
                 "hrx_stream_copy_buffer",
             )
@@ -631,9 +649,11 @@ impl Stream {
     }
     /// Copy the input into runtime-owned staging, then enqueue an actual GPU
     /// buffer copy. The caller's slice is no longer referenced when this returns.
-    pub fn upload_queued(&mut self, dst: &Buffer, offset: usize, bytes: &[u8]) -> Result<()> {
-        self.owns(dst)?;
-        checked_span(offset, bytes.len(), dst.bytes)?;
+    /// Bytes are written at the start of the view and must fit within it.
+    /// Staging pressure may submit or wait for prior work to bound memory use.
+    pub fn upload(&mut self, dst: View<'_>, bytes: &[u8]) -> Result<()> {
+        self.owns(dst.owner)?;
+        checked_span(0, bytes.len(), dst.len())?;
         if bytes.is_empty() {
             return Ok(());
         }
@@ -686,8 +706,8 @@ impl Stream {
                     self.inner.stream,
                     raw,
                     0,
-                    dst.raw,
-                    offset,
+                    dst.raw.buffer,
+                    dst.raw.offset,
                     bytes.len(),
                 ),
                 "enqueue upload",
@@ -845,6 +865,8 @@ impl Stream {
 
     /// Reuse a cached allocation or allocate new scratch storage. Reuse follows
     /// the stream's command order and requires no host wait.
+    /// Return it explicitly with [`Stream::recycle`] after recording its last use.
+    /// Dropping a buffer releases it rather than returning it to this pool.
     pub fn scratch(&mut self, bytes: usize) -> Result<Buffer> {
         let choice = self
             .scratch
@@ -867,6 +889,7 @@ impl Stream {
     /// its final use. A later scratch request may reuse its storage.
     /// Returns an error for foreign-stream buffers and any handle to an allocation
     /// that has been shared with [`Buffer::share_on`].
+    /// Recycling needs mutable stream access; there is no automatic return on drop.
     pub fn recycle(&mut self, buffer: Buffer) -> Result<()> {
         if !std::sync::Arc::ptr_eq(&buffer._device, &self.inner) {
             return Err(Error::Message("scratch belongs to another stream".into()));
@@ -955,6 +978,8 @@ impl Submission<'_> {
 
 /// Explicit scalar widths, packed in declaration order for HRX binding dispatch.
 /// Unlike direct kernargs this format has no implicit alignment or pointer slots.
+/// Export metadata gives only the total byte count. Mixed scalar widths must
+/// come from the kernel's argument contract.
 #[derive(Clone, Debug)]
 pub struct Constants {
     bytes: [u8; 256],
@@ -1003,12 +1028,12 @@ impl Constants {
     }
     #[must_use = "constant packing can fail when capacity is exceeded"]
     /// Append a scalar at its explicit width; fails if the 256-byte capacity is exceeded.
-    pub fn push<T: Scalar>(&mut self, value: T) -> Result<&mut Self> {
+    pub fn push<T: Scalar>(&mut self, value: T) -> Result<()> {
         let bytes = value.bytes();
         checked_span(self.len, bytes.as_ref().len(), self.bytes.len())?;
         self.bytes[self.len..self.len + bytes.as_ref().len()].copy_from_slice(bytes.as_ref());
         self.len += bytes.as_ref().len();
-        Ok(self)
+        Ok(())
     }
     /// The packed constant bytes in declaration order.
     pub fn as_bytes(&self) -> &[u8] {
@@ -1399,25 +1424,25 @@ mod staging_tests {
     fn completed_staging_is_reclaimed_and_reused_on_every_completion_path() -> Result<()> {
         let mut stream = Stream::open()?;
         let buffer = stream.allocate(1024)?;
-        stream.upload_queued(&buffer, 0, &[7; 1024])?;
+        stream.upload(buffer.binding(), &[7; 1024])?;
         let original = stream.staging[0].raw;
         let mut output = [0; 1024];
         stream.read(buffer.binding(), &mut output)?;
         assert_eq!(output, [7; 1024]);
         assert!(stream.staging.is_empty());
-        stream.upload_queued(&buffer, 0, &[9; 1024])?;
+        stream.upload(buffer.binding(), &[9; 1024])?;
         assert_eq!(stream.staging[0].raw, original);
-        stream.upload(&buffer, &[11; 1024])?;
+        stream.upload_blocking(buffer.binding(), &[11; 1024])?;
         assert!(stream.staging.is_empty());
-        stream.upload_queued(&buffer, 0, &[12; 512])?;
+        stream.upload(buffer.binding(), &[12; 512])?;
         assert_eq!(stream.staging[0].raw, original);
         stream.synchronize()?;
-        stream.upload_queued(&buffer, 0, &[13; 1024])?;
+        stream.upload(buffer.binding(), &[13; 1024])?;
         stream.synchronize_native()?; // Establish completion without the cleanup being tested.
         assert!(stream.submit()?.is_complete()?);
         assert!(stream.staging.is_empty());
         for _ in 0..32 {
-            stream.upload_queued(&buffer, 0, &[1; 1024])?;
+            stream.upload(buffer.binding(), &[1; 1024])?;
             assert!(stream.staging.len() <= 8);
         }
         stream.synchronize()?;
@@ -1432,18 +1457,18 @@ mod staging_tests {
         let mut stream = Stream::open()?;
         let buffer = stream.allocate(4096)?;
         for size in [1024, 2048, 4096] {
-            stream.upload_queued(&buffer, 0, &vec![7; size])?;
+            stream.upload(buffer.binding(), &vec![7; size])?;
         }
         assert_eq!(stream.staging.len(), 3);
         let medium = stream.staging[1].raw;
         stream.synchronize()?;
-        stream.upload_queued(&buffer, 0, &[9; 1500])?;
+        stream.upload(buffer.binding(), &[9; 1500])?;
         assert_eq!(stream.staging[0].raw, medium);
         for _ in 0..7 {
-            stream.upload_queued(&buffer, 0, &[11; 1024])?;
+            stream.upload(buffer.binding(), &[11; 1024])?;
         }
         assert_eq!(stream.staging.len(), 8);
-        stream.upload_queued(&buffer, 0, &[13; 1024])?;
+        stream.upload(buffer.binding(), &[13; 1024])?;
         assert_eq!(stream.staging.len(), 1);
         stream.synchronize()?;
         Ok(())

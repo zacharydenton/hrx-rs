@@ -53,7 +53,7 @@ fn main() -> Result<()> {
     let weights = stream.allocate(bytes)?;
     let (_, ns) = measure(&mut stream, samples, 1, |stream| {
         for offset in (0..bytes).step_by(chunk.len()) {
-            stream.upload_queued(&weights, offset, &chunk)?;
+            stream.upload(weights.binding().slice(offset, chunk.len())?, &chunk)?;
         }
         Ok(())
     })?;
@@ -87,16 +87,12 @@ fn main() -> Result<()> {
     let sample = stream.allocate(512)?;
     let velocity = stream.allocate(512)?;
     let ones: Vec<u8> = (0..256).flat_map(|_| 0x3f80u16.to_le_bytes()).collect();
-    stream.upload(&sample, &ones)?;
-    stream.upload(&velocity, &ones)?;
+    stream.upload_blocking(sample.binding(), &ones)?;
+    stream.upload_blocking(velocity.binding(), &ones)?;
     let mut constants = Constants::new();
     match kernel.info().constant_byte_length {
-        8 => {
-            constants.push(256u32)?;
-        }
-        12 => {
-            constants.push(256u64)?;
-        }
+        8 => constants.push(256u32)?,
+        12 => constants.push(256u64)?,
         n => return Err(hrx::Error::Message(format!("unexpected constant size {n}"))),
     }
     constants.push(0f32)?;

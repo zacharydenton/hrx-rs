@@ -3,12 +3,9 @@ use hrx::Constants;
 #[test]
 fn mixed_constants_and_overflow() {
     let mut args = Constants::new();
-    args.push(1u32)
-        .unwrap()
-        .push(2u64)
-        .unwrap()
-        .push(3f32)
-        .unwrap();
+    args.push(1u32).unwrap();
+    args.push(2u64).unwrap();
+    args.push(3f32).unwrap();
     assert_eq!(args.as_bytes().len(), 16);
     assert_eq!(&args.as_bytes()[4..12], &2u64.to_le_bytes());
     for _ in 0..30 {

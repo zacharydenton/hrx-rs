@@ -233,9 +233,10 @@ fn run(opt: Options) -> Result<(), String> {
                     host.len()
                 };
                 let buffer = gpu.allocate(size).map_err(|e| e.to_string())?;
-                gpu.fill(&buffer, 0).map_err(|e| e.to_string())?;
+                gpu.fill(buffer.binding(), 0).map_err(|e| e.to_string())?;
                 if !host.is_empty() {
-                    gpu.upload(&buffer, &host).map_err(|e| e.to_string())?;
+                    gpu.upload_blocking(buffer.binding(), &host)
+                        .map_err(|e| e.to_string())?;
                 }
                 buffer_of_arg.push(Some(buffers.len()));
                 buffers.push(buffer);
@@ -250,7 +251,7 @@ fn run(opt: Options) -> Result<(), String> {
         let source = &buffers[slot];
         for _ in 1..count {
             let copy = gpu.allocate(source.bytes()).map_err(|e| e.to_string())?;
-            gpu.copy(&copy, 0, source, 0, source.bytes())
+            gpu.copy(copy.binding(), source.binding())
                 .map_err(|e| e.to_string())?;
             rotated.push(copy);
         }

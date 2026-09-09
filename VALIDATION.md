@@ -10,7 +10,7 @@ source-archive reference are pinned in `bundle.json`.
 06000605de874bc972e17e90f94a3816302fdd2a17040cfaf1df1f0b70483cc4
 ```
 
-The library bytes passed all 23 CPU tests, the Rust doctest, and all 13 ignored
+The library bytes passed all 23 CPU tests, the Rust doctest, and all 14 ignored
 GPU/compiler tests on gfx1151. Installation started with an empty cache and used
 no runtime, compiler, or HSA overrides. Every dynamic dependency resolves to the
 bundle or a documented host library. The Arch library chain and `loom-compile`
@@ -27,6 +27,13 @@ Cargo's publishing dry run passed, packaging 70 files (185.1 KiB compressed) and
 successfully compiling the packaged crate. No crates.io upload was performed.
 
 See [native/RELEASE.md](native/RELEASE.md) for source and build evidence.
+
+The View API tests also check nested offsets, parent bounds, empty and overflowing
+regions, and unchanged surrounding bytes after stream transfers and graph replay.
+A release benchmark run after this change measured 24.3 GiB/s queued uploads,
+130 ns host dispatch recording, and 806 ns host recording per 32-kernel replay.
+This run uses the reviewed bundle; the historical comparison below uses the
+original bundle. Each metric is the median of nine samples after three warmups.
 
 ## Original bundle results, 2026-09-09
 
@@ -116,6 +123,7 @@ HRX_OFFLINE=1 cargo run --release --example stream_bench
 
 To compare another revision, copy `examples/stream_bench.rs` into its checkout,
 build both with the same Rust toolchain, and alternate their release binaries.
+For older revisions, adapt the transfer signatures using [CHANGELOG.md](CHANGELOG.md).
 Keep other GPU work idle and use the same native bundle for both.
 
 ## CI

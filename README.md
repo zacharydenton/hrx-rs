@@ -24,7 +24,7 @@ hrx = { package = "hrx-rs", git = "https://github.com/zacharydenton/hrx-rs" }
 fn main() -> hrx::Result<()> {
     let mut stream = hrx::Stream::open()?;
     let buffer = stream.allocate(4096)?;
-    stream.upload_queued(&buffer, 0, &[7; 4096])?;
+    stream.upload(buffer.binding(), &[7; 4096])?;
     let readback = stream.read_queued(buffer.binding())?;
     assert_eq!(readback.wait(&mut stream)?, vec![7; 4096]);
     Ok(())
@@ -32,6 +32,9 @@ fn main() -> hrx::Result<()> {
 ```
 
 `Device` selects a GPU, `Stream` orders work, and `Buffer` owns an allocation.
+Transfers, fills, copies and dispatch bindings use `View`. Borrow a whole buffer
+with `buffer.binding()` and a subregion with `view.slice(offset, length)?`.
+`upload` queues a transfer through owned staging; `upload_blocking` waits for it.
 Events coordinate streams; fixed sequences replay recorded work. Loading kernels,
 dispatching them, and sharing buffers across streams are unsafe: callers must
 validate code, arguments, memory access, and synchronization.
