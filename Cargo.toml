@@ -11,7 +11,7 @@ repository = "https://github.com/zacharydenton/hrx-rs"
 readme = "README.md"
 keywords = ["gpu", "amdgpu", "compute", "loom"]
 categories = ["hardware-support", "science"]
-include = ["src/**", "tests/**", "examples/**", "native/**", "patches/**", "scripts/**", "Cargo.toml", "Cargo.lock", "bundle.json", "README.md", "CHANGELOG.md", "LICENSE", "THIRD-PARTY.md", "VALIDATION.md"]
+include = ["src/**", "tests/**", "examples/**", "native/**", "patches/**", "scripts/**", "Cargo.toml", "Cargo.lock", "bundle.json", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "THIRD-PARTY.md", "THIRD-PARTY.json", "VALIDATION.md"]
 
 [lib]
 name = "hrx"
