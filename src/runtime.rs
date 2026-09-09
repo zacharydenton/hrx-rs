@@ -1414,8 +1414,20 @@ pub struct GraphExec {
 unsafe impl Send for GraphExec {}
 impl Drop for GraphExec {
     fn drop(&mut self) {
-        unsafe {
-            sys::hrx_graph_exec_release(self.raw);
+        // Unlike a buffer, whose storage the command buffer retains, releasing
+        // an executable graph that is still replaying frees native structures
+        // the device is reading: the observed failure is an AMDGPU memory
+        // access fault, not an error a caller could handle. Draining here keeps
+        // the handle contract uniform -- dropping is always safe -- at the cost
+        // of a wait that only happens at teardown. A failed wait is no proof
+        // the replay is idle, so the handle leaks rather than freeing early.
+        let drained = check(
+            unsafe { sys::hrx_stream_synchronize(self.inner.stream) },
+            "hrx_stream_synchronize",
+        )
+        .is_ok();
+        if drained {
+            unsafe { sys::hrx_graph_exec_release(self.raw) };
         }
     }
 }
