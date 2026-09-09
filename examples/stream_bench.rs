@@ -80,8 +80,7 @@ fn main() -> Result<()> {
     let mut spec = hrx::loom::Specialization::new("krea2_euler");
     spec.config.insert("krea2.euler.grid_x".into(), "1".into());
     spec.config.insert("krea2.euler.grid_y".into(), "1".into());
-    let cache = tempfile::tempdir()?;
-    let artifact = module.compile(&spec, cache.path())?;
+    let artifact = module.compile(&spec)?;
     // This repository owns the source; use its exact dimensions and scalar layout.
     let kernel = unsafe { stream.load_artifact(&artifact)? };
     let sample = stream.allocate(512)?;
