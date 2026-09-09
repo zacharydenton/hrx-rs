@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 (unreleased)
+
+- Replace the `loomrun` binary with an `hrx run` subcommand. It was a four-line
+  shim over the same entry point, kept only for name compatibility with a C++
+  tool that no consumer in this repository invokes any more. `runner::main()`
+  becomes `runner::run(&argv)`; usage errors still exit 64.
+
 ## 0.1.0 — 2026-09-09
 
 - Transfers, fills and copies now take `View` regions. `View::slice` checks a

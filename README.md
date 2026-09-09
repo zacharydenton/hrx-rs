@@ -64,8 +64,9 @@ Once prepared, `HRX_OFFLINE=1` disables network provisioning.
 | `HRX_OFFLINE` | Disable network provisioning when set |
 | `HRX_LOOM_LIBRARY` | Override the path to `libloomc.so` |
 
-Default features are `download` and `loom`. Enable `runner` for the `hrx` and
-`loomrun` CLIs. `Stream` is the execution API; dispatch takes explicit `Constants`.
+Default features are `download` and `loom`. Enable `runner` for the `hrx` CLI,
+whose `run` subcommand launches a compiled kernel and dumps its buffers.
+`Stream` is the execution API; dispatch takes explicit `Constants`.
 
 ## Development
 
