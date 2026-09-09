@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "target": "x86_64-unknown-linux-gnu-gfx1151",
-  "revision": "local-staged-750f265ce4fd (source checkout 8b2d1e882; build provenance unverified)",
-  "url": "https://github.com/zacharydenton/hrx.rs/releases/download/native-750f265ce4fd/hrx-linux-x86_64-gfx1151.tar.gz",
-  "archive_sha256": "750f265ce4fd6a194fbac12a795c96cb19cc9ed3696fd5123c5edd5589a4cd05",
+  "revision": "Loom 9e4fff00d244a8b5300d03569addd019ec8e262f; runtime libraries retained from 750f265ce4fd (original build provenance unverified)",
+  "url": "https://github.com/zacharydenton/hrx.rs/releases/download/native-9e4fff00d244/hrx-linux-x86_64-gfx1151.tar.gz",
+  "archive_sha256": "34591d78d625f9c696657820d04615f3f55a134010a9354c0e455a4c2e60caa0",
   "files": {
     "libfmt.so.12": "d4b82c135ffc0c4637c370b51b000c166ab7dd1ec7a9d3aeb27a68bdcdf45bd0",
     "libgflags.so.2.2": "aa44adf6abdc3e84a414efba826d6954cf1c65ae3ab7a4a67ff9246cb2b6850d",
@@ -20,6 +20,6 @@
     "librocm_sysdeps_z.so.1": "27361c0c552d2afd5ecf9079f356309ed827e9a27d35f2fc68c7b5e6b5c83199",
     "librocm_sysdeps_zstd.so.1": "5fc4ab0e6899318ece9bea43d3d397d20053418a5e40cb6bc86efe19a801c75e",
     "librocprofiler-register.so.0": "40ec0d0d42723e107d1a8036d62e0301a3013e6b18525ed8f210ce560ee37e59",
-    "loom-compile": "a2902bba66bec779d95d15f6bac573072c1940dccd34215663c9a59842941dfa"
+    "loom-compile": "74a0c9dc5f387e89b85a3cd9d2000644dc0e20a0657d9fe79dfcd627ff5ecdb6"
   }
 }
