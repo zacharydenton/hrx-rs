@@ -110,8 +110,31 @@ are checked. Scratch samples contain 50,000 acquire/recycle pairs; allocation
 samples contain 2,000 allocate/drop pairs.
 
 The measured medians differ by less than 2%. Graph replay reduces host recording
-work to roughly 25 ns per kernel here, but does not improve completed throughput
-for this tiny, serial Euler kernel. These are wall-clock measurements, including
+work to roughly 25 ns per kernel here.
+
+## Graph dependency cost, 2026-09-09
+
+Declared edges are not free, which is why the graph API makes every dependency
+explicit rather than chaining. Recording the same 32 Euler dispatches as a
+declared chain and as independent nodes, on the bundle and host above:
+
+| Recording | Per kernel through completion |
+| --- | ---: |
+| Chained (each node after the previous) | 2.197 µs |
+| Independent (no declared dependencies) | 1.664 µs |
+| Difference | 0.533 µs per edge |
+
+`examples/stream_bench.rs` reports these as `graph_complete_ns_per_kernel`,
+`graph_independent_ns_per_kernel` and `graph_edge_cost_ns`. A latency-bound
+variant in `runtime::dag_probe` isolates the cost further: 64 tiny fill nodes
+replay in ~151 µs chained and ~88 µs independent, about 0.95 µs per edge. The
+Euler figure is smaller because a 2.2 µs kernel hides part of the scheduling
+cost. The runtime engages additional workstreams only once a schedulable run
+reaches 16 nodes, so larger graphs benefit more.
+
+The independent recording is a scheduling measurement only: a zero timestep makes
+the Euler result order-independent, so it is not a claim that these dispatches may
+be reordered in general. These are wall-clock measurements, including
 native runtime costs, not GPU timestamps or model benchmarks. The upload result
 includes the host staging copy on this integrated GPU; it is not PCIe bandwidth.
 

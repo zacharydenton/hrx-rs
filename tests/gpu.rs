@@ -3,7 +3,7 @@ use hrx::{Constants, Device, Stream};
 
 #[test]
 #[ignore = "requires gfx1151"]
-fn nested_views_bound_stream_and_sequence_operations() -> hrx::Result<()> {
+fn nested_views_bound_stream_and_graph_operations() -> hrx::Result<()> {
     let mut stream = Stream::open()?;
     let source = stream.allocate(64)?;
     let destination = stream.allocate(64)?;
@@ -46,13 +46,15 @@ fn nested_views_bound_stream_and_sequence_operations() -> hrx::Result<()> {
     stream.read_blocking(destination.binding(), &mut actual)?;
     assert_eq!(actual, copied);
 
-    let mut builder = stream.sequence()?;
-    assert!(builder.fill(empty, 1).is_err());
-    assert!(builder.copy(empty, empty).is_err());
-    assert!(builder.copy(dst.slice(0, 15)?, src).is_err());
-    builder.fill(src, 0x44)?.copy(dst, src)?;
-    let mut sequence = builder.finish()?;
-    stream.launch_sequence(&mut sequence)?;
+    let mut graph = stream.graph()?;
+    assert!(graph.fill(&[], empty, 1).is_err());
+    assert!(graph.copy(&[], empty, empty).is_err());
+    assert!(graph.copy(&[], dst.slice(0, 15)?, src).is_err());
+    // The copy reads what the fill writes, so the edge is declared, not implied.
+    let filled = graph.fill(&[], src, 0x44)?;
+    graph.copy(&[filled], dst, src)?;
+    let mut exec = graph.finish()?;
+    stream.launch(&mut exec)?;
     expected[12..28].fill(0x44);
     copied[32..48].fill(0x44);
     stream.read_blocking(source.binding(), &mut actual)?;
@@ -156,13 +158,12 @@ fn queued_storage_views_and_replay() -> hrx::Result<()> {
     assert!(result.try_slice(usize::MAX, 1).is_err());
     assert!(result.binding().slice(usize::MAX, 1).is_err());
     let other = stream.allocate(4096)?;
-    let mut sequence = stream.sequence()?;
-    sequence
-        .fill(result.binding(), 0x3c)?
-        .copy(other.binding(), result.binding())?;
-    let mut sequence = sequence.finish()?;
+    let mut graph = stream.graph()?;
+    let filled = graph.fill(&[], result.binding(), 0x3c)?;
+    graph.copy(&[filled], other.binding(), result.binding())?;
+    let mut exec = graph.finish()?;
     for _ in 0..4 {
-        stream.launch_sequence(&mut sequence)?;
+        stream.launch(&mut exec)?;
         stream.read_blocking(other.binding(), &mut bytes)?;
         assert!(bytes.iter().all(|b| *b == 0x3c));
     }
@@ -232,11 +233,12 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
             .chunks_exact(2)
             .all(|b| u16::from_le_bytes([b[0], b[1]]) == 0x3fc0)
     );
-    let mut sequence = stream.sequence()?;
+    let mut graph = stream.graph()?;
     unsafe {
         assert!(
-            sequence
+            graph
                 .dispatch(
+                    &[],
                     &kernel,
                     [1; 3],
                     [128, 1, 1],
@@ -248,7 +250,8 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
                 .contains("compiled size")
         );
         let copied_constants = constants.clone();
-        sequence.dispatch(
+        graph.dispatch(
+            &[],
             &kernel,
             [1; 3],
             [256, 1, 1],
@@ -256,8 +259,8 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
             &[sample.binding(), velocity.binding()],
         )?;
     }
-    let mut sequence = sequence.finish()?;
-    stream.launch_sequence(&mut sequence)?;
+    let mut exec = graph.finish()?;
+    stream.launch(&mut exec)?;
     stream.read_blocking(sample.binding(), &mut output)?;
     assert!(
         output
@@ -277,8 +280,9 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
             &constants,
             &[sample.binding(), velocity.binding()],
         )?;
-        let mut graph = foreign.sequence()?;
+        let mut graph = foreign.graph()?;
         graph.dispatch(
+            &[],
             &kernel,
             [1; 3],
             [256, 1, 1],
@@ -286,7 +290,7 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
             &[sample.binding(), velocity.binding()],
         )?;
         let mut recorded = graph.finish()?;
-        foreign.launch_sequence(&mut recorded)?;
+        foreign.launch(&mut recorded)?;
     }
     let done = foreign.record_event()?;
     stream.wait_event(&done)?;
@@ -342,7 +346,7 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
 }
 #[test]
 #[ignore = "requires gfx1151"]
-fn buffers_are_device_scoped_but_sequences_stay_stream_scoped() -> hrx::Result<()> {
+fn buffers_are_device_scoped_but_graphs_stay_stream_scoped() -> hrx::Result<()> {
     let mut a = Stream::open()?;
     let mut b = Stream::open()?;
     let source = a.allocate(16)?;
@@ -366,25 +370,25 @@ fn buffers_are_device_scoped_but_sequences_stay_stream_scoped() -> hrx::Result<(
     b.fill(source.binding(), 3)?;
     let readback = b.read(source.binding())?;
     assert_eq!(readback.wait(&mut b)?, vec![3; 16]);
-    let mut graph = b.sequence()?;
-    graph.fill(source.binding(), 4)?;
-    graph.copy(destination.binding(), source.binding())?;
+    let mut graph = b.graph()?;
+    let filled = graph.fill(&[], source.binding(), 4)?;
+    graph.copy(&[filled], destination.binding(), source.binding())?;
     drop(graph);
 
-    // A recorded sequence is not device-scoped: it names the stream it will
-    // replay on, and native replay elsewhere would reorder against that queue.
-    let mut graph = a.sequence()?;
-    graph.fill(source.binding(), 9)?;
-    let mut graph = graph.finish()?;
+    // A recorded graph is not device-scoped: it names the stream it will replay
+    // on, and native replay elsewhere would reorder against that queue.
+    let mut graph = a.graph()?;
+    graph.fill(&[], source.binding(), 9)?;
+    let mut exec = graph.finish()?;
     assert!(
-        b.launch_sequence(&mut graph)
+        b.launch(&mut exec)
             .unwrap_err()
             .to_string()
             .contains("another stream")
     );
     let done = b.record_event()?;
     a.wait_event(&done)?;
-    a.launch_sequence(&mut graph)?;
+    a.launch(&mut exec)?;
     a.read_blocking(source.binding(), &mut bytes)?;
     assert_eq!(bytes, [9; 16]);
     Ok(())
@@ -392,23 +396,70 @@ fn buffers_are_device_scoped_but_sequences_stay_stream_scoped() -> hrx::Result<(
 
 #[test]
 #[ignore = "requires gfx1151"]
-fn instantiated_sequences_own_their_resources() -> hrx::Result<()> {
+fn instantiated_graphs_own_their_resources() -> hrx::Result<()> {
     let mut stream = Stream::open()?;
     let buffer = stream.allocate(1024)?;
     let output = stream.allocate(1024)?;
-    let mut builder = stream.sequence()?;
-    builder
-        .fill(buffer.binding(), 42)?
-        .copy(output.binding(), buffer.binding())?;
-    let mut sequence = builder.finish()?;
+    let mut graph = stream.graph()?;
+    let filled = graph.fill(&[], buffer.binding(), 42)?;
+    graph.copy(&[filled], output.binding(), buffer.binding())?;
+    let mut exec = graph.finish()?;
     drop(buffer);
-    stream.launch_sequence(&mut sequence)?;
+    stream.launch(&mut exec)?;
     let mut bytes = [0; 1024];
     stream.read_blocking(output.binding(), &mut bytes)?;
     assert_eq!(bytes, [42; 1024]);
     // Even an empty executable keeps the stream/device alive after escape.
     drop(output);
     drop(stream);
-    drop(sequence);
+    drop(exec);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires gfx1151"]
+fn graphs_fork_join_and_reject_foreign_nodes() -> hrx::Result<()> {
+    let mut stream = Stream::open()?;
+    let left = stream.allocate(1024)?;
+    let right = stream.allocate(1024)?;
+    let merged = stream.allocate(2048)?;
+    let mut graph = stream.graph()?;
+
+    // Two independent fills; neither names the other, so the runtime may overlap
+    // them. The copies that read them are ordered against the right producer only.
+    let fill_left = graph.fill(&[], left.binding(), 0xa1)?;
+    let fill_right = graph.fill(&[], right.binding(), 0xb2)?;
+    assert_ne!(
+        fill_left, fill_right,
+        "distinct nodes have distinct handles"
+    );
+
+    // Naming a node twice is collapsed, not rejected.
+    let ready = graph.join(&[fill_left, fill_right, fill_left])?;
+    graph.copy(&[ready], merged.binding().slice(0, 1024)?, left.binding())?;
+    graph.copy(
+        &[ready],
+        merged.binding().slice(1024, 1024)?,
+        right.binding(),
+    )?;
+
+    // A node from another recording names nothing here.
+    let mut other = stream.graph()?;
+    let foreign = other.fill(&[], left.binding(), 0)?;
+    assert!(
+        graph
+            .fill(&[foreign], right.binding(), 0)
+            .unwrap_err()
+            .to_string()
+            .contains("another graph")
+    );
+    drop(other);
+
+    let mut exec = graph.finish()?;
+    stream.launch(&mut exec)?;
+    let mut bytes = vec![0; 2048];
+    stream.read_blocking(merged.binding(), &mut bytes)?;
+    assert!(bytes[..1024].iter().all(|b| *b == 0xa1), "left branch ran");
+    assert!(bytes[1024..].iter().all(|b| *b == 0xb2), "right branch ran");
     Ok(())
 }
