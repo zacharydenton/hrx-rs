@@ -2,9 +2,9 @@
 use std::sync::Arc;
 
 use super::device::c_string;
-use super::{Args, Error, Result, check, device, sys};
+use super::{Args, Error, Result, check, sys, try_device};
 
-struct Executable(sys::hrx_executable_t);
+struct Executable(sys::Executable);
 
 // The handle is only used through &Device, under its mutex.
 unsafe impl Send for Executable {}
@@ -12,8 +12,7 @@ unsafe impl Sync for Executable {}
 
 impl Drop for Executable {
     fn drop(&mut self) {
-        // Safety: the executable is released once, after draining any work
-        // that may still be running from it.
+        // Native commands retain the HAL executable after this wrapper is released.
         unsafe {
             sys::hrx_executable_release(self.0);
         }
@@ -25,7 +24,13 @@ impl Drop for Executable {
 pub struct Kernel {
     executable: Arc<Executable>,
     ordinal: u32,
+    info: sys::ExportInfo,
+    device: Arc<super::Device>,
 }
+
+// Metadata is immutable and its name pointer is retained by executable.
+unsafe impl Send for Kernel {}
+unsafe impl Sync for Kernel {}
 
 impl std::fmt::Debug for Kernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -34,7 +39,7 @@ impl std::fmt::Debug for Kernel {
 }
 
 impl Kernel {
-    /// Loads `path` for gfx1151 and looks up `symbol`.
+    /// Loads `path` for the selected device and looks up `symbol`.
     /// # Safety
     /// The code object must be trusted native code, just like a shared library.
     /// ```compile_fail
@@ -46,14 +51,15 @@ impl Kernel {
             .ok_or_else(|| Error::Message(format!("{} is not UTF-8", path.display())))?;
         let path_c = c_string(path_text)?;
         let symbol_c = c_string(symbol)?;
-        let family = c"amdgpu";
-        let target = c"gfx1151";
+        let device = try_device()?;
+        let family = crate::TARGET_FAMILY;
+        let target = device.target().as_c_str();
         // Safety: every string outlives the call; HRX writes the handle on
         // success, and the ordinal lookup happens on a loaded executable.
         unsafe {
-            let mut executable: sys::hrx_executable_t = std::ptr::null_mut();
+            let mut executable: sys::Executable = std::ptr::null_mut();
             check(sys::hrx_executable_load_file(
-                device().raw(),
+                device.raw(),
                 path_c.as_ptr(),
                 family.as_ptr(),
                 target.as_ptr(),
@@ -66,9 +72,17 @@ impl Kernel {
                 symbol_c.as_ptr(),
                 &mut ordinal,
             ))?;
+            let mut info = sys::ExportInfo::default();
+            check(sys::hrx_executable_export_info(
+                executable.0,
+                ordinal,
+                &mut info,
+            ))?;
             Ok(Kernel {
                 executable: Arc::new(executable),
                 ordinal,
+                info,
+                device,
             })
         }
     }
@@ -79,7 +93,8 @@ impl Kernel {
     /// The artifact must be trusted native code, as for [`Kernel::load`].
     #[cfg(feature = "loom")]
     pub unsafe fn load_artifact(artifact: &crate::loom::Artifact) -> Result<Kernel> {
-        if artifact.target() != crate::TARGET_KEY {
+        let device = try_device()?;
+        if artifact.target() != device.target().as_str() {
             return Err(Error::Message(
                 "artifact target does not match this runtime".into(),
             ));
@@ -88,11 +103,11 @@ impl Kernel {
         unsafe {
             let mut raw = std::ptr::null_mut();
             check(sys::hrx_executable_load_data(
-                device().raw(),
+                device.raw(),
                 artifact.bytes().as_ptr().cast(),
                 artifact.bytes().len(),
-                c"amdgpu".as_ptr(),
-                c"gfx1151".as_ptr(),
+                crate::TARGET_FAMILY.as_ptr(),
+                device.target().as_c_str().as_ptr(),
                 &mut raw,
             ))?;
             let executable = Executable(raw);
@@ -102,14 +117,22 @@ impl Kernel {
                 symbol.as_ptr(),
                 &mut ordinal,
             ))?;
+            let mut info = sys::ExportInfo::default();
+            check(sys::hrx_executable_export_info(
+                executable.0,
+                ordinal,
+                &mut info,
+            ))?;
             Ok(Kernel {
                 executable: Arc::new(executable),
                 ordinal,
+                info,
+                device,
             })
         }
     }
 
-    /// One dispatch: `grid` workgroups of `block` work items, subgroup size 32.
+    /// One dispatch: `grid` workgroups of `block` work items, subgroup selection from the executable.
     /// # Safety
     /// Dimensions and argument layout must match the kernel. Every accessed
     /// address must stay within a live allocation owned by the current scoped
@@ -120,13 +143,17 @@ impl Kernel {
     /// }
     /// ```
     pub unsafe fn launch(&self, grid: [u32; 3], block: [u32; 3], args: &Args) -> Result<()> {
-        crate::runtime::validate_launch(grid, block)?;
-        let config = sys::hrx_dispatch_config_t {
+        let device = try_device()?;
+        if device.raw() != self.device.raw() {
+            return Err(Error::Message("kernel belongs to another device".into()));
+        }
+        crate::runtime::validate_export_launch(&self.info, grid, block)?;
+        let config = sys::DispatchConfig {
             workgroup_count: grid,
             workgroup_size: block,
-            subgroup_size: 32,
+            subgroup_size: sys::SUBGROUP_SIZE_FROM_EXECUTABLE,
         };
-        unsafe { device().dispatch(self.executable.0, self.ordinal, &config, args) }
+        unsafe { device.dispatch(self.executable.0, self.ordinal, &config, args) }
     }
 
     /// The common case: a 2-D grid of 1-D workgroups.

@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
+# Native release availability and inherited dependency provenance are unresolved.
+publish = false
 description = "Owned GPU execution, Loom compilation, and portable model ABI support for HRX"
 repository = "https://github.com/zacharydenton/hrx.rs"
 readme = "README.md"
 keywords = ["gpu", "amdgpu", "compute", "loom"]
 categories = ["hardware-support", "science"]
-exclude = ["artifacts", "target"]
+include = ["src/**", "tests/**", "examples/**", "native/**", "patches/**", "scripts/**", "Cargo.toml", "Cargo.lock", "bundle.json", "README.md", "CHANGELOG.md", "LICENSE", "THIRD-PARTY.md", "VALIDATION.md"]
 
 [features]
 default = ["download", "loom", "ffi"]

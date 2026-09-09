@@ -1,12 +1,10 @@
 use std::ffi::{CStr, CString, c_void};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-/// The target the kernels in this project are compiled for.
-pub const TARGET_FAMILY: &str = "amdgpu";
-/// The supported AMDGPU architecture.
-pub const TARGET_KEY: &str = "gfx1151";
-
-use crate::{Error, Result, sys};
+/// Native export metadata used to validate dispatch shapes and arguments.
+pub use crate::sys::ExportInfo;
+use crate::{Error, Result, TARGET_FAMILY, Target, sys};
 
 /// Turns a status into a `Result`, taking ownership of its message. A null status is success.
 pub(crate) fn check(status: sys::Status, what: impl std::fmt::Display) -> Result<()> {
@@ -36,50 +34,38 @@ pub(crate) fn check(status: sys::Status, what: impl std::fmt::Display) -> Result
     })
 }
 
-/// The device and stream themselves, released when the last thing referencing them goes away.
-///
-/// Buffers and kernels hold one of these, so the stream cannot be released while an allocation or an
-/// executable still names its device. The C implementation sidestepped the question by never tearing
-/// down at all — its runtime was a function-local static that lived to process exit — which is not
-/// something a safe API can leave to the caller to arrange.
+/// Shared ownership of a stream and its borrowed device registry entry.
+/// Buffers, kernels and events retain this handle through their native uses.
 struct Inner {
     device: sys::Device,
+    target: Target,
     stream: sys::Stream,
 }
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        // Only the stream is ours: `hrx_stream_create` hands back a reference, while
-        // `hrx_gpu_device_get` returns a borrowed pointer into libhrx's own device array
-        // (`*device = &g_gpu.devices[index]`) without retaining. Releasing that would be an
-        // over-release of the global registry, which aborts inside libhrx.
+        // hrx_stream_create returns an owned reference. hrx_gpu_device_get
+        // borrows the global registry entry without retaining it; do not release it.
         unsafe { sys::hrx_stream_release(self.stream) };
     }
 }
 
-// Safety: this only holds handles. They carry atomic reference counts and no thread-local state, so
-// both moving one between threads and releasing it on another are sound. It is `Sync` because holding
-// the handle is not using it: every stream operation goes through `&Gpu`, and `Gpu` is deliberately not
-// `Sync`, so no two threads can drive one stream at once.
+// Safety: native handle reference counts are atomic. Stream mutation requires
+// the owning !Sync Gpu or exclusive Stream access. Shared events only query or
+// wait on their semaphore; they do not mutate the stream.
 unsafe impl Send for Inner {}
 unsafe impl Sync for Inner {}
 
 /// An independently owned stream on the process-wide GPU runtime.
 pub struct Gpu {
     inner: std::sync::Arc<Inner>,
-    /// `Gpu` may be moved between threads but not shared between them: a stream's timepoint and
-    /// pending command buffer are ordinary mutable fields, so two threads dispatching through one
-    /// would race. `Cell` is `Send` and not `Sync`, which says exactly that.
+    // Native stream fields are unsynchronized: allow moving between threads,
+    // but prevent shared access to operations taking &Gpu.
     _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
 }
 
-/// libhrx initialises once for the process, not once per handle: a second `hrx_gpu_initialize`
-/// returns ALREADY_EXISTS, and dropping a `Gpu` releases its stream without shutting the runtime
-/// down. So the initialisation is done once behind a lock and every handle after the first reuses it
-/// — which is what lets a server create and drop sessions, and a Python caller hold two `H3`s.
-///
-/// The lock also serialises the call itself: the initialisation touches ordinary global state, so two
-/// threads opening concurrently must not both be inside it.
+/// Initialize the process-wide runtime once, serializing access to native global
+/// state. ALREADY_EXISTS permits reuse across model libraries; failures are retryable.
 pub(crate) fn initialize_runtime() -> Result<()> {
     sys::load()?;
     static READY: std::sync::Mutex<Option<()>> = std::sync::Mutex::new(None);
@@ -87,7 +73,7 @@ pub(crate) fn initialize_runtime() -> Result<()> {
         let _lock = sys::runtime_lock()?;
         unsafe {
             let status = sys::hrx_gpu_initialize(0);
-            if sys::hrx_status_code(status) == 6 {
+            if sys::hrx_status_code(status) == sys::STATUS_ALREADY_EXISTS {
                 sys::hrx_status_ignore(status);
             } else {
                 check(status, "hrx_gpu_initialize")?;
@@ -97,7 +83,7 @@ pub(crate) fn initialize_runtime() -> Result<()> {
     })
 }
 
-fn open_device(index: i32) -> Result<sys::Device> {
+pub(crate) fn open_device(index: i32) -> Result<(sys::Device, Target)> {
     initialize_runtime()?;
     unsafe {
         let mut count = 0;
@@ -107,7 +93,7 @@ fn open_device(index: i32) -> Result<sys::Device> {
         )?;
         if index < 0 || index >= count {
             return Err(Error::Message(
-                "no GPU device (is the HSA runtime on LD_LIBRARY_PATH? see docs/setup.md)".into(),
+                "no GPU device (check GPU access and the README provisioning instructions)".into(),
             ));
         }
         let mut device = std::ptr::null_mut();
@@ -119,19 +105,15 @@ fn open_device(index: i32) -> Result<sys::Device> {
         check(
             sys::hrx_device_get_property(
                 device,
-                1,
+                sys::DEVICE_PROPERTY_ARCHITECTURE,
                 architecture.as_mut_ptr().cast(),
                 architecture.len(),
             ),
             "device architecture",
         )?;
-        if architecture.split(|b| *b == 0).next() != Some(TARGET_KEY.as_bytes()) {
-            return Err(Error::Message(format!(
-                "expected {TARGET_KEY}, found {}",
-                String::from_utf8_lossy(&architecture)
-            )));
-        }
-        Ok(device)
+        let key = std::str::from_utf8(architecture.split(|b| *b == 0).next().unwrap())
+            .map_err(|_| Error::Message("invalid device architecture".into()))?;
+        Ok((device, Target::from_device_architecture(key)?))
     }
 }
 
@@ -143,7 +125,7 @@ impl Gpu {
 
     /// Open a legacy stream on the selected device index.
     pub fn open_device(index: i32) -> Result<Self> {
-        let device = open_device(index)?;
+        let (device, target) = open_device(index)?;
         unsafe {
             let mut stream = std::ptr::null_mut();
             check(
@@ -151,7 +133,11 @@ impl Gpu {
                 "hrx_stream_create",
             )?;
             Ok(Self {
-                inner: std::sync::Arc::new(Inner { device, stream }),
+                inner: std::sync::Arc::new(Inner {
+                    device,
+                    target,
+                    stream,
+                }),
                 _not_sync: std::marker::PhantomData,
             })
         }
@@ -180,7 +166,7 @@ impl Gpu {
                     sys::hrx_device_allocator(self.inner.device),
                     sys::BufferParams {
                         memory_type: sys::MEMORY_TYPE_DEVICE_LOCAL,
-                        access: 7,
+                        access: sys::MEMORY_ACCESS_ALL,
                         usage: sys::BUFFER_USAGE_DEFAULT,
                         queue_affinity: u64::MAX,
                     },
@@ -193,6 +179,7 @@ impl Gpu {
         Ok(Buffer {
             raw: buffer,
             bytes: bytes.max(1),
+            shared: AtomicBool::new(false),
             _device: self.inner.clone(),
         })
     }
@@ -221,8 +208,7 @@ impl Gpu {
         self.h2d_at(dst, 0, src)
     }
 
-    /// As [`Gpu::h2d`], writing at an offset: a large weight is uploaded in chunks so the host never
-    /// stages more than one chunk of it.
+    /// Synchronize and upload bytes at a checked offset into the allocation.
     pub fn h2d_at(&self, dst: &Buffer, offset: usize, src: &[u8]) -> Result<()> {
         self.owns(dst)?;
         if src.is_empty() {
@@ -278,8 +264,7 @@ impl Gpu {
         }
     }
 
-    /// Reads back from a view rather than a whole allocation, which is how the pipeline inspects rows
-    /// it handed a kernel at an offset.
+    /// Synchronize and read bytes from a checked allocation view.
     pub fn d2h_ref(&self, src: View<'_>, dst: &mut [u8]) -> Result<()> {
         self.owns(src.owner)?;
         if dst.is_empty() {
@@ -312,8 +297,7 @@ impl Gpu {
         self.d2d_at(dst, 0, src, 0, bytes)
     }
 
-    /// A device copy into or out of the middle of an allocation — a row range of a packed sequence,
-    /// or one half of a two-row table.
+    /// Queue a device copy with checked source and destination offsets.
     pub fn d2d_at(
         &self,
         dst: &Buffer,
@@ -345,16 +329,13 @@ impl Gpu {
     ///
     /// # Safety
     ///
-    /// The file is machine code that will run on the device with no sandbox between it and every
-    /// other allocation this process holds. Loading one is trusting whoever produced it, exactly as
-    /// `dlopen` is: a code object that reads or writes outside the bindings it is given corrupts
-    /// memory, and nothing here can tell that it will. Load only code objects this process compiled,
-    /// or that come from a source you would equally trust with a shared library.
+    /// The code object must come from a trusted source. Device code can access
+    /// other process allocations; loading does not validate its memory accesses.
     pub unsafe fn load(&self, path: &Path, symbol: &str) -> Result<Kernel> {
         let c_path = CString::new(path.as_os_str().as_encoded_bytes())
             .map_err(|_| Error::Message(format!("{} contains a NUL", path.display())))?;
-        let c_family = c"amdgpu";
-        let c_key = c"gfx1151";
+        let c_family = TARGET_FAMILY;
+        let c_key = self.inner.target.as_c_str();
         unsafe {
             let mut executable = std::ptr::null_mut();
             check(
@@ -377,7 +358,7 @@ impl Gpu {
     /// The artifact must contain trusted native code, as for [`Gpu::load`].
     #[cfg(feature = "loom")]
     pub unsafe fn load_artifact(&self, artifact: &crate::loom::Artifact) -> Result<Kernel> {
-        if artifact.target() != crate::TARGET_KEY {
+        if artifact.target() != self.inner.target.as_str() {
             return Err(Error::Message(
                 "artifact target does not match this runtime".into(),
             ));
@@ -390,8 +371,8 @@ impl Gpu {
                     self.inner.device,
                     bytes.as_ptr().cast(),
                     bytes.len(),
-                    c"amdgpu".as_ptr(),
-                    c"gfx1151".as_ptr(),
+                    TARGET_FAMILY.as_ptr(),
+                    self.inner.target.as_c_str().as_ptr(),
                     &mut executable,
                 ),
                 "loading compiled artifact",
@@ -447,12 +428,15 @@ impl Gpu {
         constants: &Constants,
         bindings: &[View<'_>],
     ) -> Result<()> {
+        if kernel._device.device != self.inner.device {
+            return Err(Error::Message("kernel belongs to another device".into()));
+        }
         for view in bindings {
             owns(&self.inner, view.owner)?;
         }
-        let mut binding_storage = [EMPTY_BINDING; 32];
+        let mut binding_storage = [std::mem::MaybeUninit::uninit(); 32];
         let raw_bindings = raw_bindings(bindings, &mut binding_storage);
-        validate_launch(grid, block)?;
+        validate_export_launch(&kernel.info, grid, block)?;
         if kernel.info.binding_count as usize != bindings.len()
             || kernel.info.constant_byte_length as usize != constants.len
         {
@@ -463,7 +447,7 @@ impl Gpu {
         let config = sys::DispatchConfig {
             workgroup_count: grid,
             workgroup_size: block,
-            subgroup_size: 32,
+            subgroup_size: sys::SUBGROUP_SIZE_FROM_EXECUTABLE,
         };
         unsafe {
             check(
@@ -491,16 +475,10 @@ impl Gpu {
     ///
     /// # Safety
     ///
-    /// A [`View`] proves that the allocation it names is still alive. It proves nothing about what
-    /// the kernel does with it. The device code addresses its bindings itself, from the scalars it is
-    /// given and from indices it computes, so a grid, a block size or a scalar that disagrees with
-    /// the kernel's own expectations reads or writes outside them — the length in a binding is
-    /// descriptive, not enforced.
-    ///
-    /// The caller must know that `kernel` is the kernel it thinks it is, and that `grid`, `block`,
-    /// `scalars` and `bindings` are the shapes it was compiled for. In this workspace that knowledge
-    /// lives in `h3::dispatch`, whose builders compile a kernel and launch it from the same
-    /// description; nothing else should call this directly.
+    /// Dimensions, scalar packing and binding spans must match the kernel.
+    /// Every device access must remain within a live allocation and obey the
+    /// kernel's aliasing requirements. A [`View`] retains the allocation borrow;
+    /// its length does not enforce bounds on device code.
     #[deprecated(note = "use Stream::dispatch with explicitly typed Constants")]
     pub unsafe fn dispatch(
         &self,
@@ -510,12 +488,15 @@ impl Gpu {
         scalars: &[u32],
         bindings: &[View<'_>],
     ) -> Result<()> {
+        if kernel._device.device != self.inner.device {
+            return Err(Error::Message("kernel belongs to another device".into()));
+        }
         for view in bindings {
             owns(&self.inner, view.owner)?;
         }
-        let mut binding_storage = [EMPTY_BINDING; 32];
+        let mut binding_storage = [std::mem::MaybeUninit::uninit(); 32];
         let raw_bindings = raw_bindings(bindings, &mut binding_storage);
-        validate_launch(grid, block)?;
+        validate_export_launch(&kernel.info, grid, block)?;
         let info = &kernel.info;
         if bindings.len() != info.binding_count as usize {
             return Err(Error::Message(format!(
@@ -560,7 +541,7 @@ impl Gpu {
         let config = sys::DispatchConfig {
             workgroup_count: grid,
             workgroup_size: block,
-            subgroup_size: 32,
+            subgroup_size: sys::SUBGROUP_SIZE_FROM_EXECUTABLE,
         };
         unsafe {
             check(
@@ -581,27 +562,28 @@ impl Gpu {
     }
 }
 
-/// A device allocation. libhrx buffers have no host-visible address, so this is the handle itself
-/// rather than a pointer; bindings are made with [`Buffer::binding`].
+/// An owned device allocation. Use [`Buffer::binding`] or [`Buffer::try_slice`]
+/// to borrow a binding; this API does not expose host pointers.
 pub struct Buffer {
     raw: sys::Buffer,
     bytes: usize,
+    // Sticky on the original and every alias: shared allocations never enter scratch pools.
+    shared: AtomicBool,
     /// Keeps the device alive: releasing a buffer after its device is gone would be a use-after-free.
     _device: std::sync::Arc<Inner>,
 }
 
 // Safety: moving/releasing an allocation uses native atomic reference counts.
 // Every operation checks its owning Inner before touching native buffer state.
-// That stream is !Sync, so sharing a Buffer cannot enable concurrent accesses.
+// That stream is !Sync. Explicit cross-stream aliases require the unsafe
+// share_on contract to order conflicting accesses for their entire lifetime.
 unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
 
 /// A binding into a device allocation, borrowed from it.
 ///
-/// The lifetime is the point. `hrx_buffer_s` is a raw handle, so a view carrying one is `Copy` and
-/// would happily outlive the allocation it names — safe code could drop the buffer and still dispatch
-/// against it. Borrowing the buffer makes that a compile error instead.
-/// The owner also identifies the only stream allowed to access this allocation.
+/// The borrow keeps the buffer alive and identifies the stream allowed to use
+/// this view. Cross-stream access requires a handle from [`Buffer::share_on`].
 #[derive(Clone, Copy, Debug)]
 pub struct View<'a> {
     raw: sys::BufferRef,
@@ -625,6 +607,28 @@ impl<'a> View<'a> {
 }
 
 impl Buffer {
+    /// Retain this allocation for access through another stream on the same device.
+    /// Sharing permanently excludes both handles from [`Stream::recycle`], even
+    /// after the other handle is dropped.
+    ///
+    /// # Safety
+    /// Order all conflicting accesses through either handle, including graph replay,
+    /// with events or synchronization. This obligation lasts until every shared
+    /// handle and recorded use is gone. Host transfers must also obey this ordering.
+    pub unsafe fn share_on(&self, stream: &Stream) -> Result<Buffer> {
+        if self._device.device != stream.gpu.inner.device {
+            return Err(Error::Message("buffer belongs to another device".into()));
+        }
+        unsafe { sys::hrx_buffer_retain(self.raw) };
+        // Only a monotonic eligibility flag; no other data is published by this store.
+        self.shared.store(true, Ordering::Relaxed);
+        Ok(Buffer {
+            raw: self.raw,
+            bytes: self.bytes,
+            shared: AtomicBool::new(true),
+            _device: stream.gpu.inner.clone(),
+        })
+    }
     /// The actual allocation size, including rounding of empty allocations.
     pub fn bytes(&self) -> usize {
         self.bytes
@@ -655,12 +659,12 @@ impl Buffer {
         )
     }
 
-    /// A binding into part of the allocation. The pipeline hands kernels views at row offsets, which
-    /// the C did with pointer arithmetic; a device buffer here has no host-visible address, so the
-    /// offset travels in the binding instead.
+    /// Borrow a span within the allocation.
+    ///
+    /// # Panics
+    /// Panics if offset arithmetic overflows or the span exceeds the allocation.
+    /// Use [`Buffer::try_slice`] to return an error instead.
     pub fn slice(&self, offset: usize, length: usize) -> View<'_> {
-        // checked: `offset + length` wraps for a large offset, and the wrapped sum passes the
-        // comparison — an eight-byte allocation would accept `slice(usize::MAX, 2)`
         self.try_slice(offset, length)
             .expect("slice past the allocation or overflow")
     }
@@ -682,15 +686,14 @@ pub struct Kernel {
     _device: std::sync::Arc<Inner>,
 }
 
-// Safety: `hrx_executable_s` is fixed once loaded — a retained HAL executable, its device and a
-// snapshot of its export names — behind an atomic reference count. Everything this type exposes is
-// read-only, and dispatching with it needs `&Gpu`.
+// Safety: executable metadata is immutable and native reference counts are
+// atomic. Dispatch requires serialized access to a command stream.
 unsafe impl Send for Kernel {}
 unsafe impl Sync for Kernel {}
 
 impl Kernel {
-    /// Native export metadata describing binding and constant counts.
-    pub fn info(&self) -> &sys::ExportInfo {
+    /// Native export metadata, including argument counts and workgroup dimensions.
+    pub fn info(&self) -> &ExportInfo {
         &self.info
     }
     /// The loaded export name.
@@ -707,6 +710,22 @@ impl Drop for Kernel {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compiled_workgroup_dimensions_are_enforced() {
+        let info = super::ExportInfo {
+            workgroup_size: [64, 2, 1],
+            ..Default::default()
+        };
+        assert!(super::validate_export_launch(&info, [1; 3], [64, 2, 1]).is_ok());
+        assert!(super::validate_export_launch(&info, [1; 3], [128, 1, 1]).is_err());
+        assert!(super::validate_export_launch(&info, [0, 1, 1], [64, 2, 1]).is_err());
+        let dynamic = super::ExportInfo {
+            workgroup_size: [0, 2, 1],
+            ..Default::default()
+        };
+        assert!(super::validate_export_launch(&dynamic, [1; 3], [32, 2, 1]).is_ok());
+        assert!(super::validate_export_launch(&dynamic, [1; 3], [32, 1, 1]).is_err());
+    }
     /// The bounds arithmetic, without a device: `offset + length` must not wrap into a pass.
     #[test]
     fn a_slice_past_the_allocation_is_refused_even_when_the_sum_wraps() {
@@ -731,23 +750,20 @@ fn owns(inner: &std::sync::Arc<Inner>, buffer: &Buffer) -> Result<()> {
 // Keep common dispatches on the stack without imposing a new binding limit.
 fn raw_bindings<'a>(
     views: &[View<'_>],
-    stack: &'a mut [sys::BufferRef; 32],
+    stack: &'a mut [std::mem::MaybeUninit<sys::BufferRef>; 32],
 ) -> std::borrow::Cow<'a, [sys::BufferRef]> {
     if views.len() <= stack.len() {
         for (out, view) in stack.iter_mut().zip(views) {
-            *out = view.raw;
+            out.write(view.raw);
         }
-        std::borrow::Cow::Borrowed(&stack[..views.len()])
+        // Only the prefix written above is exposed, and BufferRef is Copy.
+        std::borrow::Cow::Borrowed(unsafe {
+            std::slice::from_raw_parts(stack.as_ptr().cast(), views.len())
+        })
     } else {
         std::borrow::Cow::Owned(views.iter().map(|v| v.raw).collect())
     }
 }
-const EMPTY_BINDING: sys::BufferRef = sys::BufferRef {
-    buffer: std::ptr::null_mut(),
-    offset: 0,
-    length: 0,
-};
-
 pub(crate) fn checked_span(offset: usize, length: usize, capacity: usize) -> Result<()> {
     if offset.checked_add(length).is_none_or(|end| end > capacity) {
         Err(Error::Message(format!(
@@ -771,17 +787,42 @@ pub(crate) fn validate_launch(grid: [u32; 3], block: [u32; 3]) -> Result<()> {
     }
 }
 
+pub(crate) fn validate_export_launch(
+    info: &sys::ExportInfo,
+    grid: [u32; 3],
+    block: [u32; 3],
+) -> Result<()> {
+    validate_launch(grid, block)?;
+    if info
+        .workgroup_size
+        .iter()
+        .zip(block)
+        .any(|(&expected, actual)| expected != 0 && expected != actual)
+    {
+        return Err(Error::Message(format!(
+            "workgroup size {block:?} disagrees with compiled size {:?}",
+            info.workgroup_size
+        )));
+    }
+    Ok(())
+}
+
 /// A borrowed device registry entry. Opening a stream never acquires ownership
 /// of the native device, and dropping a model never shuts down HRX globally.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Device {
     index: i32,
+    target: Target,
 }
 impl Device {
     /// Validate a device index without creating a native stream.
     pub fn open(index: i32) -> Result<Self> {
-        open_device(index)?;
-        Ok(Self { index })
+        let (_, target) = open_device(index)?;
+        Ok(Self { index, target })
+    }
+    /// Architecture reported by the selected device.
+    pub fn target(&self) -> &Target {
+        &self.target
     }
     /// Create an independent ordered stream on this device.
     pub fn stream(&self) -> Result<Stream> {
@@ -798,7 +839,7 @@ impl Device {
 
 /// An ordered command stream. Mutating operations require exclusive access.
 /// Prepared kernels and allocations can be reused without a compiler/cache lookup.
-/// `Gpu` is the legacy H3 interface; new model code should use this type.
+/// Prefer this API to the legacy [`Gpu`] interface.
 pub struct Stream {
     gpu: Gpu,
     // Native command buffers retain HAL storage, not the hrx_buffer wrapper.
@@ -813,6 +854,49 @@ pub struct Stream {
     scratch_limit: usize,
 }
 impl Stream {
+    /// Architecture reported by this stream's device.
+    pub fn target(&self) -> &Target {
+        &self.gpu.inner.target
+    }
+
+    /// Submit preceding work and record a single immutable completion event.
+    /// Recording does not wait on the host and does not reclaim upload staging.
+    pub fn record_event(&mut self) -> Result<Event> {
+        let mut raw = std::ptr::null_mut();
+        unsafe {
+            check(
+                sys::hrx_event_create(
+                    self.gpu.inner.device,
+                    sys::EVENT_FLAG_DISABLE_TIMING,
+                    &mut raw,
+                ),
+                "create event",
+            )?;
+            let event = Event {
+                raw,
+                inner: self.gpu.inner.clone(),
+            };
+            check(
+                sys::hrx_event_record(raw, self.gpu.inner.stream),
+                "record event",
+            )?;
+            Ok(event)
+        }
+    }
+
+    /// Queue a device-side dependency before subsequent work on this stream.
+    /// The event must come from the same device. This call does not wait on the host.
+    pub fn wait_event(&mut self, event: &Event) -> Result<()> {
+        if self.gpu.inner.device != event.inner.device {
+            return Err(Error::Message("event belongs to another device".into()));
+        }
+        unsafe {
+            check(
+                sys::hrx_stream_wait_event(self.gpu.inner.stream, event.raw),
+                "wait event",
+            )
+        }
+    }
     /// Open an ordered stream on device zero.
     pub fn open() -> Result<Self> {
         Device::open(0)?.stream()
@@ -892,27 +976,34 @@ impl Stream {
         if bytes.is_empty() {
             return Ok(());
         }
-        // Poll submitted work before allocating again. Bound in-flight staging
-        // to eight buffers / 64 MiB (plus a single oversized upload); pressure
-        // applies backpressure rather than growing pinned memory indefinitely.
-        if !self.staging.is_empty() {
-            self.submit()?.is_complete()?;
-        }
-        if self.staging.len() >= 8
-            || self
-                .staging
-                .iter()
-                .map(|b| b.bytes)
-                .sum::<usize>()
-                .saturating_add(bytes.len())
-                > STAGING_LIMIT
+        // Submit/query only under pressure, allowing uploads to batch.
+        let next_capacity = self
+            .staging_pool
+            .iter()
+            .filter(|b| b.bytes >= bytes.len())
+            .map(|b| b.bytes)
+            .min()
+            .unwrap_or(bytes.len());
+        if !self.staging.is_empty()
+            && (self.staging.len() >= 8
+                || self
+                    .staging
+                    .iter()
+                    .map(|b| b.bytes)
+                    .sum::<usize>()
+                    .saturating_add(next_capacity)
+                    > STAGING_LIMIT)
+            && !self.submit()?.is_complete()?
         {
             self.synchronize()?;
         }
         let staging = if let Some(i) = self
             .staging_pool
             .iter()
-            .position(|b| b.bytes == bytes.len())
+            .enumerate()
+            .filter(|(_, b)| b.bytes >= bytes.len())
+            .min_by_key(|(_, b)| b.bytes)
+            .map(|(i, _)| i)
         {
             self.staging_pool.swap_remove(i)
         } else {
@@ -949,9 +1040,11 @@ impl Stream {
                 sys::hrx_allocator_allocate_buffer(
                     sys::hrx_device_allocator(self.gpu.inner.device),
                     sys::BufferParams {
-                        memory_type: 0x42 | 0x10 | 4,
-                        access: 7,
-                        usage: sys::BUFFER_USAGE_DEFAULT | 0x0100_0000,
+                        memory_type: sys::MEMORY_TYPE_HOST_LOCAL
+                            | sys::MEMORY_TYPE_DEVICE_VISIBLE
+                            | sys::MEMORY_TYPE_HOST_COHERENT,
+                        access: sys::MEMORY_ACCESS_ALL,
+                        usage: sys::BUFFER_USAGE_DEFAULT | sys::BUFFER_USAGE_MAPPING_SCOPED,
                         queue_affinity: u64::MAX,
                     },
                     bytes.max(1),
@@ -963,6 +1056,7 @@ impl Stream {
         Ok(Buffer {
             raw,
             bytes,
+            shared: AtomicBool::new(false),
             _device: self.gpu.inner.clone(),
         })
     }
@@ -983,6 +1077,8 @@ impl Stream {
         }
         Ok(Submission { stream: self })
     }
+    /// Load a native code object and select one export by name.
+    ///
     /// # Safety
     /// The code object must be trusted native machine code.
     pub unsafe fn load(&self, path: &Path, symbol: &str) -> Result<Kernel> {
@@ -997,6 +1093,8 @@ impl Stream {
         unsafe { self.gpu.load_artifact(artifact) }
     }
 
+    /// Queue a kernel invocation with explicitly packed constants and borrowed bindings.
+    ///
     /// # Safety
     /// Kernel, dimensions, constants and binding spans must agree. GPU addressing
     /// is not sandboxed by a binding's length.
@@ -1014,8 +1112,8 @@ impl Stream {
         }
     }
 
-    /// Return scratch only after its last recorded use. A pool belongs to exactly
-    /// one stream, so reuse is ordered without a host wait. No size-class strings.
+    /// Reuse a cached allocation or allocate new scratch storage. Reuse follows
+    /// the stream's command order and requires no host wait.
     pub fn scratch(&mut self, bytes: usize) -> Result<Buffer> {
         let choice = self
             .scratch
@@ -1034,10 +1132,18 @@ impl Stream {
             self.allocate(bytes)
         }
     }
-    /// Return an allocation to this stream's bounded scratch pool.
+    /// Return an allocation to this stream's bounded scratch pool after recording
+    /// its final use. A later scratch request may reuse its storage.
+    /// Returns an error for foreign-stream buffers and any handle to an allocation
+    /// that has been shared with [`Buffer::share_on`].
     pub fn recycle(&mut self, buffer: Buffer) -> Result<()> {
         if !std::sync::Arc::ptr_eq(&buffer._device, &self.gpu.inner) {
             return Err(Error::Message("scratch belongs to another stream".into()));
+        }
+        if buffer.shared.load(Ordering::Relaxed) {
+            return Err(Error::Message(
+                "shared allocations cannot enter the scratch pool".into(),
+            ));
         }
         if buffer.bytes <= self.scratch_limit.saturating_sub(self.scratch_bytes) {
             self.scratch_bytes += buffer.bytes;
@@ -1056,6 +1162,36 @@ impl Stream {
                 break;
             }
         }
+    }
+}
+
+/// An immutable stream completion point. Native queues retain its semaphore
+/// after a wait is enqueued, so dropping the event never cancels a dependency.
+/// This is a synchronization primitive; the pinned runtime has no GPU timestamps.
+pub struct Event {
+    raw: sys::Event,
+    inner: std::sync::Arc<Inner>,
+}
+// The recorded event is immutable and retains its native device and semaphore.
+unsafe impl Send for Event {}
+unsafe impl Sync for Event {}
+impl Event {
+    /// Query completion of the work preceding this event.
+    pub fn is_complete(&self) -> Result<bool> {
+        let mut complete = false;
+        unsafe {
+            check(sys::hrx_event_query(self.raw, &mut complete), "query event")?;
+        }
+        Ok(complete)
+    }
+    /// Wait on the host for the work preceding this event.
+    pub fn synchronize(&self) -> Result<()> {
+        unsafe { check(sys::hrx_event_synchronize(self.raw), "synchronize event") }
+    }
+}
+impl Drop for Event {
+    fn drop(&mut self) {
+        unsafe { sys::hrx_event_release(self.raw) }
     }
 }
 
@@ -1172,17 +1308,16 @@ macro_rules! scalars {
 scalars!(u32 => 4, i32 => 4, f32 => 4, u64 => 8, i64 => 8, f64 => 8);
 impl Drop for Stream {
     fn drop(&mut self) {
-        if (!self.staging.is_empty() || !self.scratch.is_empty()) && self.gpu.sync().is_err() {
+        if !self.staging.is_empty() && self.gpu.sync().is_err() {
             // A failed wait provides no proof that mapped staging is idle.
             std::mem::forget(std::mem::take(&mut self.staging));
-            std::mem::forget(std::mem::take(&mut self.scratch));
         }
     }
 }
 
 /// Recording for a fixed sequence of operations. Each added operation depends
-/// on the previous one. Native capture/update APIs are deliberately not exposed:
-/// they are unimplemented in the pinned HRX revision.
+/// on the previous one. Native capture and update are unimplemented in the
+/// pinned HRX revision.
 pub struct SequenceBuilder<'a> {
     graph: sys::Graph,
     last: sys::GraphNode,
@@ -1277,6 +1412,8 @@ impl<'a> SequenceBuilder<'a> {
         self.last = next;
         Ok(self)
     }
+    /// Record a kernel invocation after the preceding sequence operation.
+    ///
     /// # Safety
     /// As [`Stream::dispatch`]. Constants, addresses and grid are fixed for every
     /// replay. To change them, build a new sequence.
@@ -1288,12 +1425,15 @@ impl<'a> SequenceBuilder<'a> {
         constants: &Constants,
         bindings: &[View<'a>],
     ) -> Result<&mut Self> {
+        if kernel._device.device != self.inner.device {
+            return Err(Error::Message("kernel belongs to another device".into()));
+        }
         for view in bindings {
             owns(&self.inner, view.owner)?;
         }
-        let mut binding_storage = [EMPTY_BINDING; 32];
+        let mut binding_storage = [std::mem::MaybeUninit::uninit(); 32];
         let raw_bindings = raw_bindings(bindings, &mut binding_storage);
-        validate_launch(grid, block)?;
+        validate_export_launch(&kernel.info, grid, block)?;
         if kernel.info.binding_count as usize != bindings.len()
             || kernel.info.constant_byte_length as usize != constants.len
         {
@@ -1310,7 +1450,7 @@ impl<'a> SequenceBuilder<'a> {
             config: sys::DispatchConfig {
                 workgroup_count: grid,
                 workgroup_size: block,
-                subgroup_size: 32,
+                subgroup_size: sys::SUBGROUP_SIZE_FROM_EXECUTABLE,
             },
             constants: constants.bytes.as_ptr().cast(),
             constants_size: constants.len,
@@ -1379,27 +1519,9 @@ impl Stream {
     /// Queue a download into owned, initially unmapped host-visible storage.
     pub fn read_queued(&mut self, source: View<'_>) -> Result<Readback> {
         self.gpu.owns(source.owner)?;
-        let mut raw = std::ptr::null_mut();
+        let buffer = self.allocate_host(source.len())?;
+        let raw = buffer.raw;
         unsafe {
-            check(
-                sys::hrx_allocator_allocate_buffer(
-                    sys::hrx_device_allocator(self.gpu.inner.device),
-                    sys::BufferParams {
-                        memory_type: 0x42 | 0x10 | 4,
-                        access: 7,
-                        usage: sys::BUFFER_USAGE_DEFAULT | 0x0100_0000,
-                        queue_affinity: u64::MAX,
-                    },
-                    source.len().max(1),
-                    &mut raw,
-                ),
-                "allocate readback",
-            )?;
-            let buffer = Buffer {
-                raw,
-                bytes: source.len(),
-                _device: self.gpu.inner.clone(),
-            };
             if !source.is_empty() {
                 check(
                     sys::hrx_stream_copy_buffer(
@@ -1507,6 +1629,48 @@ mod staging_tests {
 
     #[test]
     #[ignore = "requires gfx1151"]
+    fn scratch_pools_reject_shared_handles_and_their_original() -> Result<()> {
+        let device = Device::open(0)?;
+        let mut source_stream = device.stream()?;
+        let mut compute = device.stream()?;
+        let mut third = device.stream()?;
+        let private = compute.scratch(4096)?;
+        let private_raw = private.raw;
+        compute.recycle(private)?;
+
+        let source = source_stream.allocate(4096)?;
+        // No accesses are queued through any shared handle in this test.
+        let shared = unsafe { source.share_on(&compute)? };
+        let chained = unsafe { shared.share_on(&third)? };
+        let same_stream = unsafe { source.share_on(&source_stream)? };
+        for result in [
+            compute.recycle(shared),
+            source_stream.recycle(source),
+            third.recycle(chained),
+            source_stream.recycle(same_stream),
+        ] {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("shared allocations")
+            );
+        }
+        assert!(source_stream.scratch.is_empty());
+        assert!(third.scratch.is_empty());
+        assert_eq!(compute.scratch_bytes, 4096);
+        assert_eq!(compute.scratch(4096)?.raw, private_raw);
+
+        let source = source_stream.allocate(4096)?;
+        drop(unsafe { source.share_on(&compute)? });
+        // Dropping aliases does not restore pool eligibility: recorded uses may remain.
+        assert!(source_stream.recycle(source).is_err());
+        assert!(source_stream.scratch.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires gfx1151"]
     fn completed_staging_is_reclaimed_and_reused_on_every_completion_path() -> Result<()> {
         let mut stream = Stream::open()?;
         let buffer = stream.allocate(1024)?;
@@ -1520,6 +1684,9 @@ mod staging_tests {
         assert_eq!(stream.staging[0].raw, original);
         stream.upload(&buffer, &[11; 1024])?;
         assert!(stream.staging.is_empty());
+        stream.upload_queued(&buffer, 0, &[12; 512])?;
+        assert_eq!(stream.staging[0].raw, original);
+        stream.synchronize()?;
         stream.upload_queued(&buffer, 0, &[13; 1024])?;
         stream.gpu.sync()?; // Establish completion without the cleanup being tested.
         assert!(stream.submit()?.is_complete()?);
@@ -1531,6 +1698,29 @@ mod staging_tests {
         stream.synchronize()?;
         assert!(stream.staging_pool.len() <= 8);
         assert!(stream.staging_pool.iter().map(|b| b.bytes).sum::<usize>() <= STAGING_LIMIT);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires gfx1151"]
+    fn uploads_batch_until_pressure_and_reuse_the_smallest_capacity() -> Result<()> {
+        let mut stream = Stream::open()?;
+        let buffer = stream.allocate(4096)?;
+        for size in [1024, 2048, 4096] {
+            stream.upload_queued(&buffer, 0, &vec![7; size])?;
+        }
+        assert_eq!(stream.staging.len(), 3);
+        let medium = stream.staging[1].raw;
+        stream.synchronize()?;
+        stream.upload_queued(&buffer, 0, &[9; 1500])?;
+        assert_eq!(stream.staging[0].raw, medium);
+        for _ in 0..7 {
+            stream.upload_queued(&buffer, 0, &[11; 1024])?;
+        }
+        assert_eq!(stream.staging.len(), 8);
+        stream.upload_queued(&buffer, 0, &[13; 1024])?;
+        assert_eq!(stream.staging.len(), 1);
+        stream.synchronize()?;
         Ok(())
     }
 }

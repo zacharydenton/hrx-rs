@@ -1,0 +1,25 @@
+name: Rust
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  cpu:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, '1.88.0']
+    env:
+      HRX_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install ${{ matrix.rust }} --profile minimal --component clippy --component rustfmt
+      - run: rustup default ${{ matrix.rust }}
+      - run: cargo fmt --check
+      - run: cargo build --locked --all-features --all-targets
+      - run: cargo clippy --locked --all-features --all-targets -- -D warnings
+      - run: cargo test --locked --all-features
+      - run: cargo doc --locked --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - run: bash scripts/check-feature-matrix.sh
+      - run: cargo package --list --allow-dirty

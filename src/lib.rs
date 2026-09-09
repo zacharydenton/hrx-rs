@@ -4,10 +4,12 @@
 //! C ABI metadata calls never initialise the GPU. See [`bundle`] for offline setup.
 pub mod bundle;
 mod runtime;
-#[doc(hidden)]
-pub mod sys;
+#[allow(dead_code)]
+mod sys;
+mod target;
 pub use runtime::*;
-/// Compatibility for existing address-based Krea kernels. New models should use
+pub use target::{TARGET_FAMILY, TARGET_KEY, Target};
+/// Compatibility for address-based kernels. New code should use
 /// owned buffers and binding dispatch through [`Stream`].
 #[cfg(feature = "compat")]
 pub mod compat;

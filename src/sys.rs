@@ -12,6 +12,8 @@ pub type Device = *mut c_void;
 pub type Stream = *mut c_void;
 pub type Buffer = *mut c_void;
 pub type Executable = *mut c_void;
+pub type Event = *mut c_void;
+pub const EVENT_FLAG_DISABLE_TIMING: u32 = 2;
 
 /// `hrx_status_is_ok`, which the header defines as `static inline` rather than exporting.
 #[inline]
@@ -24,12 +26,19 @@ pub const BUFFER_USAGE_DEFAULT: u32 = 0x0000_0C03;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
+/// Immutable native export metadata, valid while its kernel is retained.
 pub struct ExportInfo {
+    /// Borrowed native export name; do not dereference after dropping the kernel.
     pub name: *const c_char,
+    /// Native export flags.
     pub flags: u32,
+    /// Required packed scalar byte length for binding dispatch.
     pub constant_byte_length: u32,
+    /// Required number of buffer bindings.
     pub binding_count: u32,
+    /// Native parameter count.
     pub parameter_count: u32,
+    /// Compiled workgroup dimensions; zero denotes an unspecified dimension.
     pub workgroup_size: [u32; 3],
 }
 
@@ -85,6 +94,13 @@ macro_rules! native_api {
     };
 }
 native_api! {
+    fn hrx_buffer_retain(buffer: Buffer) -> ();
+    fn hrx_event_create(device: Device, flags: u32, out_event: *mut Event) -> Status;
+    fn hrx_event_release(event: Event) -> ();
+    fn hrx_event_record(event: Event, stream: Stream) -> Status;
+    fn hrx_event_query(event: Event, complete: *mut bool) -> Status;
+    fn hrx_event_synchronize(event: Event) -> Status;
+    fn hrx_stream_wait_event(stream: Stream, event: Event) -> Status;
     fn hrx_status_to_string(status: Status,
     out_message: *mut *mut c_char,
     out_length: *mut usize,) -> Status;
@@ -310,27 +326,17 @@ fn api() -> &'static Api {
         .expect("call Gpu::open or Device::open before raw HRX functions")
 }
 
-#[allow(non_camel_case_types)]
-pub type hrx_status_t = Status;
-#[allow(non_camel_case_types)]
-pub type hrx_device_t = Device;
-#[allow(non_camel_case_types)]
-pub type hrx_buffer_t = Buffer;
-#[allow(non_camel_case_types)]
-pub type hrx_stream_t = Stream;
-#[allow(non_camel_case_types)]
-pub type hrx_executable_t = Executable;
-#[allow(non_camel_case_types)]
-pub type hrx_dispatch_config_t = DispatchConfig;
-#[allow(non_camel_case_types)]
-pub type hrx_buffer_ref_t = BufferRef;
-pub const HRX_STATUS_ALREADY_EXISTS: c_int = 6;
-pub const HRX_DEVICE_PROPERTY_ARCHITECTURE: c_int = 1;
-pub const HRX_MEMORY_TYPE_HOST_VISIBLE: u32 = 0x0000_0002;
-pub const HRX_MEMORY_TYPE_DEVICE_LOCAL: u32 = 0x0000_0030;
-pub const HRX_BUFFER_USAGE_DEFAULT: u32 = 0x0000_0C03;
-pub const HRX_BUFFER_USAGE_MAPPING_SCOPED: u32 = 0x0100_0000;
-pub const HRX_DISPATCH_FLAG_CUSTOM_DIRECT_ARGUMENTS: u32 = 1;
+pub const STATUS_ALREADY_EXISTS: c_int = 6;
+pub const DEVICE_PROPERTY_ARCHITECTURE: c_int = 1;
+pub const MEMORY_TYPE_HOST_VISIBLE: u32 = 0x0000_0002;
+pub const MEMORY_TYPE_HOST_COHERENT: u32 = 0x0000_0004;
+pub const MEMORY_TYPE_HOST_LOCAL: u32 = 0x0000_0040 | MEMORY_TYPE_HOST_VISIBLE;
+pub const MEMORY_TYPE_DEVICE_VISIBLE: u32 = 0x0000_0010;
+pub const MEMORY_ACCESS_ALL: u16 = 7;
+pub const BUFFER_USAGE_MAPPING_SCOPED: u32 = 0x0100_0000;
+pub const DISPATCH_FLAG_CUSTOM_DIRECT_ARGUMENTS: u32 = 1;
+// The pinned native implementation ignores this field and uses executable metadata.
+pub const SUBGROUP_SIZE_FROM_EXECUTABLE: u32 = 0;
 
 pub type Graph = *mut c_void;
 pub type GraphNode = *mut c_void;

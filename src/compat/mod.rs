@@ -1,11 +1,11 @@
-//! gfx1151 dispatch through the public HRX C API.
+//! Address-based kernel dispatch through scoped GPU streams.
 //!
-//! A process-wide [`Device`] owns an ordered stream and a registry of live
+//! Each [`Device`] owns an ordered stream and a registry of live
 //! allocations. Execution barriers order dispatches and copies; host transfers
-//! synchronize. [`DevicePtr`] values are device addresses, never host pointers.
+//! synchronize. [`DevicePtr`](crate::compat::DevicePtr) values are device addresses, never host pointers.
 //! Copy operations resolve allocation spans through the registry; kernel callers
 //! must ensure their pointer arguments and shapes describe valid buffers.
-pub use crate::sys;
+pub(crate) use crate::sys;
 
 mod args;
 mod device;

@@ -12,12 +12,17 @@ fn main() -> std::process::ExitCode {
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("pack") if args.len() == 5 => {
+        Some("pack") if args.len() == 5 || args.len() == 6 => {
             pack::pack(
                 std::path::Path::new(&args[1]),
                 std::path::Path::new(&args[2]),
                 &args[3],
                 &args[4],
+                &args
+                    .get(5)
+                    .map(|key| hrx::Target::new(key))
+                    .transpose()?
+                    .unwrap_or_default(),
             )?;
         }
         Some("prepare") => {
@@ -32,11 +37,11 @@ fn run() -> Result<()> {
         }
         Some("info") => {
             let directory = hrx::bundle::resolve()?;
-            let _device = hrx::Device::open(0)?;
+            let device = hrx::Device::open(0)?;
             println!(
                 "runtime: {}\ntarget: {}",
                 directory.display(),
-                hrx::TARGET_KEY
+                device.target().as_str()
             );
         }
         Some("compile") if args.len() >= 3 => {
@@ -60,7 +65,7 @@ fn run() -> Result<()> {
         }
         _ => {
             return Err(Error::Message(
-                "usage: hrx pack RUNTIME OUTPUT URL REVISION | prepare [bundle.tar.gz] | info | compile SOURCE SYMBOL [key=value ...]"
+                "usage: hrx pack RUNTIME OUTPUT URL REVISION [TARGET] | prepare [bundle.tar.gz] | info | compile SOURCE SYMBOL [key=value ...]"
                     .into(),
             ));
         }

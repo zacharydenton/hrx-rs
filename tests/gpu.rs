@@ -1,6 +1,41 @@
 #![cfg(feature = "loom")]
 //! Explicit hardware suite: cargo test --all-features --test gpu -- --ignored
 use hrx::{Constants, Stream};
+
+#[test]
+#[ignore = "requires gfx1151"]
+fn copy_and_compute_streams_exchange_event_ordered_buffers() -> hrx::Result<()> {
+    let device = hrx::Device::open(0)?;
+    let mut upload = device.stream()?;
+    let mut compute = device.stream()?;
+    let source = upload.allocate(4096)?;
+    // All reads and overwrites below are ordered in both directions by events.
+    let shared = unsafe { source.share_on(&compute)? };
+    let result = compute.allocate(4096)?;
+    let mut readbacks = Vec::new();
+    let mut last = None;
+    for value in 1..=16 {
+        upload.upload_queued(&source, 0, &[value; 4096])?;
+        let ready = upload.record_event()?;
+        compute.wait_event(&ready)?;
+        drop(ready); // The queued dependency owns its native semaphore.
+        compute.copy(&result, 0, &shared, 0, 4096)?;
+        let consumed = compute.record_event()?;
+        upload.wait_event(&consumed)?;
+        last = Some(consumed);
+        readbacks.push(compute.read_queued(result.binding())?);
+    }
+    last.as_ref().unwrap().synchronize()?;
+    assert!(last.as_ref().unwrap().is_complete()?);
+    for (i, readback) in readbacks.into_iter().enumerate() {
+        assert_eq!(readback.wait(&mut compute)?, vec![(i + 1) as u8; 4096]);
+    }
+    drop(source);
+    drop(shared);
+    upload.synchronize()?;
+    compute.synchronize()?;
+    Ok(())
+}
 #[test]
 #[ignore = "requires gfx1151 and prepared runtime bundle"]
 fn queued_storage_views_and_replay() -> hrx::Result<()> {
@@ -82,6 +117,19 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     }
     constants.push(0.5f32)?;
     unsafe {
+        assert!(
+            stream
+                .dispatch(
+                    &kernel,
+                    [1; 3],
+                    [128, 1, 1],
+                    &constants,
+                    &[sample.binding(), velocity.binding()],
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("compiled size")
+        );
         stream.dispatch(
             &kernel,
             [1; 3],
@@ -99,6 +147,19 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     );
     let mut sequence = stream.sequence()?;
     unsafe {
+        assert!(
+            sequence
+                .dispatch(
+                    &kernel,
+                    [1; 3],
+                    [128, 1, 1],
+                    &constants,
+                    &[sample.binding(), velocity.binding()],
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("compiled size")
+        );
         let copied_constants = constants.clone();
         sequence.dispatch(
             &kernel,
@@ -196,6 +257,13 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
         }
         arguments.f32(0.5).ptr(sample.ptr()).ptr(velocity.ptr());
         unsafe {
+            assert!(
+                direct
+                    .launch([1; 3], [128, 1, 1], &arguments)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("compiled size")
+            );
             direct.launch([1; 3], [256, 1, 1], &arguments)?;
         }
         drop(velocity);

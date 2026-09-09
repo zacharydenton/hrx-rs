@@ -72,6 +72,22 @@ fn invalid_manifest_paths_and_missing_components_are_refused() {
 }
 
 #[test]
+fn manifest_targets_are_runtime_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut manifest = fixture(dir.path());
+    for key in ["gfx1100", "gfx1151", "gfx90a", "gfx942"] {
+        manifest.target = hrx::Target::new(key).unwrap().manifest_key();
+        manifest.validate().unwrap();
+        assert_eq!(manifest.gpu_target().unwrap().as_str(), key);
+    }
+    for key in ["gfx", "gfx11/../", "gfx1151\0", "GFX1151", "gfxzzzz"] {
+        assert!(hrx::Target::new(key).is_err());
+    }
+    manifest.target = "aarch64-unknown-linux-gnu-gfx1151".into();
+    assert!(manifest.validate().is_err());
+}
+
+#[test]
 fn unchecked_manifests_are_rejected_before_any_installation_io() {
     let dir = tempfile::tempdir().unwrap();
     let valid = fixture(dir.path());

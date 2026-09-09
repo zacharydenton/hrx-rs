@@ -1,7 +1,6 @@
 # Loom compiler patches
 
-HRX owns the compiler fixes required by its model consumers. The current base is
-public `ROCm/hrx-system` commit
+These patches apply to public `ROCm/hrx-system` commit
 `ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d`; `base-revision` is the machine-readable
 pin. The patches use the upstream C API without adding private ABI entrypoints.
 
@@ -16,16 +15,14 @@ headers. It originated in fork commit
 [`675cc43bc`](https://github.com/zacharydenton/hrx-system/commit/675cc43bc).
 
 `0002-amdgpu-fragment-repack.patch` adds the accumulator-to-RHS fp16 fragment
-repack required by Krea's query-32 attention kernel, with native regression
-coverage. It originated in the model's earlier compiler patch set; HRX now owns
-the active copy.
+repack used by query-32 attention kernels, with native regression coverage.
 
 `0003-smem-storage-reuse-drain.patch` fully drains SMEM before overwriting pending scalar-load
 destination registers. A partial wait could mark a pointer load complete while it was
 still outstanding, allowing its destination to be overwritten. The patch has a
 deterministic assembly regression and an optional 34-line Loom GPU reproducer.
-The reduced kernel did **not** fault reliably on hardware; H3 conditioning
-faulted twice before the fix and passed afterward. The isolated upstream fix is
+The reduced kernel did not fault reliably on hardware; use the assembly regression
+for a deterministic check. The isolated upstream fix is
 on fork branch `fix/loom-smem-storage-reuse`, commit
 [`aa5f5c66a`](https://github.com/zacharydenton/hrx-system/commit/aa5f5c66a).
 
@@ -77,21 +74,8 @@ The bundle records this base and every patch digest in `provenance.json`.
 
 ## Validation
 
-Validated on 2026-09-09 against the pinned public base with all seven patches:
-
-- Shared compiler, standalone CLI and runtime build successfully.
-- All 138 AMDGPU descriptor tests and 582 non-WASM fixture suites pass.
-- The SMEM and GFX11 source-reuse regressions fail before their fixes and pass
-  afterward. The latter changes source lifetimes without adding planner waits.
-- All 15 H3 GPU kernel tests and both resident-session tests pass.
-- Ten alternating decoder comparisons produce byte-identical RGB. Median
-  decode time is 4.49 s versus 4.50 s with the previous compiler (480x864,
-  22 frames); this is a compiler-regression check, not a full-video benchmark.
-- Krea GPU operation, dispatch and quantization tests pass.
-
-See [the validation record](../../VALIDATION.md) for the native bundle and
-model-quality checks. No model arithmetic or comparison tolerances were
-changed to accommodate the compiler upgrade.
+See [VALIDATION.md](../../VALIDATION.md) for the tested bundle and crate results.
+The patch files include the native regression fixtures described above.
 
 Patch SHA-256 values:
 

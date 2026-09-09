@@ -217,7 +217,12 @@ impl Drop for Lease<'_> {
     }
 }
 impl Prepared {
-    pub(super) fn open(path: &Path, identity: &str, workers: usize) -> Result<Self> {
+    pub(super) fn open(
+        path: &Path,
+        identity: &str,
+        workers: usize,
+        architecture: &crate::Target,
+    ) -> Result<Self> {
         let api = library(path, identity)?;
         unsafe {
             let alloc = api.loomc_allocator_system();
@@ -241,9 +246,9 @@ impl Prepared {
             let profile_options = loomc_amdgpu_profile_options_t {
                 type_: LOOMC_STRUCTURE_TYPE_AMDGPU_PROFILE_OPTIONS,
                 structure_size: size_of::<loomc_amdgpu_profile_options_t>(),
-                identifier: view(crate::TARGET_KEY),
+                identifier: view(architecture.as_str()),
                 identity: loomc_amdgpu_target_identity_t {
-                    target: view(crate::TARGET_KEY),
+                    target: view(architecture.as_str()),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -485,9 +490,9 @@ impl Prepared {
                     api.loomc_byte_sequence_clone(artifact.contents, alloc, &mut span),
                 )?;
                 let data = if span.data_length == 0 {
-                    Vec::new()
+                    Arc::<[u8]>::from([])
                 } else {
-                    std::slice::from_raw_parts(span.data, span.data_length).to_vec()
+                    Arc::<[u8]>::from(std::slice::from_raw_parts(span.data, span.data_length))
                 };
                 api.loomc_allocator_free(alloc, span.data.cast_mut().cast());
                 if string(artifact.format) == "amdgpu-hsaco" {
