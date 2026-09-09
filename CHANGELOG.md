@@ -24,7 +24,8 @@
   64 tiny fill nodes replay in ~151 us chained and ~88 us independent on gfx1151.
   A dependency can only name an already-recorded node, so a graph is acyclic by
   construction and instantiation stays on the runtime's linear fast path;
-  duplicate entries in one list are collapsed rather than rejected.
+  duplicate entries in one list are collapsed rather than rejected. Resolving a
+  dependency list of 16 or fewer nodes, including the dedupe, allocates nothing.
 - Document that neither `ExportInfo` nor the compiler report carries per-slot
   scalar types, so mixed-width constants cannot be built by construction and each
   width must come from the declaring source.
