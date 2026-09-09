@@ -44,7 +44,9 @@
 - Add `hrx gc [DAYS]`, removing runtime bundles that `bundle.json` does not pin
   and kernel artifacts unused for longer than DAYS (default 30). Provisioning
   published but never evicted; cache hits now refresh an artifact's timestamp so
-  the sweep tracks last use. Nothing evicts implicitly.
+  the sweep tracks last use. Collection preserves installation and compilation
+  staging directories and locks each artifact before checking its age and
+  removing it. Nothing evicts implicitly.
 - Compile the README as a doctest, so an API change that invalidates its example
   fails the build. Document that the `hrx::Target` profile and the source-level
   `amdgpu.target<...>` are chosen independently, and that only the latter accepts

@@ -109,18 +109,13 @@ impl Manifest {
             ));
         }
         m.gpu_target()?;
-        fn sha(s: &str) -> bool {
-            s.len() == 64
-                && s.bytes()
-                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-        }
-        if !sha(&m.archive_sha256) || m.files.is_empty() {
+        if !valid_digest(&m.archive_sha256) || m.files.is_empty() {
             return Err(Error::Message(
                 "invalid bundle digest or empty bundle".into(),
             ));
         }
         for (name, hash) in &m.files {
-            if !valid_name(name) || !sha(hash) {
+            if !valid_name(name) || !valid_digest(hash) {
                 return Err(Error::Message(format!("invalid bundle entry {name}")));
             }
         }
@@ -241,29 +236,47 @@ fn directory_bytes(path: &Path) -> u64 {
 /// bundle this one has moved past. Removing a directory whose libraries are
 /// already mapped is safe; the mapping holds the inode open.
 pub fn collect(cache: &Path, keep: &str, unused_for: std::time::Duration) -> Result<Reclaimed> {
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(unused_for)
+        .ok_or_else(|| Error::Message("cache age exceeds the system clock".into()))?;
     let mut reclaimed = Reclaimed::default();
     let runtime = cache.join("runtime");
     if let Ok(entries) = fs::read_dir(&runtime) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
+            // Only published digest directories are candidates. Temporary
+            // directories belong to active installers and use the digest's lock,
+            // not a lock named after the temporary directory.
             // Lock files stay: another process may be waiting on the inode.
-            if name == keep || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            if name == keep
+                || !valid_digest(name)
+                || !entry.file_type().is_ok_and(|kind| kind.is_dir())
+            {
                 continue;
             }
             let _lock = Lock::acquire(&runtime.join(format!("{name}.lock")))?;
+            if !entry.path().is_dir() {
+                continue; // Another collector removed it while we waited.
+            }
             let bytes = directory_bytes(&entry.path());
             fs::remove_dir_all(entry.path())?;
             reclaimed.bundles += 1;
             reclaimed.bundle_bytes += bytes;
         }
     }
-    let cutoff = std::time::SystemTime::now()
-        .checked_sub(unused_for)
-        .ok_or_else(|| Error::Message("cache age exceeds the system clock".into()))?;
-    if let Ok(entries) = fs::read_dir(cache.join("kernels")) {
+    let kernels = cache.join("kernels");
+    if let Ok(entries) = fs::read_dir(&kernels) {
         for entry in entries.flatten() {
-            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if !valid_digest(name) || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            // Serialize with compilation, cache repair, and other collectors.
+            // Read the timestamp only after a waiting writer has finished.
+            let _lock = Lock::acquire(&kernels.join(format!("{name}.lock")))?;
+            if !entry.path().is_dir() {
                 continue;
             }
             // Cache hits refresh this timestamp, so it tracks last use, not age.
@@ -282,6 +295,12 @@ pub fn collect(cache: &Path, keep: &str, unused_for: std::time::Duration) -> Res
         }
     }
     Ok(reclaimed)
+}
+
+fn valid_digest(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 fn valid_name(name: &str) -> bool {
@@ -390,17 +409,80 @@ pub(crate) fn create_cache_dir(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod gc_tests {
     use super::*;
+
+    #[test]
+    fn active_installation_and_compilation_staging_survive_collection() {
+        let cache = tempfile::tempdir().unwrap();
+        for name in ["runtime", "kernels"] {
+            fs::create_dir(cache.path().join(name)).unwrap();
+        }
+        let installation = tempfile::tempdir_in(cache.path().join("runtime")).unwrap();
+        let compilation = tempfile::tempdir_in(cache.path().join("kernels")).unwrap();
+        fs::write(installation.path().join("libhrx.so"), b"in progress").unwrap();
+        fs::write(compilation.path().join("kernel.hsaco"), b"in progress").unwrap();
+
+        let reclaimed = collect(
+            cache.path(),
+            &digest(b"pinned"),
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+        )
+        .unwrap();
+        assert_eq!((reclaimed.bundles, reclaimed.artifacts), (0, 0));
+        assert!(installation.path().join("libhrx.so").is_file());
+        assert!(compilation.path().join("kernel.hsaco").is_file());
+    }
+
+    #[test]
+    fn artifact_collection_waits_for_the_writer_and_rechecks_age() {
+        let cache = tempfile::tempdir().unwrap();
+        let kernels = cache.path().join("kernels");
+        let key = digest(b"being repaired");
+        let dir = kernels.join(&key);
+        fs::create_dir_all(&dir).unwrap();
+        let lock = Lock::acquire(&kernels.join(format!("{key}.lock"))).unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                started_tx.send(()).unwrap();
+                let result = collect(
+                    cache.path(),
+                    &digest(b"pinned"),
+                    std::time::Duration::from_secs(30 * 24 * 60 * 60),
+                );
+                done_tx.send(result).unwrap();
+            });
+            started_rx.recv().unwrap();
+            let early = done_rx.recv_timeout(std::time::Duration::from_millis(100));
+            // A compiler holding this key's lock is publishing repaired metadata.
+            let write = fs::write(dir.join("artifact.json"), b"{}");
+            drop(lock);
+            assert!(matches!(
+                early,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ));
+            write.unwrap();
+            let reclaimed = done_rx.recv().unwrap().unwrap();
+            assert_eq!(reclaimed.artifacts, 0);
+            assert!(dir.join("artifact.json").is_file());
+        });
+    }
+
     #[test]
     fn sweeps_superseded_bundles_and_stale_artifacts_but_never_the_pinned_one() {
         let cache = tempfile::tempdir().unwrap();
         let runtime = cache.path().join("runtime");
         for name in ["keepme", "oldone", "olderone"] {
-            fs::create_dir_all(runtime.join(name)).unwrap();
-            fs::write(runtime.join(name).join("libhrx.so"), vec![0u8; 1024]).unwrap();
+            fs::create_dir_all(runtime.join(digest(name.as_bytes()))).unwrap();
+            fs::write(
+                runtime.join(digest(name.as_bytes())).join("libhrx.so"),
+                vec![0u8; 1024],
+            )
+            .unwrap();
         }
         let kernels = cache.path().join("kernels");
         for (name, age_days) in [("fresh", 0u64), ("stale", 90)] {
-            let dir = kernels.join(name);
+            let dir = kernels.join(digest(name.as_bytes()));
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("kernel.hsaco"), vec![0u8; 512]).unwrap();
             let record = dir.join("artifact.json");
@@ -416,21 +498,24 @@ mod gc_tests {
         }
         let reclaimed = collect(
             cache.path(),
-            "keepme",
+            &digest(b"keepme"),
             std::time::Duration::from_secs(30 * 24 * 60 * 60),
         )
         .unwrap();
         assert_eq!(reclaimed.bundles, 2);
         assert!(reclaimed.bundle_bytes >= 2048);
         assert_eq!(reclaimed.artifacts, 1);
-        assert!(runtime.join("keepme").is_dir(), "pinned bundle survives");
-        assert!(!runtime.join("oldone").exists());
-        assert!(kernels.join("fresh").is_dir());
-        assert!(!kernels.join("stale").exists());
+        assert!(
+            runtime.join(digest(b"keepme")).is_dir(),
+            "pinned bundle survives"
+        );
+        assert!(!runtime.join(digest(b"oldone")).exists());
+        assert!(kernels.join(digest(b"fresh")).is_dir());
+        assert!(!kernels.join(digest(b"stale")).exists());
         // A second sweep is a no-op rather than an error.
         let again = collect(
             cache.path(),
-            "keepme",
+            &digest(b"keepme"),
             std::time::Duration::from_secs(30 * 24 * 60 * 60),
         )
         .unwrap();

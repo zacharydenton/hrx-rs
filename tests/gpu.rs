@@ -262,7 +262,9 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     stream.read_blocking(sample.binding(), &mut output)?;
     assert!(
         output
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .all(|b| u16::from_le_bytes([b[0], b[1]]) == 0x3fc0)
     );
     let mut graph = stream.graph()?;
@@ -296,7 +298,9 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     stream.read_blocking(sample.binding(), &mut output)?;
     assert!(
         output
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .all(|b| u16::from_le_bytes([b[0], b[1]]) == 0x4000)
     );
     // Buffers are device-scoped: a second stream on the same device may dispatch
@@ -330,7 +334,9 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     // Two more half-steps of 0.5 on top of 0x4000 (2.0): 2.5, then 3.0.
     assert!(
         output
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .all(|b| u16::from_le_bytes([b[0], b[1]]) == 0x4040)
     );
     // A kernel is still refused on a device that did not load it; with one GPU
@@ -370,7 +376,9 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
         assert!(!locks.path().join(format!("hrx-{pid}.lock")).exists());
         assert!(
             std::fs::read(input)?
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .all(|b| u16::from_le_bytes([b[0], b[1]]) == 0x3fc0)
         );
     }
