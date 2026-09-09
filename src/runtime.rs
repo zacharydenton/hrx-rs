@@ -355,8 +355,6 @@ impl Gpu {
             .map_err(|_| Error::Message(format!("{} contains a NUL", path.display())))?;
         let c_family = c"amdgpu";
         let c_key = c"gfx1151";
-        let c_symbol =
-            CString::new(symbol).map_err(|_| Error::Message(format!("{symbol} contains a NUL")))?;
         unsafe {
             let mut executable = std::ptr::null_mut();
             check(
@@ -369,34 +367,71 @@ impl Gpu {
                 ),
                 format_args!("loading {}", path.display()),
             )?;
-            let kernel = (|| {
-                let mut ordinal = 0u32;
+            self.loaded_export(executable, symbol)
+        }
+    }
+
+    /// Load owned compiler output directly from memory.
+    ///
+    /// # Safety
+    /// The artifact must contain trusted native code, as for [`Gpu::load`].
+    #[cfg(feature = "loom")]
+    pub unsafe fn load_artifact(&self, artifact: &crate::loom::Artifact) -> Result<Kernel> {
+        if artifact.target() != crate::TARGET_KEY {
+            return Err(Error::Message(
+                "artifact target does not match this runtime".into(),
+            ));
+        }
+        let bytes = artifact.bytes();
+        let mut executable = std::ptr::null_mut();
+        unsafe {
+            check(
+                sys::hrx_executable_load_data(
+                    self.inner.device,
+                    bytes.as_ptr().cast(),
+                    bytes.len(),
+                    c"amdgpu".as_ptr(),
+                    c"gfx1151".as_ptr(),
+                    &mut executable,
+                ),
+                "loading compiled artifact",
+            )?;
+            self.loaded_export(executable, artifact.symbol())
+        }
+    }
+
+    unsafe fn loaded_export(&self, executable: sys::Executable, symbol: &str) -> Result<Kernel> {
+        let kernel = (|| {
+            let symbol_c =
+                CString::new(symbol).map_err(|_| Error::Message("export contains a NUL".into()))?;
+            let mut ordinal = 0;
+            let mut info = sys::ExportInfo::default();
+            unsafe {
                 check(
                     sys::hrx_executable_lookup_export_by_name(
                         executable,
-                        c_symbol.as_ptr(),
+                        symbol_c.as_ptr(),
                         &mut ordinal,
                     ),
-                    format_args!("looking up {symbol} in {}", path.display()),
+                    "looking up export",
                 )?;
-                let mut info = sys::ExportInfo::default();
                 check(
                     sys::hrx_executable_export_info(executable, ordinal, &mut info),
-                    format_args!("export info for {symbol}"),
+                    "export metadata",
                 )?;
-                Ok(Kernel {
-                    executable,
-                    ordinal,
-                    info,
-                    symbol: symbol.to_string(),
-                    _device: self.inner.clone(),
-                })
-            })();
-            if kernel.is_err() {
-                sys::hrx_executable_release(executable);
             }
-            kernel
+            Ok(Kernel {
+                executable,
+                ordinal,
+                info,
+                symbol: symbol.into(),
+                _device: self.inner.clone(),
+            })
+        })();
+        if kernel.is_err() {
+            unsafe { sys::hrx_executable_release(executable) }
         }
+        kernel
     }
 
     /// Dispatch with explicitly packed scalar widths on this command stream.
@@ -953,6 +988,15 @@ impl Stream {
     pub unsafe fn load(&self, path: &Path, symbol: &str) -> Result<Kernel> {
         unsafe { self.gpu.load(path, symbol) }
     }
+    /// Load a compiled artifact directly, without a filesystem round trip.
+    ///
+    /// # Safety
+    /// The artifact must be trusted native code, as for [`Stream::load`].
+    #[cfg(feature = "loom")]
+    pub unsafe fn load_artifact(&self, artifact: &crate::loom::Artifact) -> Result<Kernel> {
+        unsafe { self.gpu.load_artifact(artifact) }
+    }
+
     /// # Safety
     /// Kernel, dimensions, constants and binding spans must agree. GPU addressing
     /// is not sandboxed by a binding's length.

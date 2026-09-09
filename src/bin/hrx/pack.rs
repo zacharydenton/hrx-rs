@@ -72,7 +72,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("source");
         fs::create_dir(&source).unwrap();
-        for name in ["libhrx.so", "loom-compile", "libhsa-runtime64.so.1"] {
+        for name in ["libhrx.so", "libloomc.so", "libhsa-runtime64.so.1"] {
             fs::write(source.join(name), name).unwrap();
         }
         let a = root.path().join("a");

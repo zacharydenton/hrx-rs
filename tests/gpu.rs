@@ -47,7 +47,8 @@ fn queued_storage_views_and_replay() -> hrx::Result<()> {
 #[ignore = "requires gfx1151 and Loom compiler"]
 fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     let compiler = hrx::loom::Compiler::resolve(None)?;
-    let mut request = hrx::loom::Request::new(include_str!("kernels/euler.loom"), "krea2_euler");
+    let module = compiler.module(include_str!("kernels/euler.loom"));
+    let mut request = hrx::loom::Specialization::new("krea2_euler");
     request
         .config
         .insert("krea2.euler.grid_x".into(), "1".into());
@@ -55,9 +56,13 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
         .config
         .insert("krea2.euler.grid_y".into(), "1".into());
     let cache = tempfile::tempdir()?;
-    let path = compiler.compile(&request, cache.path())?;
+    let artifact = module.compile(&request, cache.path())?;
+    let path = artifact.path().to_path_buf();
     let mut stream = Stream::open()?;
-    let kernel = unsafe { stream.load(&path, "krea2_euler")? };
+    let kernel = unsafe { stream.load_artifact(&artifact)? };
+    drop(artifact);
+    drop(module);
+    drop(compiler);
     let sample = stream.allocate(512)?;
     let velocity = stream.allocate(512)?;
     let ones: Vec<u8> = (0..256).flat_map(|_| 0x3f80u16.to_le_bytes()).collect();

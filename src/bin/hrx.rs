@@ -42,7 +42,8 @@ fn run() -> Result<()> {
         Some("compile") if args.len() >= 3 => {
             let source = std::fs::read_to_string(&args[1])?;
             let compiler = hrx::loom::Compiler::resolve(None)?;
-            let mut request = hrx::loom::Request::new(&source, &args[2]);
+            let module = compiler.module(&source);
+            let mut request = hrx::loom::Specialization::new(&args[2]);
             for arg in &args[3..] {
                 let (k, v) = arg
                     .split_once('=')
@@ -51,8 +52,9 @@ fn run() -> Result<()> {
             }
             println!(
                 "{}",
-                compiler
+                module
                     .compile(&request, &hrx::bundle::cache_root()?.join("kernels"))?
+                    .path()
                     .display()
             );
         }

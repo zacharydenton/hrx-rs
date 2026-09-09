@@ -1,16 +1,17 @@
 {
   "schema": 1,
   "target": "x86_64-unknown-linux-gnu-gfx1151",
-  "revision": "Loom 9e4fff00d244a8b5300d03569addd019ec8e262f; runtime libraries retained from 750f265ce4fd (original build provenance unverified)",
-  "url": "https://github.com/zacharydenton/hrx.rs/releases/download/native-9e4fff00d244/hrx-linux-x86_64-gfx1151.tar.gz",
-  "archive_sha256": "34591d78d625f9c696657820d04615f3f55a134010a9354c0e455a4c2e60caa0",
+  "revision": "public hrx-system ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d + seven HRX compiler patches; see provenance.json",
+  "url": "https://github.com/zacharydenton/hrx.rs/releases/download/native-ecaaf7376f7d-loomc/hrx-linux-x86_64-gfx1151.tar.gz",
+  "archive_sha256": "c151a978eff1c7def5c54b9acfd595cc1e8ca21b793b4613864a18281d846bb1",
   "files": {
     "libfmt.so.12": "d4b82c135ffc0c4637c370b51b000c166ab7dd1ec7a9d3aeb27a68bdcdf45bd0",
     "libgflags.so.2.2": "aa44adf6abdc3e84a414efba826d6954cf1c65ae3ab7a4a67ff9246cb2b6850d",
     "libglog.so.2": "9b707fbef25040f461e6b60bf769d5b0c1b644be95ee19d8cfb0e84859d1ed89",
-    "libhrx.so": "f6e11e20d028afa5c03f4f23fb004fd41a85c7f6112be4d0f68dc6bc5133338a",
-    "libhrx.so.0": "f6e11e20d028afa5c03f4f23fb004fd41a85c7f6112be4d0f68dc6bc5133338a",
+    "libhrx.so": "23d3710225e8f0a114cce36104b00922873a6bb50f749139bfebc2ce6adf970d",
+    "libhrx.so.0": "23d3710225e8f0a114cce36104b00922873a6bb50f749139bfebc2ce6adf970d",
     "libhsa-runtime64.so.1": "15f8c717f4ebf0d00e64b95090466f35fcda78e0a4728fac010af55e91da3395",
+    "libloomc.so": "431baaff0d36c9d61a9a91a04100c6a2ef63f4aa782f0cf05cfdc058e28969b6",
     "librocm_sysdeps_bz2.so": "fe4102b002321cea17405cf9c6aa04cf46e726bea5666c40ac8639684314de02",
     "librocm_sysdeps_drm.so.2": "cf203bcf5f42df87c5e292b254ea6cd801c3612027c04e5f29bfc71607877775",
     "librocm_sysdeps_drm_amdgpu.so.1": "5485dbf004f79fe2ca51a11ff89625299a8602bb46ebc4f2a25471e81825faf5",
@@ -20,6 +21,7 @@
     "librocm_sysdeps_z.so.1": "27361c0c552d2afd5ecf9079f356309ed827e9a27d35f2fc68c7b5e6b5c83199",
     "librocm_sysdeps_zstd.so.1": "5fc4ab0e6899318ece9bea43d3d397d20053418a5e40cb6bc86efe19a801c75e",
     "librocprofiler-register.so.0": "40ec0d0d42723e107d1a8036d62e0301a3013e6b18525ed8f210ce560ee37e59",
-    "loom-compile": "74a0c9dc5f387e89b85a3cd9d2000644dc0e20a0657d9fe79dfcd627ff5ecdb6"
+    "loom-compile": "56018af09b48f1c740c3e30334d167d0135b576f99ed4b8624f60f5bccfc6191",
+    "provenance.json": "9ed8e191aabea9d6513fbe83783a83b0a62f1c6c5e5d4ada98e7a196e3d7d9fb"
   }
 }

@@ -7,23 +7,23 @@ driver and access to `/dev/kfd` and the render device.
 
 This checkout implements the shared runtime used by the sibling `minimax-h3-loom`
 and `krea2-loom` workspaces. It has not been published to crates.io. The bundled
-manifest pins the `native-9e4fff00d244` GitHub release by SHA-256. This repository
+manifest pins the `native-ecaaf7376f7d-loomc` GitHub release by SHA-256. This repository
 is private, so download the archive with an authenticated GitHub CLI and prepare
 it locally:
 
 ```sh
 mkdir -p artifacts
-gh release download native-9e4fff00d244 --repo zacharydenton/hrx.rs \
+gh release download native-ecaaf7376f7d-loomc --repo zacharydenton/hrx.rs \
   --pattern hrx-linux-x86_64-gfx1151.tar.gz --dir artifacts
 cargo run --release --features runner --bin hrx -- prepare artifacts/hrx-linux-x86_64-gfx1151.tar.gz
 ```
 
-The compiler was built from `hrx-system` commit
-`9e4fff00d244a8b5300d03569addd019ec8e262f`, including the VOPD bank fix,
-encoding-config materialization, and dependent inline-type binding. Runtime
-libraries retain their exact bytes from bundle `750f265ce4fd`; their original
-developer build provenance remains unverified. A public mirror can be selected
-with `HRX_BUNDLE_MANIFEST`.
+The runtime and shared compiler are built from public `ROCm/hrx-system` revision
+`ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d` with the compiler fixes in
+[patches/loom](patches/loom/README.md). The archive's `provenance.json` records
+source and patch digests. HSA and support libraries retain their bytes from the
+previous bundle; their original build provenance remains unverified. A mirror
+can be selected with `HRX_BUNDLE_MANIFEST`.
 
 ## Use from a model
 
@@ -107,7 +107,7 @@ build the model's cdylib and distribute it with its generated headers.
 | `HRX_BUNDLE_MANIFEST` | Explicit JSON manifest for a pinned deployment/release |
 | `HRX_CACHE_DIR` | Shared cache root (default XDG_CACHE_HOME/hrx or ~/.cache/hrx) |
 | `HRX_OFFLINE` | Any value disables network provisioning |
-| `LOOM_COMPILE` | Explicit compiler override; model API override takes precedence |
+| `HRX_LOOM_LIBRARY` | Explicit `libloomc.so` override; model API override takes precedence |
 | `IREE_HAL_AMDGPU_LIBHSA_PATH` | Explicit compatible HSA provider override |
 | `KREA2_RUNTIME` | Compatibility alias for HRX_RUNTIME_DIR |
 
@@ -129,12 +129,40 @@ releases session resources. Rust objects are never exchanged across model DSOs.
 
 ## Compiler cache
 
-`loom::Compiler` pins the compiler's content hash. `loom::Request` keys source,
-symbol, backend, target, canonical configuration, cache schema, and compiler
-identity with SHA-256. Per-key file locks coordinate compilation; successful
-outputs are atomically published with artifact digests. A replaced compiler is
-refused during a session. Compiler logs are captured and errors include a bounded
-tail. Models retain prepared kernels and buffers outside the inference loop.
+`loom::Compiler` loads the public Loom C API in process and pins the shared
+library's content hash. There is no compiler subprocess or executable fallback.
+Native code remains mapped until process exit; compiler contexts and scratch
+are session-owned. Upgrade a loaded library through a new path or restart the
+process. Replacing a loaded library at the same path is rejected.
+A `Module` retains a frozen source index across export/configuration
+specializations. Workspaces are exclusively leased from a bounded pool (up to
+four by default); `CompilerOptions` selects the limit and `Compiler::trim`
+releases idle scratch and cached module references.
+
+```rust,no_run
+# fn main() -> hrx::Result<()> {
+let compiler = hrx::loom::Compiler::resolve(None)?;
+let module = compiler.module(&std::fs::read_to_string("kernel.loom")?);
+let mut spec = hrx::loom::Specialization::new("my_kernel");
+spec.config.insert("model.width".into(), "256".into());
+let artifact = module.compile(&spec, &hrx::bundle::cache_root()?.join("kernels"))?;
+let stream = hrx::Stream::open()?;
+// Safety: this application trusts the source and the selected compiler.
+let kernel = unsafe { stream.load_artifact(&artifact)? };
+# let _ = kernel;
+# Ok(()) }
+```
+
+The cache key covers source, export, target, canonical configuration, compiler
+identity and report mode. Per-key locks serialize publication across processes;
+cache hits verify executable bytes and metadata. Artifacts own their bytes,
+diagnostics and optional resource report, independent of compiler lifetime.
+`load_artifact` sends those bytes directly to the runtime. Invalid source or
+specialization returns structured compiler diagnostics and does not poison
+subsequent compilations. Preparing the compiler alone never initializes a GPU.
+Bindings are checked in; building this Rust crate needs neither bindgen nor
+Loom headers. Compiler development instructions and the upstream pin live in
+[patches/loom](patches/loom/README.md).
 
 H3 and Krea retain their model-specific weight layouts, shape constraints,
 checkpoint loading, samplers and prepared operation types. Their Loom source and
@@ -153,10 +181,10 @@ reject poisoned handles, and provide a cancellation token. Actual pointer
 validity and input/output aliasing remain the caller's C contract. Build with
 unwinding if panic containment is required.
 
-H3 preserves ABI 8 and adds `_ex` calls with caller-owned errors. Its TLS error
-API remains available. Krea preserves both ABI 3 interfaces and caller-owned
-errors. A minimal C integration test loads both model libraries plus the Krea
-kernel test library concurrently. The H3 `examples/rustler` adapter demonstrates
+H3 uses ABI 9 with `loom_library` as its optional compiler setting. Its TLS and
+caller-owned error APIs remain available. Krea’s block-session ABI is 4: sessions
+compile their artifacts, and constructors no longer accept kernel directories.
+Its pipeline ABI remains 3. Rebuild prerelease clients against the new headers. A minimal C integration test loads both model libraries concurrently. The H3 `examples/rustler` adapter demonstrates
 an application-owned worker calling the Rust API directly. Rustler is optional;
 no Elixir dependency appears in HRX or the model libraries.
 
