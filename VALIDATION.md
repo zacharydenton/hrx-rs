@@ -73,9 +73,8 @@ incomplete; see [THIRD-PARTY.md](THIRD-PARTY.md).
 To repeat the bundle check with an empty cache:
 
 ```sh
-export HRX_CACHE_DIR="$(mktemp -d)"
-unset HRX_RUNTIME_DIR KREA2_RUNTIME HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST
-unset IREE_HAL_AMDGPU_LIBHSA_PATH
+export XDG_CACHE_HOME="$(mktemp -d)"
+unset HRX_RUNTIME_DIR HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST
 cargo run --all-features --bin hrx -- prepare /path/to/hrx-linux-x86_64-gfx1151.tar.gz
 HRX_OFFLINE=1 cargo run --all-features --bin hrx -- info
 HRX_OFFLINE=1 cargo test --all-features -- --ignored --test-threads=1
