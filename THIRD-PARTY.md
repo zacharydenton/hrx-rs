@@ -40,5 +40,10 @@ modifications to these LGPL libraries is permitted.
 - [x] Stage complete license texts, attributions, inventory, and corresponding source.
 - [x] Repack without `loom-compile` and pass installation and native tests.
 - [x] Make the repository publicly accessible.
-- [ ] Upload the reviewed binary and source archives and verify anonymous installation.
-- [ ] Remove `publish = false` after release verification.
+- [x] Upload the reviewed binary and source archives and verify anonymous installation.
+- [x] Remove `publish = false` after release verification.
+
+The [reviewed release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260909-reviewed)
+is public. On 2026-09-09, the default first-use download installed into an empty
+cache without authentication and initialized gfx1151 offline. Both uploaded
+archive digests match the local files; the source URL returns HTTP 200.
