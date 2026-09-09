@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Drop the unused `loom-compile` executable from the release bundle. HRX compiles
+  in process, so the binary was never invoked; removing it cuts the archive by
+  about 31% and removes one shipped binary from the third-party inventory.
 - Remove `Gpu`, the `compat` and `ffi` modules, their features, and the bytemuck
   dependency. `Stream` owns execution directly; dispatch requires explicit
   `Constants`. The model C-ABI verification script and the allocator benchmark

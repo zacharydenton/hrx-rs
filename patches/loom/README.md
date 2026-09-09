@@ -65,10 +65,12 @@ python3 dev.py --cmake-build-dir "$PWD/build" cmake build \
 export HRX_LOOM_LIBRARY="$PWD/build/loom/binding/c/libloomc.so"
 ```
 
-Models load `libloomc.so` through HRX. `loom-compile` is useful for comparing
-artifacts during compiler development. Compiler identity and artifact cache
-keys include the shared library's content digest, so applying a compiler fix
-automatically invalidates affected cache entries.
+HRX compiles in process through `libloomc.so` and never runs a compiler
+executable, so the release bundle does not ship one. The `loom-compile` target
+above is built for local use only: it is useful for comparing artifacts during
+compiler development. Compiler identity and artifact cache keys include the
+shared library's content digest, so applying a compiler fix automatically
+invalidates affected cache entries.
 
 The bundle records this base and every patch digest in `provenance.json`.
 
