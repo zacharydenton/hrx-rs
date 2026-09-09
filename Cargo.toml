@@ -6,7 +6,7 @@ rust-version = "1.88"
 license = "MIT"
 # Native release availability and inherited dependency provenance are unresolved.
 publish = false
-description = "Owned GPU execution, Loom compilation, and portable model ABI support for HRX"
+description = "Owned GPU execution and Loom compilation for HRX"
 repository = "https://github.com/zacharydenton/hrx-rs"
 readme = "README.md"
 keywords = ["gpu", "amdgpu", "compute", "loom"]
@@ -17,12 +17,10 @@ include = ["src/**", "tests/**", "examples/**", "native/**", "patches/**", "scri
 name = "hrx"
 
 [features]
-default = ["download", "loom", "ffi"]
+default = ["download", "loom"]
 download = ["dep:ureq"]
 loom = []
-ffi = []
 runner = ["loom"]
-compat = ["dep:bytemuck"]
 
 [dependencies]
 thiserror = "2"
@@ -35,7 +33,6 @@ tempfile = "3"
 tar = "0.4"
 flate2 = "1"
 ureq = { version = "3", optional = true }
-bytemuck = { version = "1", optional = true }
 
 [[bin]]
 name = "hrx"
@@ -53,3 +50,15 @@ match_wildcard_for_single_variants = "warn"
 
 [lints.rust]
 missing_docs = "warn"
+
+[[example]]
+name = "stream_bench"
+required-features = ["loom"]
+
+[[test]]
+name = "gpu"
+required-features = ["loom"]
+
+[[test]]
+name = "embedding"
+required-features = ["loom"]

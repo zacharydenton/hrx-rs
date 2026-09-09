@@ -1,4 +1,3 @@
-#![cfg(feature = "loom")]
 //! CPU-only native compiler tests. Set HRX_LOOM_LIBRARY and run --ignored.
 use hrx::loom::{Compiler, CompilerOptions, Specialization};
 use std::{fs, num::NonZeroUsize};
