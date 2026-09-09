@@ -456,6 +456,39 @@ fn instantiated_graphs_own_their_resources() -> hrx::Result<()> {
     Ok(())
 }
 
+/// Dropping a handle is safe with work pending everywhere else, so it must be
+/// safe here. It was not: releasing an executable graph mid-replay freed native
+/// structures the device was still reading, and the next unrelated submission
+/// died with an AMDGPU memory access fault rather than an error.
+#[test]
+#[ignore = "requires gfx1151"]
+fn a_graph_released_mid_replay_does_not_fault_later_work() -> hrx::Result<()> {
+    let mut stream = Stream::open()?;
+    let buffer = stream.allocate(64 << 20)?;
+    let mut graph = stream.graph()?;
+    // A chain long enough that the replay is still running when the handle goes.
+    let mut last = graph.fill(&[], buffer.binding(), 1)?;
+    for value in 2..64u8 {
+        last = graph.fill(&[last], buffer.binding(), value)?;
+    }
+    let mut exec = graph.finish()?;
+    stream.launch(&mut exec)?;
+    // Both go while the replay runs, as a session dropping its graph beside the
+    // buffers that graph recorded.
+    drop(exec);
+    drop(buffer);
+
+    // Unrelated work on the same stream must still complete.
+    for _ in 0..8 {
+        let other = stream.allocate(4 << 20)?;
+        stream.fill(other.binding(), 7)?;
+        let mut bytes = vec![0u8; 4 << 20];
+        stream.read_blocking(other.binding(), &mut bytes)?;
+        assert!(bytes.iter().all(|b| *b == 7));
+    }
+    Ok(())
+}
+
 #[test]
 #[ignore = "requires gfx1151"]
 fn graphs_fork_join_and_reject_foreign_nodes() -> hrx::Result<()> {

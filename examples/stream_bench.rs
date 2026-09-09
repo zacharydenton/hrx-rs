@@ -108,16 +108,30 @@ fn main() -> Result<()> {
     metrics.insert("dispatch_enqueue_ns", enqueue);
     metrics.insert("dispatch_complete_ns", complete);
 
-    // The Euler kernel accumulates in place, so every node must be ordered.
+    // Use disjoint allocations in both graphs. Even an idempotent store is a
+    // write: concurrent Euler dispatches cannot share their in/out buffer.
+    let mut graph_buffers = Vec::new();
+    for _ in 0..32 {
+        let sample = stream.allocate(512)?;
+        let velocity = stream.allocate(512)?;
+        stream.upload(sample.binding(), &ones)?;
+        stream.upload(velocity.binding(), &ones)?;
+        graph_buffers.push((sample, velocity));
+    }
+    stream.synchronize()?;
     let mut builder = stream.graph()?;
     let mut previous = None;
-    for _ in 0..32 {
-        let after: &[hrx::Node] = match &previous {
-            Some(node) => std::slice::from_ref(node),
-            None => &[],
-        };
+    for (sample, velocity) in &graph_buffers {
+        let after = previous.as_slice();
         previous = Some(unsafe {
-            builder.dispatch(after, &kernel, [1; 3], [256, 1, 1], &constants, &bindings)?
+            builder.dispatch(
+                after,
+                &kernel,
+                [1; 3],
+                [256, 1, 1],
+                &constants,
+                &[sample.binding(), velocity.binding()],
+            )?
         });
     }
     let mut chained = builder.finish()?;
@@ -130,12 +144,18 @@ fn main() -> Result<()> {
     metrics.insert("graph_enqueue_ns_per_replay", enqueue * 32.0);
     metrics.insert("graph_complete_ns_per_kernel", ns);
 
-    // The same 32 nodes with no declared edges. A zero timestep makes the result
-    // order-independent, so this measures scheduling cost and nothing else.
+    // The same disjoint workloads, this time allowing concurrent scheduling.
     let mut builder = stream.graph()?;
-    for _ in 0..32 {
+    for (sample, velocity) in &graph_buffers {
         unsafe {
-            builder.dispatch(&[], &kernel, [1; 3], [256, 1, 1], &constants, &bindings)?;
+            builder.dispatch(
+                &[],
+                &kernel,
+                [1; 3],
+                [256, 1, 1],
+                &constants,
+                &[sample.binding(), velocity.binding()],
+            )?;
         }
     }
     let mut independent = builder.finish()?;
@@ -146,7 +166,12 @@ fn main() -> Result<()> {
         Ok(())
     })?;
     metrics.insert("graph_independent_ns_per_kernel", ns_free);
-    metrics.insert("graph_edge_cost_ns", ns - ns_free);
+    metrics.insert("graph_scheduling_difference_ns_per_kernel", ns - ns_free);
+    for (sample, _) in &graph_buffers {
+        let mut output = vec![0; 512];
+        stream.read_blocking(sample.binding(), &mut output)?;
+        assert_eq!(output, ones);
+    }
     let mut output = vec![0; 512];
     stream.read_blocking(sample.binding(), &mut output)?;
     assert_eq!(output, ones);
