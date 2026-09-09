@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-09-09
 
 - Transfers, fills and copies now take `View` regions. `View::slice` checks a
   subregion relative to its parent; `offset` and `owner` expose its allocation origin.
@@ -12,13 +12,10 @@
 - `hrx pack` refuses an inventory whose `status` is not `"complete"` or that leaves
   any component's license unconfirmed, so an unfinished review cannot be packaged.
 - Add docs.rs metadata and a publication checklist in THIRD-PARTY.md.
-- Add `THIRD-PARTY.json` and `NOTICE`, identifying every shipped native binary from
-  evidence in the binaries themselves. Both are marked incomplete: no license is
-  confirmed yet. Identification found that rocprofiler-register, fmt, glog and
-  gflags are build-host packages rather than AMD ROCm build artifacts.
+- Ship complete `THIRD-PARTY.json`, `NOTICE`, license texts, and corresponding
+  sources. Replace the Arch library chain with a coherent AMD runtime build.
 - Drop the unused `loom-compile` executable from the release bundle. HRX compiles
-  in process, so the binary was never invoked; removing it cuts the archive by
-  about 31% and removes one shipped binary from the third-party inventory.
+  in process, so no compiler executable is needed.
 - Remove `Gpu`, the `compat` and `ffi` modules, their features, and the bytemuck
   dependency. `Stream` owns execution directly; dispatch requires explicit
   `Constants`. The model C-ABI verification script and the allocator benchmark
@@ -43,7 +40,9 @@
 - Remove public raw FFI modules and duplicate aliases. ExportInfo remains available
   at the crate root.
 - Remove internal review documents from the repository and allowlist package files.
-- Disable publication pending native provenance, notices and anonymous availability.
+- Enable publication after verifying the public native release and its source archive.
+- Anchor package file patterns to the repository root so local native build
+  artifacts cannot enter the published crate.
 
 ### Earlier prerelease API changes
 
