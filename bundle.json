@@ -2,7 +2,7 @@
   "schema": 1,
   "target": "x86_64-unknown-linux-gnu-gfx1151",
   "revision": "public hrx-system ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d + seven HRX compiler patches; see provenance.json",
-  "url": "https://github.com/zacharydenton/hrx.rs/releases/download/native-ecaaf7376f7d-loomc/hrx-linux-x86_64-gfx1151.tar.gz",
+  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-ecaaf7376f7d-loomc/hrx-linux-x86_64-gfx1151.tar.gz",
   "archive_sha256": "c151a978eff1c7def5c54b9acfd595cc1e8ca21b793b4613864a18281d846bb1",
   "files": {
     "libfmt.so.12": "d4b82c135ffc0c4637c370b51b000c166ab7dd1ec7a9d3aeb27a68bdcdf45bd0",

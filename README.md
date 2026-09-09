@@ -1,9 +1,11 @@
-# hrx
+# hrx-rs
 
 Rust GPU execution and in-process Loom compilation for Linux x86_64. Native
 libraries load at runtime; building the crate requires Rust 1.88 or later and no
 native toolchain. GPU execution requires an AMD kernel driver and access to
 `/dev/kfd` and the render device. The tested architecture is gfx1151.
+
+The Cargo package is `hrx-rs`; the Rust library and primary CLI are named `hrx`.
 
 The crate is unpublished. As of 2026-09-09, the pinned native release returns
 404 to anonymous clients. Use a matching local archive or configure a mirror.
@@ -51,7 +53,7 @@ Dropping a session releases its streams, allocations and compiler state.
 
 ```toml
 [dependencies]
-hrx = { path = "../hrx.rs" }
+hrx = { package = "hrx-rs", path = "../hrx-rs" }
 ```
 
 ```rust,no_run
