@@ -167,11 +167,13 @@ impl Stream {
                 )?;
             }
             Ok(Kernel {
-                executable,
+                executable: std::sync::Arc::new(Executable {
+                    raw: executable,
+                    device: self.inner.clone(),
+                }),
                 ordinal,
                 info,
                 symbol: symbol.into(),
-                _device: self.inner.clone(),
             })
         })();
         if kernel.is_err() {
@@ -292,12 +294,34 @@ impl Drop for Buffer {
 /// Kernels can be dispatched on any stream on their device; buffer handles belong
 /// to individual streams.
 pub struct Kernel {
-    executable: sys::Executable,
+    /// Shared by every clone, so cloning is two atomics rather than a call
+    /// across the FFI boundary. A cache that hands a kernel out per dispatch
+    /// clones it on every launch, so `Kernel: Clone` is only worth advertising
+    /// over `Arc<Kernel>` if it is no more expensive.
+    executable: std::sync::Arc<Executable>,
     ordinal: u32,
     info: sys::ExportInfo,
-    symbol: String,
+    symbol: std::sync::Arc<str>,
+}
+
+/// The native executable, released once the last kernel naming it is dropped.
+struct Executable {
+    raw: sys::Executable,
     /// As for a buffer: the executable names its device.
-    _device: std::sync::Arc<Inner>,
+    device: std::sync::Arc<Inner>,
+}
+
+// Safety: the same assertion `Kernel` carries, moved to the field that actually
+// holds the native handle. Executable metadata is immutable and the native
+// reference count is atomic, so sharing one across threads is sound; dispatch
+// still requires serialized access to a command stream.
+unsafe impl Send for Executable {}
+unsafe impl Sync for Executable {}
+
+impl Drop for Executable {
+    fn drop(&mut self) {
+        unsafe { sys::hrx_executable_release(self.raw) }
+    }
 }
 
 // Safety: executable metadata is immutable and native reference counts are
@@ -316,24 +340,17 @@ impl Kernel {
     }
 }
 
-/// Cloning retains the native executable, so a kernel can be cached and handed
+/// Cloning shares the native executable, so a kernel can be cached and handed
 /// out by value instead of behind an `Arc`. Export metadata is immutable, and
 /// the borrowed `ExportInfo::name` stays valid while any clone is alive.
 impl Clone for Kernel {
     fn clone(&self) -> Self {
-        unsafe { sys::hrx_executable_retain(self.executable) };
         Self {
-            executable: self.executable,
+            executable: self.executable.clone(),
             ordinal: self.ordinal,
             info: self.info,
             symbol: self.symbol.clone(),
-            _device: self._device.clone(),
         }
-    }
-}
-impl Drop for Kernel {
-    fn drop(&mut self) {
-        unsafe { sys::hrx_executable_release(self.executable) }
     }
 }
 
@@ -821,7 +838,7 @@ impl Stream {
         constants: &Constants,
         bindings: &[View<'_>],
     ) -> Result<()> {
-        if kernel._device.device != self.inner.device {
+        if kernel.executable.device.device != self.inner.device {
             return Err(Error::Message("kernel belongs to another device".into()));
         }
         for view in bindings {
@@ -846,7 +863,7 @@ impl Stream {
             check(
                 sys::hrx_stream_dispatch(
                     self.inner.stream,
-                    kernel.executable,
+                    kernel.executable.raw,
                     kernel.ordinal,
                     &config,
                     constants.bytes.as_ptr().cast(),
@@ -1290,7 +1307,7 @@ impl<'a> Graph<'a> {
         constants: &Constants,
         bindings: &[View<'a>],
     ) -> Result<Node> {
-        if kernel._device.device != self.inner.device {
+        if kernel.executable.device.device != self.inner.device {
             return Err(Error::Message("kernel belongs to another device".into()));
         }
         for view in bindings {
@@ -1310,7 +1327,7 @@ impl<'a> Graph<'a> {
         // those descriptors only borrow HAL resources until instantiation. Thus
         // buffers/kernels borrow for recording, while constants borrow for this call.
         let attrs = sys::GraphKernel {
-            executable: kernel.executable,
+            executable: kernel.executable.raw,
             ordinal: kernel.ordinal,
             config: sys::DispatchConfig {
                 workgroup_count: grid,
