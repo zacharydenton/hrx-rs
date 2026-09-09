@@ -94,7 +94,7 @@ macro_rules! native_api {
     };
 }
 native_api! {
-    fn hrx_buffer_retain(buffer: Buffer) -> ();
+    fn hrx_executable_retain(executable: Executable) -> ();
     fn hrx_event_create(device: Device, flags: u32, out_event: *mut Event) -> Status;
     fn hrx_event_release(event: Event) -> ();
     fn hrx_event_record(event: Event, stream: Stream) -> Status;

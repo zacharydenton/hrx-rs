@@ -1,5 +1,5 @@
 //! Explicit hardware suite: cargo test --all-features --test gpu -- --ignored
-use hrx::{Constants, Stream};
+use hrx::{Constants, Device, Stream};
 
 #[test]
 #[ignore = "requires gfx1151"]
@@ -102,7 +102,6 @@ fn copy_and_compute_streams_exchange_event_ordered_buffers() -> hrx::Result<()> 
     let mut compute = device.stream()?;
     let source = upload.allocate(4096)?;
     // All reads and overwrites below are ordered in both directions by events.
-    let shared = unsafe { source.share_on(&compute)? };
     let result = compute.allocate(4096)?;
     let mut readbacks = Vec::new();
     let mut last = None;
@@ -111,7 +110,7 @@ fn copy_and_compute_streams_exchange_event_ordered_buffers() -> hrx::Result<()> 
         let ready = upload.record_event()?;
         compute.wait_event(&ready)?;
         drop(ready); // The queued dependency owns its native semaphore.
-        compute.copy(result.binding(), shared.binding())?;
+        compute.copy(result.binding(), source.binding())?;
         let consumed = compute.record_event()?;
         upload.wait_event(&consumed)?;
         last = Some(consumed);
@@ -123,7 +122,6 @@ fn copy_and_compute_streams_exchange_event_ordered_buffers() -> hrx::Result<()> 
         assert_eq!(readback.wait(&mut compute)?, vec![(i + 1) as u8; 4096]);
     }
     drop(source);
-    drop(shared);
     upload.synchronize()?;
     compute.synchronize()?;
     Ok(())
@@ -266,32 +264,42 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
             .chunks_exact(2)
             .all(|b| u16::from_le_bytes([b[0], b[1]]) == 0x4000)
     );
+    // Buffers are device-scoped: a second stream on the same device may dispatch
+    // against them, ordered by an event rather than refused by an ownership check.
     let mut foreign = Stream::open()?;
+    let ready = stream.record_event()?;
+    foreign.wait_event(&ready)?;
     unsafe {
-        assert!(
-            foreign
-                .dispatch(
-                    &kernel,
-                    [1; 3],
-                    [256, 1, 1],
-                    &constants,
-                    &[sample.binding(), velocity.binding()]
-                )
-                .is_err()
-        );
+        foreign.dispatch(
+            &kernel,
+            [1; 3],
+            [256, 1, 1],
+            &constants,
+            &[sample.binding(), velocity.binding()],
+        )?;
         let mut graph = foreign.sequence()?;
-        assert!(
-            graph
-                .dispatch(
-                    &kernel,
-                    [1; 3],
-                    [256, 1, 1],
-                    &constants,
-                    &[sample.binding(), velocity.binding()]
-                )
-                .is_err()
-        );
+        graph.dispatch(
+            &kernel,
+            [1; 3],
+            [256, 1, 1],
+            &constants,
+            &[sample.binding(), velocity.binding()],
+        )?;
+        let mut recorded = graph.finish()?;
+        foreign.launch_sequence(&mut recorded)?;
     }
+    let done = foreign.record_event()?;
+    stream.wait_event(&done)?;
+    stream.read_blocking(sample.binding(), &mut output)?;
+    // Two more half-steps of 0.5 on top of 0x4000 (2.0): 2.5, then 3.0.
+    assert!(
+        output
+            .chunks_exact(2)
+            .all(|b| u16::from_le_bytes([b[0], b[1]]) == 0x4040)
+    );
+    // A kernel is still refused on a device that did not load it; with one GPU
+    // present the device check is exercised through Buffer, not Kernel.
+    assert!(Device::open(1).is_err());
     #[cfg(feature = "runner")]
     {
         let input = cache.path().join("runner-input.bin");
@@ -334,32 +342,51 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
 }
 #[test]
 #[ignore = "requires gfx1151"]
-fn buffers_reject_every_foreign_stream_access() -> hrx::Result<()> {
+fn buffers_are_device_scoped_but_sequences_stay_stream_scoped() -> hrx::Result<()> {
     let mut a = Stream::open()?;
     let mut b = Stream::open()?;
     let source = a.allocate(16)?;
     let destination = b.allocate(16)?;
+
+    // Every safe operation accepts an allocation from either stream, because the
+    // allocator is asked for any queue and executables are device-scoped. Each
+    // step below is ordered against the previous one by an event, so the reads
+    // observe a defined value rather than a race.
     a.fill(source.binding(), 7)?;
-    assert!(b.upload_blocking(source.binding(), &[1; 16]).is_err());
-    assert!(b.read_blocking(source.binding(), &mut [0; 16]).is_err());
-    assert!(b.fill(source.binding(), 1).is_err());
-    assert!(b.copy(destination.binding(), source.binding()).is_err());
-    assert!(b.copy(source.binding(), destination.binding()).is_err());
-    assert!(b.upload(source.binding(), &[1; 16]).is_err());
-    assert!(b.read(source.binding()).is_err());
+    let filled = a.record_event()?;
+    b.wait_event(&filled)?;
+
+    let mut bytes = [0; 16];
+    b.read_blocking(source.binding(), &mut bytes)?;
+    assert_eq!(bytes, [7; 16], "a foreign stream reads the allocation");
+
+    b.copy(destination.binding(), source.binding())?;
+    b.upload(source.binding(), &[1; 16])?;
+    b.upload_blocking(source.binding(), &[2; 16])?;
+    b.fill(source.binding(), 3)?;
+    let readback = b.read(source.binding())?;
+    assert_eq!(readback.wait(&mut b)?, vec![3; 16]);
     let mut graph = b.sequence()?;
-    assert!(graph.fill(source.binding(), 1).is_err());
-    assert!(graph.copy(destination.binding(), source.binding()).is_err());
+    graph.fill(source.binding(), 4)?;
+    graph.copy(destination.binding(), source.binding())?;
     drop(graph);
+
+    // A recorded sequence is not device-scoped: it names the stream it will
+    // replay on, and native replay elsewhere would reorder against that queue.
     let mut graph = a.sequence()?;
     graph.fill(source.binding(), 9)?;
     let mut graph = graph.finish()?;
-    assert!(b.launch_sequence(&mut graph).is_err());
+    assert!(
+        b.launch_sequence(&mut graph)
+            .unwrap_err()
+            .to_string()
+            .contains("another stream")
+    );
+    let done = b.record_event()?;
+    a.wait_event(&done)?;
     a.launch_sequence(&mut graph)?;
-    let mut bytes = [0; 16];
     a.read_blocking(source.binding(), &mut bytes)?;
     assert_eq!(bytes, [9; 16]);
-
     Ok(())
 }
 
