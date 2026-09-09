@@ -156,16 +156,12 @@ impl Compiler {
     /// workspace pool's bound. This is the entry point that does: it owns the
     /// thread budget rather than leaving every consumer to rebuild the same pool.
     /// Each request is independent; one failure does not cancel the others.
-    pub fn compile_all(
-        &self,
-        requests: &[(&Module, &Specialization)],
-        cache: &Path,
-    ) -> Vec<Result<Artifact>> {
+    pub fn compile_all(&self, requests: &[(&Module, &Specialization)]) -> Vec<Result<Artifact>> {
         let limit = self.0.workers.get().min(requests.len());
         if limit <= 1 {
             return requests
                 .iter()
-                .map(|(module, spec)| module.compile(spec, cache))
+                .map(|(module, spec)| module.compile(spec))
                 .collect();
         }
         let next = std::sync::atomic::AtomicUsize::new(0);
@@ -179,7 +175,7 @@ impl Compiler {
                         let Some((module, spec)) = requests.get(index) else {
                             return;
                         };
-                        let outcome = module.compile(spec, cache);
+                        let outcome = module.compile(spec);
                         *slots[index].lock().unwrap_or_else(|e| e.into_inner()) = Some(outcome);
                     }
                 });
@@ -439,8 +435,9 @@ impl Module {
     }
     /// Compile in process or return verified cached bytes. Publication is atomic
     /// and serialized per key across threads and processes; failures are retryable.
-    pub fn compile(&self, spec: &Specialization, cache: &Path) -> Result<Artifact> {
+    pub fn compile(&self, spec: &Specialization) -> Result<Artifact> {
         let key = self.key(spec)?;
+        let cache = &bundle::kernel_cache()?;
         let dir = cache.join(&key);
         if let Some(a) = cached(&dir, &key) {
             return Ok(a);
@@ -509,10 +506,12 @@ fn cached(dir: &Path, key: &str) -> Option<Artifact> {
     if record.key != key {
         return None;
     }
-    // Refresh the timestamp `bundle::collect` prunes by, so it means last use.
+    // `bundle::collect` evicts on access time. Reading the artifact below updates
+    // it on a normal mount, but a `noatime` mount never would, so set it here:
+    // utimensat is unaffected by the mount option that suppresses the implicit
+    // update, and without this a busy cache would look idle to the collector.
     if let Ok(file) = fs::File::open(dir.join("artifact.json")) {
-        let now = std::time::SystemTime::now();
-        let _ = file.set_times(fs::FileTimes::new().set_accessed(now).set_modified(now));
+        let _ = file.set_times(fs::FileTimes::new().set_accessed(std::time::SystemTime::now()));
     }
     let path = dir.join("kernel.hsaco");
     let bytes = fs::read(&path).ok()?;
@@ -548,11 +547,10 @@ mod tests {
         compiler.trim();
         assert!(compiler.0.modules.lock().unwrap().is_empty());
         assert_eq!(first.identity(), first_id);
-        let cache = tempfile::tempdir()?;
         let mut spec = Specialization::new("krea2_euler");
         spec.config.insert("krea2.euler.grid_x".into(), "1".into());
         spec.config.insert("krea2.euler.grid_y".into(), "1".into());
-        assert!(!first.compile(&spec, cache.path())?.bytes().is_empty());
+        assert!(!first.compile(&spec)?.bytes().is_empty());
         Ok(())
     }
 }

@@ -2,6 +2,14 @@
 
 ## 0.2.0 — 2026-09-09
 
+- Compiled kernels use one machine-wide cache. `Module::compile` and
+  `Compiler::compile_all` no longer take a cache path: artifacts are
+  content-addressed, so a per-caller location could only duplicate identical
+  bytes and hide them from `hrx gc`. `bundle::kernel_cache()` names it.
+- `hrx gc` evicts by access time rather than by a timestamp inside one file
+  layout, so entries written by an older release are dated like current ones
+  instead of being deleted regardless of the age given on the command line.
+
 - Drop `HRX_CACHE_DIR`, `KREA2_RUNTIME` and `IREE_HAL_AMDGPU_LIBHSA_PATH`. The
   cache follows the XDG Base Directory specification alone — `$XDG_CACHE_HOME/hrx`,
   else `$HOME/.cache/hrx`, ignoring a relative value as the specification requires.

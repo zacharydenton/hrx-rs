@@ -71,6 +71,16 @@ pub fn cache_root() -> Result<PathBuf> {
     Ok(base.join("hrx"))
 }
 
+/// The one cache for compiled kernels.
+///
+/// Artifacts are content-addressed — the key covers compiler identity, source,
+/// export, target and canonical configuration — so there is nothing for a
+/// per-consumer location to distinguish. Separate directories could only
+/// duplicate identical artifacts and hide them from `hrx gc`.
+pub fn kernel_cache() -> Result<PathBuf> {
+    Ok(cache_root()?.join("kernels"))
+}
+
 /// An independently opened flock also serializes separate Rust copies in cdylibs.
 /// Never unlink a lock file while another process might be waiting on its inode.
 pub struct Lock(File);
@@ -237,8 +247,26 @@ fn directory_bytes(path: &Path) -> u64 {
         .sum()
 }
 
+/// The most recent access to anything in `path`, including `path` itself.
+///
+/// Reading a cached artifact updates the file's atime, not the directory's, so
+/// the entry's own timestamp would report when it was created. `None` means no
+/// timestamp could be read, which is treated as recently used: a collector that
+/// deletes what it cannot date is not honouring the age it was given.
+fn last_access(path: &Path) -> Option<std::time::SystemTime> {
+    let own = fs::metadata(path).and_then(|m| m.accessed()).ok();
+    let Ok(entries) = fs::read_dir(path) else {
+        return own;
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.metadata().and_then(|m| m.accessed()).ok())
+        .chain(own)
+        .max()
+}
+
 /// Remove cached runtime bundles other than `keep`, and compiled kernel
-/// artifacts untouched for longer than `unused_for`.
+/// artifacts not accessed for longer than `unused_for`.
 ///
 /// Provisioning publishes but never evicts, so a developer machine accumulates
 /// every bundle it has ever prepared. This is deliberately explicit: nothing
@@ -275,6 +303,8 @@ pub fn collect(cache: &Path, keep: &str, unused_for: std::time::Duration) -> Res
             reclaimed.bundle_bytes += bytes;
         }
     }
+    // `cache` is the root, not necessarily the process's own: tests and tools
+    // collect a cache they were handed. `kernel_cache` names the default.
     let kernels = cache.join("kernels");
     if let Ok(entries) = fs::read_dir(&kernels) {
         for entry in entries.flatten() {
@@ -289,13 +319,10 @@ pub fn collect(cache: &Path, keep: &str, unused_for: std::time::Duration) -> Res
             if !entry.path().is_dir() {
                 continue;
             }
-            // Cache hits refresh this timestamp, so it tracks last use, not age.
-            let used = entry
-                .path()
-                .join("artifact.json")
-                .metadata()
-                .and_then(|m| m.modified());
-            if used.is_ok_and(|used| used >= cutoff) {
+            // Last access, not age, and taken from the filesystem rather than from
+            // any file this layout happens to contain: entries written by an older
+            // release are dated the same way as current ones.
+            if last_access(&entry.path()).is_none_or(|used| used >= cutoff) {
                 continue;
             }
             let bytes = directory_bytes(&entry.path());
@@ -489,17 +516,28 @@ mod gc_tests {
             .unwrap();
         }
         let kernels = cache.path().join("kernels");
-        for (name, age_days) in [("fresh", 0u64), ("stale", 90)] {
+        // Eviction reads access time, so an entry is dated without regard to which
+        // files it holds: "legacy" carries none of the current layout at all.
+        for (name, age_days, extra) in [
+            ("fresh", 0u64, "artifact.json"),
+            ("stale", 90, "artifact.json"),
+            ("legacy", 90, "kernel.sha256"),
+        ] {
             let dir = kernels.join(digest(name.as_bytes()));
             fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join("kernel.hsaco"), vec![0u8; 512]).unwrap();
-            let record = dir.join("artifact.json");
-            fs::write(&record, "{}").unwrap();
             let when = std::time::SystemTime::now()
                 - std::time::Duration::from_secs(age_days * 24 * 60 * 60);
-            File::options()
-                .write(true)
-                .open(&record)
+            for file in ["kernel.hsaco", extra] {
+                let path = dir.join(file);
+                fs::write(&path, vec![0u8; 512]).unwrap();
+                File::options()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_times(fs::FileTimes::new().set_accessed(when).set_modified(when))
+                    .unwrap();
+            }
+            File::open(&dir)
                 .unwrap()
                 .set_times(fs::FileTimes::new().set_accessed(when).set_modified(when))
                 .unwrap();
@@ -512,7 +550,7 @@ mod gc_tests {
         .unwrap();
         assert_eq!(reclaimed.bundles, 2);
         assert!(reclaimed.bundle_bytes >= 2048);
-        assert_eq!(reclaimed.artifacts, 1);
+        assert_eq!(reclaimed.artifacts, 2, "stale and legacy entries both go");
         assert!(
             runtime.join(digest(b"keepme")).is_dir(),
             "pinned bundle survives"
@@ -520,6 +558,10 @@ mod gc_tests {
         assert!(!runtime.join(digest(b"oldone")).exists());
         assert!(kernels.join(digest(b"fresh")).is_dir());
         assert!(!kernels.join(digest(b"stale")).exists());
+        assert!(
+            !kernels.join(digest(b"legacy")).exists(),
+            "an older layout is dated by access time like any other entry"
+        );
         // A second sweep is a no-op rather than an error.
         let again = collect(
             cache.path(),

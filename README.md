@@ -86,8 +86,16 @@ Once prepared, `HRX_OFFLINE=1` disables network provisioning.
 
 Caches live at `$XDG_CACHE_HOME/hrx`, or `$HOME/.cache/hrx` when that is unset,
 per the XDG Base Directory specification; a relative `XDG_CACHE_HOME` is ignored
-as the specification requires. `hrx gc` reclaims them. The runtime lock lives in
-`$XDG_RUNTIME_DIR`.
+as the specification requires. The runtime lock lives in `$XDG_RUNTIME_DIR`.
+
+Compiled kernels go to one cache under that root, shared by every consumer on the
+machine. Artifacts are content-addressed — the key covers compiler identity,
+source, export, target and canonical configuration, and every hit re-verifies the
+bytes against their recorded digest — so there is nothing a per-model location
+could distinguish, and two models that compile the same kernel compile it once.
+`hrx gc [DAYS]` evicts runtime bundles `bundle.json` does not pin and kernels not
+read for DAYS (default 30), by access time, so entries written by any release are
+dated the same way.
 
 Default features are `download` and `loom`. Enable `runner` for the `hrx` CLI,
 whose `run` subcommand launches a compiled kernel and dumps its buffers.

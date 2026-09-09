@@ -54,7 +54,7 @@ fn dispatch(args: &[String]) -> Result<()> {
                 std::time::Duration::from_secs(days * 24 * 60 * 60),
             )?;
             println!(
-                "removed {} superseded runtime bundle(s) ({:.1} MB)\nremoved {} kernel artifact(s) unused >{days}d ({:.1} MB)\nkept {} (pinned by bundle.json)",
+                "removed {} superseded runtime bundle(s) ({:.1} MB)\nremoved {} kernel artifact(s) unread for >{days}d ({:.1} MB)\nkept {} (pinned by bundle.json)",
                 reclaimed.bundles,
                 reclaimed.bundle_bytes as f64 / 1e6,
                 reclaimed.artifacts,
@@ -82,13 +82,7 @@ fn dispatch(args: &[String]) -> Result<()> {
                     .ok_or_else(|| Error::Message("config must be key=value".into()))?;
                 request.config.insert(k.into(), v.into());
             }
-            println!(
-                "{}",
-                module
-                    .compile(&request, &hrx::bundle::cache_root()?.join("kernels"))?
-                    .path()
-                    .display()
-            );
+            println!("{}", module.compile(&request)?.path().display());
         }
         _ => {
             return Err(Error::Message(

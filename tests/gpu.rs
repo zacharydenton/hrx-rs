@@ -213,8 +213,7 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     request
         .config
         .insert("krea2.euler.grid_y".into(), "1".into());
-    let cache = tempfile::tempdir()?;
-    let artifact = module.compile(&request, cache.path())?;
+    let artifact = module.compile(&request)?;
     #[cfg(feature = "runner")]
     let path = artifact.path().to_path_buf();
     let mut stream = Stream::open()?;
@@ -344,8 +343,9 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     assert!(Device::open(1).is_err());
     #[cfg(feature = "runner")]
     {
-        let input = cache.path().join("runner-input.bin");
-        let velocity = cache.path().join("runner-velocity.bin");
+        let scratch = tempfile::tempdir()?;
+        let input = scratch.path().join("runner-input.bin");
+        let velocity = scratch.path().join("runner-velocity.bin");
         std::fs::write(&input, &ones)?;
         std::fs::write(&velocity, &ones)?;
         let locks = tempfile::tempdir()?;
