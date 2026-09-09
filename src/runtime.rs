@@ -1072,9 +1072,23 @@ impl Drop for Stream {
     }
 }
 
-/// Recording for a fixed sequence of operations. Each added operation depends
-/// on the previous one. Native capture and update are unimplemented in the
-/// pinned HRX revision.
+/// Recording for a fixed sequence of operations. Each added operation depends on
+/// the previous one.
+///
+/// That chain is this builder's limitation, not the runtime's. `hrx_graph_*`
+/// takes a dependency array per node and implements `add_dependencies` and
+/// `add_empty_node`, so the native model is a real DAG; this type only ever
+/// declares a chain, and the difference is measurable. 64 tiny fill nodes replay
+/// in ~151 us chained and ~88 us with no declared dependencies on gfx1151 —
+/// roughly 0.95 us per avoided edge. `dag_probe` in this module measures it.
+///
+/// Until independent nodes can be expressed, treat this as a determinism and
+/// packaging tool rather than a throughput one: reach for it when a fixed
+/// pipeline should replay with identical addresses, constants and shapes.
+///
+/// Native capture and graph-exec update are genuinely unimplemented in the
+/// pinned revision rather than merely unwrapped: `hrx_graph_exec_update` is a
+/// 17-byte stub and `hrx_stream_capture_status` is 3 bytes.
 pub struct SequenceBuilder<'a> {
     graph: sys::Graph,
     last: sys::GraphNode,
@@ -1463,6 +1477,85 @@ mod staging_tests {
         stream.upload(buffer.binding(), &[13; 1024])?;
         assert_eq!(stream.staging.len(), 1);
         stream.synchronize()?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod dag_probe {
+    use super::*;
+
+    /// Does the native graph overlap independent nodes, or linearize them?
+    /// Latency-bound by construction: 64 tiny fills, so bandwidth cannot confound
+    /// the comparison. A serial chain pays one dependency edge per node; the
+    /// independent graph declares none.
+    #[test]
+    #[ignore = "requires gfx1151"]
+    fn independent_nodes_versus_a_serial_chain() -> Result<()> {
+        const NODES: usize = 64;
+        let mut stream = Stream::open()?;
+        let buffers: Vec<Buffer> = (0..NODES)
+            .map(|_| stream.allocate(4096))
+            .collect::<Result<_>>()?;
+        for chained in [true, false] {
+            let mut graph = std::ptr::null_mut();
+            unsafe {
+                check(
+                    sys::hrx_graph_create(stream.inner.device, 0, &mut graph),
+                    "create",
+                )?;
+                let mut last: sys::GraphNode = std::ptr::null_mut();
+                for buffer in &buffers {
+                    let attrs = sys::GraphFill {
+                        dst: buffer.binding().raw,
+                        pattern: 0x3c,
+                        pattern_size: 1,
+                    };
+                    let (deps, count) = if chained && !last.is_null() {
+                        (&raw const last, 1)
+                    } else {
+                        (std::ptr::null(), 0)
+                    };
+                    let mut node = std::ptr::null_mut();
+                    check(
+                        sys::hrx_graph_add_fill_buffer_node(graph, deps, count, &attrs, &mut node),
+                        "record fill",
+                    )?;
+                    last = node;
+                }
+                let mut exec = std::ptr::null_mut();
+                check(
+                    sys::hrx_graph_instantiate(graph, 0, &mut exec),
+                    "instantiate",
+                )?;
+                sys::hrx_graph_release(graph);
+                let mut sequence = FixedSequence {
+                    raw: exec,
+                    inner: stream.inner.clone(),
+                };
+                for _ in 0..3 {
+                    stream.launch_sequence(&mut sequence)?;
+                    stream.synchronize()?;
+                }
+                let mut samples = Vec::new();
+                for _ in 0..9 {
+                    let start = std::time::Instant::now();
+                    stream.launch_sequence(&mut sequence)?;
+                    stream.synchronize()?;
+                    samples.push(start.elapsed().as_secs_f64() * 1e6);
+                }
+                samples.sort_by(f64::total_cmp);
+                println!(
+                    "{:<12} {NODES} nodes: {:8.1} us total, {:6.2} us/node",
+                    if chained { "serial" } else { "independent" },
+                    samples[4],
+                    samples[4] / NODES as f64
+                );
+                let mut seen = [0u8; 4096];
+                stream.read_blocking(buffers[NODES - 1].binding(), &mut seen)?;
+                assert_eq!(seen, [0x3c; 4096], "every node ran");
+            }
+        }
         Ok(())
     }
 }
