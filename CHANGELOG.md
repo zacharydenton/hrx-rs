@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `hrx pack` refuses an inventory whose `status` is not `"complete"` or that leaves
+  any component's license unconfirmed, so an unfinished review cannot be packaged.
+- Add docs.rs metadata and a publication checklist in THIRD-PARTY.md.
 - Add `THIRD-PARTY.json` and `NOTICE`, identifying every shipped native binary from
   evidence in the binaries themselves. Both are marked incomplete: no license is
   confirmed yet. Identification found that rocprofiler-register, fmt, glog and

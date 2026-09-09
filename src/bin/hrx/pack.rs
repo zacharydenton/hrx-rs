@@ -27,6 +27,9 @@ pub fn pack(
                 "{name} must be a nonempty JSON object"
             )));
         }
+        if name == "THIRD-PARTY.json" {
+            third_party_is_complete(&value)?;
+        }
     }
     if fs::canonicalize(output)? == source {
         return Err(Error::Message(
@@ -87,6 +90,40 @@ pub fn pack(
     Ok(())
 }
 
+/// An inventory that still describes itself as incomplete, or that leaves any
+/// component's license unconfirmed, must not be packaged into a release. The
+/// structural checks above cannot judge licensing; this refuses to ship an
+/// inventory whose own author has recorded that the review is unfinished.
+fn third_party_is_complete(value: &serde_json::Value) -> Result<()> {
+    if value.get("status").and_then(serde_json::Value::as_str) != Some("complete") {
+        return Err(Error::Message(
+            "THIRD-PARTY.json status must be \"complete\"; see THIRD-PARTY.md".into(),
+        ));
+    }
+    let components = value
+        .get("components")
+        .and_then(serde_json::Value::as_object)
+        .filter(|components| !components.is_empty())
+        .ok_or_else(|| Error::Message("THIRD-PARTY.json needs a nonempty components map".into()))?;
+    for (name, component) in components {
+        let license = component.get("license");
+        let identified = license
+            .and_then(|l| l.get("spdx"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|spdx| !spdx.trim().is_empty());
+        let confirmed = license
+            .and_then(|l| l.get("status"))
+            .and_then(serde_json::Value::as_str)
+            == Some("confirmed");
+        if !identified || !confirmed {
+            return Err(Error::Message(format!(
+                "THIRD-PARTY.json {name} needs a license.spdx with license.status \"confirmed\""
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,14 +149,46 @@ mod tests {
             .contains("provenance.json")
         );
         assert!(!rejected.join("bundle.json").exists());
-        for name in ["provenance.json", "THIRD-PARTY.json"] {
-            fs::write(source.join(name), r#"{"fixture":true}"#).unwrap();
-        }
+        fs::write(source.join("provenance.json"), r#"{"fixture":true}"#).unwrap();
         fs::write(
             source.join("NOTICE"),
             "Synthetic test fixture, no native binaries",
         )
         .unwrap();
+        // An inventory that records its own review as unfinished is refused.
+        let incomplete = r#"{"status":"incomplete","components":{"libhrx.so":{}}}"#;
+        fs::write(source.join("THIRD-PARTY.json"), incomplete).unwrap();
+        assert!(
+            pack(
+                &source,
+                &rejected,
+                "https://example.test/native.tar.gz",
+                "test",
+                &hrx::Target::default()
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("status must be")
+        );
+        // So is a complete one that still leaves a component's license unconfirmed.
+        let unconfirmed = r#"{"status":"complete","components":{"libhrx.so":
+            {"license":{"spdx":"MIT","status":"unconfirmed"}}}}"#;
+        fs::write(source.join("THIRD-PARTY.json"), unconfirmed).unwrap();
+        assert!(
+            pack(
+                &source,
+                &rejected,
+                "https://example.test/native.tar.gz",
+                "test",
+                &hrx::Target::default()
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("license.status")
+        );
+        let complete = r#"{"status":"complete","components":{"libhrx.so":
+            {"license":{"spdx":"MIT","status":"confirmed"}}}}"#;
+        fs::write(source.join("THIRD-PARTY.json"), complete).unwrap();
         let a = root.path().join("a");
         let b = root.path().join("b");
         for out in [&a, &b] {
