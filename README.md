@@ -7,11 +7,23 @@ driver and access to `/dev/kfd` and the render device.
 
 This checkout implements the shared runtime used by the sibling `minimax-h3-loom`
 and `krea2-loom` workspaces. It has not been published to crates.io. The bundled
-manifest names a proposed GitHub release URL; **that release has not been uploaded**.
-The archive under `artifacts/` is a tested local candidate, pinned by SHA-256.
-Its existing developer build provenance has not been reproduced from clean
-sources. Public download requires publishing a reviewed native bundle and
-updating `bundle.json` first. No changes to `hrx-system` are needed by this crate.
+manifest pins the `native-9e4fff00d244` GitHub release by SHA-256. This repository
+is private, so download the archive with an authenticated GitHub CLI and prepare
+it locally:
+
+```sh
+mkdir -p artifacts
+gh release download native-9e4fff00d244 --repo zacharydenton/hrx.rs \
+  --pattern hrx-linux-x86_64-gfx1151.tar.gz --dir artifacts
+cargo run --release --features runner --bin hrx -- prepare artifacts/hrx-linux-x86_64-gfx1151.tar.gz
+```
+
+The compiler was built from `hrx-system` commit
+`9e4fff00d244a8b5300d03569addd019ec8e262f`, including the VOPD bank fix,
+encoding-config materialization, and dependent inline-type binding. Runtime
+libraries retain their exact bytes from bundle `750f265ce4fd`; their original
+developer build provenance remains unverified. A public mirror can be selected
+with `HRX_BUNDLE_MANIFEST`.
 
 ## Use from a model
 
@@ -82,7 +94,7 @@ cargo install --path . --features runner
 # Local/offline preparation using the tested archive from this checkout:
 hrx prepare artifacts/hrx-linux-x86_64-gfx1151.tar.gz
 HRX_OFFLINE=1 hrx info
-# Once the native release is published, `hrx prepare` downloads it on first use.
+# Authenticated release download is shown above; public mirrors support first use.
 ```
 
 A model CLI installed with Cargo provisions its dependency when it first needs

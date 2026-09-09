@@ -1,5 +1,29 @@
 # Validation record
 
+## Compiler update, 2026-09-09
+
+Bundle `34591d78d625f9c696657820d04615f3f55a134010a9354c0e455a4c2e60caa0`
+contains Loom built from `hrx-system` commit
+`9e4fff00d244a8b5300d03569addd019ec8e262f`. Compiler SHA-256:
+`74a0c9dc5f387e89b85a3cd9d2000644dc0e20a0657d9fe79dfcd627ff5ecdb6`.
+Every runtime library retains its previous digest.
+
+- `cargo test --all-features`: all non-ignored tests and doctests pass.
+- The archive installs through the normal digest-verifying provisioner.
+- All 15 H3 GPU kernel tests pass using that installed bundle, with bitwise
+  comparisons against the pre-consolidation sources and independent CPU oracles.
+- 550 available Loom fixture suites pass. Four other source-low fixture suites
+  have the same failures when rebuilding the unchanged parent commit; tests for
+  unbuilt optional executables were excluded.
+- Exact i4/i8 encoding configuration and dependent vector template arguments
+  compile through native emission; the emitted WMMA forms are checked.
+
+The native release is `native-9e4fff00d244` in the private GitHub repository.
+Authenticated archive preparation is documented in the README. Runtime library
+build provenance still has the limitations recorded below.
+
+## Original runtime archive
+
 Validated locally on Linux x86_64 / gfx1151 on 2026-09-08. Native archive SHA-256:
 `750f265ce4fd6a194fbac12a795c96cb19cc9ed3696fd5123c5edd5589a4cd05`.
 This is a byte-pinned candidate made from the existing staged runtime, not a
@@ -51,8 +75,7 @@ HRX_OFFLINE=1 /tmp/hrx-models-smoke \
 7.069 µs; shared Rust device allocator median 0.550 µs. This demonstrates removing
 the stream flush/allocation wait; it is not an inference speedup measurement.
 
-Outstanding release work: establish the public hrx.rs repository/crate, reproduce
-and review native build provenance and redistribution notices, upload the native
-bundle, then pin that release manifest. No remote repository, crate or release
-was published. Until then the checked-in default URL is a proposed destination;
-use the local archive or explicit runtime/manifest overrides.
+Public distribution still requires a public repository or mirror, crate
+publication, and verification of the runtime libraries' build provenance and
+redistribution notices. The compiler update above publishes a pinned archive
+for repository collaborators.
