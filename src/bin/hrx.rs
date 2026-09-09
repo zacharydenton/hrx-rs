@@ -39,6 +39,29 @@ fn dispatch(args: &[String]) -> Result<()> {
             };
             println!("{}", path.display());
         }
+        Some("gc") => {
+            let days: u64 = match args.get(1) {
+                Some(value) => value
+                    .parse()
+                    .map_err(|_| Error::Message("gc takes a day count".into()))?,
+                None => 30,
+            };
+            let cache = hrx::bundle::cache_root()?;
+            let manifest = hrx::bundle::default_manifest()?;
+            let reclaimed = hrx::bundle::collect(
+                &cache,
+                &manifest.archive_sha256,
+                std::time::Duration::from_secs(days * 24 * 60 * 60),
+            )?;
+            println!(
+                "removed {} superseded runtime bundle(s) ({:.1} MB)\nremoved {} kernel artifact(s) unused >{days}d ({:.1} MB)\nkept {} (pinned by bundle.json)",
+                reclaimed.bundles,
+                reclaimed.bundle_bytes as f64 / 1e6,
+                reclaimed.artifacts,
+                reclaimed.artifact_bytes as f64 / 1e6,
+                &manifest.archive_sha256[..8],
+            );
+        }
         Some("info") => {
             let directory = hrx::bundle::resolve()?;
             let device = hrx::Device::open(0)?;
@@ -69,7 +92,7 @@ fn dispatch(args: &[String]) -> Result<()> {
         }
         _ => {
             return Err(Error::Message(
-                "usage: hrx run --hsaco FILE --kernel NAME [...] | pack RUNTIME OUTPUT URL REVISION [TARGET] | prepare [bundle.tar.gz] | info | compile SOURCE SYMBOL [key=value ...]"
+                "usage: hrx run --hsaco FILE --kernel NAME [...] | pack RUNTIME OUTPUT URL REVISION [TARGET] | prepare [bundle.tar.gz] | gc [DAYS] | info | compile SOURCE SYMBOL [key=value ...]"
                     .into(),
             ));
         }

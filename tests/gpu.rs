@@ -39,11 +39,11 @@ fn nested_views_bound_stream_and_sequence_operations() -> hrx::Result<()> {
     expected[16..20].copy_from_slice(&[1, 2, 3, 4]);
     expected[20..24].copy_from_slice(&[9, 10, 11, 12]);
     let mut actual = [0; 64];
-    stream.read(source.binding(), &mut actual)?;
+    stream.read_blocking(source.binding(), &mut actual)?;
     assert_eq!(actual, expected);
     let mut copied = [0x22; 64];
     copied[32..48].copy_from_slice(&expected[12..28]);
-    stream.read(destination.binding(), &mut actual)?;
+    stream.read_blocking(destination.binding(), &mut actual)?;
     assert_eq!(actual, copied);
 
     let mut builder = stream.sequence()?;
@@ -55,9 +55,9 @@ fn nested_views_bound_stream_and_sequence_operations() -> hrx::Result<()> {
     stream.launch_sequence(&mut sequence)?;
     expected[12..28].fill(0x44);
     copied[32..48].fill(0x44);
-    stream.read(source.binding(), &mut actual)?;
+    stream.read_blocking(source.binding(), &mut actual)?;
     assert_eq!(actual, expected);
-    stream.read(destination.binding(), &mut actual)?;
+    stream.read_blocking(destination.binding(), &mut actual)?;
     assert_eq!(actual, copied);
     Ok(())
 }
@@ -80,7 +80,7 @@ fn independent_streams_move_between_threads() -> hrx::Result<()> {
                 stream.upload(source.binding(), &expected)?;
                 stream.copy(destination.binding(), source.binding())?;
                 drop(source);
-                let readback = stream.read_queued(destination.binding())?;
+                let readback = stream.read(destination.binding())?;
                 drop(destination);
                 // Move pending commands and their retained storage back to the caller.
                 Ok((stream, readback, expected))
@@ -115,7 +115,7 @@ fn copy_and_compute_streams_exchange_event_ordered_buffers() -> hrx::Result<()> 
         let consumed = compute.record_event()?;
         upload.wait_event(&consumed)?;
         last = Some(consumed);
-        readbacks.push(compute.read_queued(result.binding())?);
+        readbacks.push(compute.read(result.binding())?);
     }
     last.as_ref().unwrap().synchronize()?;
     assert!(last.as_ref().unwrap().is_complete()?);
@@ -145,14 +145,14 @@ fn queued_storage_views_and_replay() -> hrx::Result<()> {
     std::mem::forget(submission);
     drop(source);
     let mut bytes = vec![0; 4096];
-    stream.read(result.binding(), &mut bytes)?;
+    stream.read_blocking(result.binding(), &mut bytes)?;
     assert_eq!(
         bytes,
         (0..4096).map(|i| (i % 251) as u8).collect::<Vec<_>>()
     );
-    let readback = stream.read_queued(result.binding())?;
+    let readback = stream.read(result.binding())?;
     assert_eq!(readback.wait(&mut stream)?, bytes);
-    let abandoned = stream.read_queued(result.binding())?;
+    let abandoned = stream.read(result.binding())?;
     drop(abandoned);
     stream.synchronize()?;
     assert!(result.try_slice(usize::MAX, 1).is_err());
@@ -165,7 +165,7 @@ fn queued_storage_views_and_replay() -> hrx::Result<()> {
     let mut sequence = sequence.finish()?;
     for _ in 0..4 {
         stream.launch_sequence(&mut sequence)?;
-        stream.read(other.binding(), &mut bytes)?;
+        stream.read_blocking(other.binding(), &mut bytes)?;
         assert!(bytes.iter().all(|b| *b == 0x3c));
     }
     Ok(())
@@ -228,7 +228,7 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
         )?;
     }
     let mut output = vec![0; 512];
-    stream.read(sample.binding(), &mut output)?;
+    stream.read_blocking(sample.binding(), &mut output)?;
     assert!(
         output
             .chunks_exact(2)
@@ -260,7 +260,7 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     }
     let mut sequence = sequence.finish()?;
     stream.launch_sequence(&mut sequence)?;
-    stream.read(sample.binding(), &mut output)?;
+    stream.read_blocking(sample.binding(), &mut output)?;
     assert!(
         output
             .chunks_exact(2)
@@ -341,12 +341,12 @@ fn buffers_reject_every_foreign_stream_access() -> hrx::Result<()> {
     let destination = b.allocate(16)?;
     a.fill(source.binding(), 7)?;
     assert!(b.upload_blocking(source.binding(), &[1; 16]).is_err());
-    assert!(b.read(source.binding(), &mut [0; 16]).is_err());
+    assert!(b.read_blocking(source.binding(), &mut [0; 16]).is_err());
     assert!(b.fill(source.binding(), 1).is_err());
     assert!(b.copy(destination.binding(), source.binding()).is_err());
     assert!(b.copy(source.binding(), destination.binding()).is_err());
     assert!(b.upload(source.binding(), &[1; 16]).is_err());
-    assert!(b.read_queued(source.binding()).is_err());
+    assert!(b.read(source.binding()).is_err());
     let mut graph = b.sequence()?;
     assert!(graph.fill(source.binding(), 1).is_err());
     assert!(graph.copy(destination.binding(), source.binding()).is_err());
@@ -357,7 +357,7 @@ fn buffers_reject_every_foreign_stream_access() -> hrx::Result<()> {
     assert!(b.launch_sequence(&mut graph).is_err());
     a.launch_sequence(&mut graph)?;
     let mut bytes = [0; 16];
-    a.read(source.binding(), &mut bytes)?;
+    a.read_blocking(source.binding(), &mut bytes)?;
     assert_eq!(bytes, [9; 16]);
 
     Ok(())
@@ -377,7 +377,7 @@ fn instantiated_sequences_own_their_resources() -> hrx::Result<()> {
     drop(buffer);
     stream.launch_sequence(&mut sequence)?;
     let mut bytes = [0; 1024];
-    stream.read(output.binding(), &mut bytes)?;
+    stream.read_blocking(output.binding(), &mut bytes)?;
     assert_eq!(bytes, [42; 1024]);
     // Even an empty executable keeps the stream/device alive after escape.
     drop(output);

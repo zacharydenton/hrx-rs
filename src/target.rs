@@ -7,6 +7,13 @@ pub const TARGET_FAMILY: &CStr = c"amdgpu";
 pub const TARGET_KEY: &str = "gfx1151";
 
 /// An AMDGPU architecture key shared by devices, manifests and compiler profiles.
+///
+/// This is the *profile* target: what a device reports and what the compiler
+/// emits for. It is deliberately narrower than the target a Loom source file
+/// names in `amdgpu.target<...>`, which accepts generic families such as
+/// `gfx11-generic`. The two are chosen independently — generic source compiles
+/// under a bare profile — so this type rejects generic names rather than
+/// silently accepting one a device can never report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target(CString);
 impl Target {
