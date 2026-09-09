@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 — 2026-09-09
+
+- Drop `HRX_CACHE_DIR`, `KREA2_RUNTIME` and `IREE_HAL_AMDGPU_LIBHSA_PATH`. The
+  cache follows the XDG Base Directory specification alone — `$XDG_CACHE_HOME/hrx`,
+  else `$HOME/.cache/hrx`, ignoring a relative value as the specification requires.
+  `KREA2_RUNTIME` was a dead alias from the removed compatibility module, and HSA
+  is loaded from the same verified directory as libhrx, selected with
+  `HRX_RUNTIME_DIR` rather than a second variable in another project's namespace.
 
 - Buffers are bound to their device, not to the allocating stream. Any stream on
   that device may transfer, fill, copy or dispatch against one; order conflicting

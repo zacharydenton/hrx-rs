@@ -18,8 +18,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export HRX_CACHE_DIR="$RUNNER_TEMP/hrx-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          unset HRX_RUNTIME_DIR KREA2_RUNTIME HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST HRX_OFFLINE IREE_HAL_AMDGPU_LIBHSA_PATH
+          export XDG_CACHE_HOME="$RUNNER_TEMP/hrx-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          unset HRX_RUNTIME_DIR HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST HRX_OFFLINE
           if [[ -n "$BUNDLE_MIRROR" ]]; then
             curl --fail --location --proto '=https' "$BUNDLE_MIRROR" --output "$RUNNER_TEMP/hrx-manifest.json"
             export HRX_BUNDLE_MANIFEST="$RUNNER_TEMP/hrx-manifest.json"

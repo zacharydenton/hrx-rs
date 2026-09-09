@@ -81,9 +81,13 @@ Once prepared, `HRX_OFFLINE=1` disables network provisioning.
 | --- | --- |
 | `HRX_RUNTIME_DIR` | Use a trusted local directory of native libraries, bypassing bundle verification |
 | `HRX_BUNDLE_MANIFEST` | Use a local JSON manifest for a mirror or custom bundle |
-| `HRX_CACHE_DIR` | Override the cache location, normally `$XDG_CACHE_HOME/hrx` or `~/.cache/hrx` |
 | `HRX_OFFLINE` | Disable network provisioning when set |
 | `HRX_LOOM_LIBRARY` | Override the path to `libloomc.so` |
+
+Caches live at `$XDG_CACHE_HOME/hrx`, or `$HOME/.cache/hrx` when that is unset,
+per the XDG Base Directory specification; a relative `XDG_CACHE_HOME` is ignored
+as the specification requires. `hrx gc` reclaims them. The runtime lock lives in
+`$XDG_RUNTIME_DIR`.
 
 Default features are `download` and `loom`. Enable `runner` for the `hrx` CLI,
 whose `run` subcommand launches a compiled kernel and dumps its buffers.
