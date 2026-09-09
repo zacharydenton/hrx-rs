@@ -10,14 +10,14 @@ the render device; gfx1151 is the tested architecture. Native libraries load at
 runtime, so building needs no native toolchain and downloads no native code.
 
 The package is `hrx-rs`; Rust imports and the primary CLI use `hrx`.
-It is not yet published to crates.io. Native licenses, source provenance, and
-rebuild instructions are documented in [THIRD-PARTY.md](THIRD-PARTY.md).
+Native licenses, source provenance, and rebuild instructions are documented in
+[THIRD-PARTY.md](THIRD-PARTY.md).
 
 ## Use from Rust
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", git = "https://github.com/zacharydenton/hrx-rs" }
+hrx = { package = "hrx-rs", version = "0.1.0" }
 ```
 
 ```rust
@@ -46,7 +46,7 @@ and source pins are in [patches/loom](patches/loom/README.md).
 ## CLI and native setup
 
 ```sh
-cargo install --git https://github.com/zacharydenton/hrx-rs --features runner hrx-rs
+cargo install hrx-rs --version 0.1.0 --features runner
 hrx prepare
 hrx info
 ```
