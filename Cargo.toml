@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-# Native release availability and inherited dependency provenance are unresolved.
+# Native dependency provenance and license notices are incomplete.
 publish = false
 description = "Owned GPU execution and Loom compilation for HRX"
 repository = "https://github.com/zacharydenton/hrx-rs"
