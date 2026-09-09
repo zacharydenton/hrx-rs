@@ -192,6 +192,14 @@ native_api! {
     count: usize,
     attrs: *const GraphFill,
     node: *mut GraphNode,) -> Status;
+    fn hrx_graph_add_empty_node(graph: Graph,
+    deps: *const GraphNode,
+    count: usize,
+    node: *mut GraphNode,) -> Status;
+    fn hrx_graph_add_dependencies(graph: Graph,
+    from: *const GraphNode,
+    to: *const GraphNode,
+    count: usize,) -> Status;
     fn hrx_graph_instantiate(graph: Graph, flags: u32, exec: *mut GraphExec) -> Status;
     fn hrx_graph_exec_release(exec: GraphExec) -> ();
     fn hrx_graph_exec_launch(exec: GraphExec, stream: Stream) -> Status;
