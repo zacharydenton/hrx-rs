@@ -5,13 +5,13 @@ Rust GPU execution and in-process Loom compilation, built on
 events and graph replay.
 
 Requires Rust 1.88 or later. GPU execution supports Linux x86_64 with an AMD kernel
-driver and access to `/dev/kfd` and the render device; gfx1151 is the tested
-architecture. Native libraries load at runtime, so building needs no native
-toolchain and downloads no native code.
+driver, the system C/C++ runtimes and `libatomic`, and access to `/dev/kfd` and
+the render device; gfx1151 is the tested architecture. Native libraries load at
+runtime, so building needs no native toolchain and downloads no native code.
 
 The package is `hrx-rs`; Rust imports and the primary CLI use `hrx`.
-It is not yet published to crates.io. Native dependency provenance and notices
-remain tracked in [THIRD-PARTY.md](THIRD-PARTY.md).
+It is not yet published to crates.io. Native licenses, source provenance, and
+rebuild instructions are documented in [THIRD-PARTY.md](THIRD-PARTY.md).
 
 ## Use from Rust
 

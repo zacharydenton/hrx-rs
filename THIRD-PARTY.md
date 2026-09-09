@@ -1,71 +1,44 @@
-# Native distribution status
+# Native distribution
 
-The MIT license in this repository covers the Rust code. It does not grant a
-license to redistribute the native bundle's dependencies. The current bundle is
-not cleared for publication: its inherited dependency builds have unverified
-provenance, and it contains no complete dependency notices or license texts.
-`Cargo.toml` disables publication while this remains unresolved.
+The Rust crate is MIT licensed. The native libraries retain their upstream
+licenses, listed in [THIRD-PARTY.json](THIRD-PARTY.json). [NOTICE](NOTICE) and
+[native/licenses](native/licenses) preserve the license texts and attributions;
+both are also included in the native archive.
 
-`THIRD-PARTY.json` and `NOTICE` identify every shipped binary from evidence in
-the binaries themselves: GNU build-ids, `DT_SONAME`, `DT_NEEDED`, `.comment`
-toolchain records, debuglink names and embedded version strings. Both files are
-marked incomplete, because identification is not licensing. No component has a
-confirmed SPDX identifier and no upstream license texts have been collected.
+The replacement bundle uses a fresh HRX/Loom build and a coherent AMD runtime
+set from the public HRX v0.3.0 dependency release. Its manifest identifies
+TheRock build **26672984641** and exact source revisions. Every downloaded input
+is pinned by SHA-256 in [native/release-inputs.json](native/release-inputs.json).
+See [native/RELEASE.md](native/RELEASE.md) for evidence, build commands, changes,
+and instructions for replacing the LGPL libraries.
 
-Identification found three distinct origins, which the inventory keeps separate:
-
-| Origin | Shipped components | Remaining work |
+| Components | Source / version | Selected licenses |
 | --- | --- | --- |
-| Built here from `ROCm/hrx-system` + `patches/loom` | libhrx.so, libhrx.so.0, libloomc.so | Upstream license, plus every statically linked dependency |
-| AMD ROCm release build (`rockrel` CI paths remain in the binaries) | libhsa-runtime64.so.1 (ROCR-Runtime 1.21.0), librocm_sysdeps_{elf,numa,drm,drm_amdgpu,z,zstd,liblzma,bz2} | Licenses and notices from upstream sources; elfutils, libnuma and libdrm versions from the AMD build record |
-| Arch Linux packages swept in from the build host | librocprofiler-register.so.0 (0.6.0), libfmt.so.12 (12.2.0), libglog.so.2 (0.7.1), libgflags.so.2.2 (2.2.2) | Replace with the matching AMD build; see below |
+| HRX, IREE, Loom | `ecaaf7376f7d` + seven compiler patches | Apache-2.0 WITH LLVM-exception; MIT for the CORE-MATH adaptation and generated compiler data; NCSA for HSA headers |
+| HSA runtime and embedded ROCT thunk | rocm-systems `cb6561243e0a8`, HSA 1.21.0 | NCSA, MIT, BSD-2-Clause for the embedded rbtree |
+| rocprofiler-register | 0.6.0 from the same AMD build | MIT; embedded fmt 11.1.4 (MIT) and glog 0.7.1 (BSD-3-Clause) |
+| libelf | elfutils 0.192 | LGPL-3.0-or-later |
+| libnuma | numactl 2.0.19 | LGPL-2.1-only |
+| libdrm / libdrm_amdgpu | 2.4.127 | MIT |
+| zlib / Zstandard / liblzma / bzip2 | 1.3.2 / 1.5.7 / 5.8.1 / 1.0.8 | Zlib / BSD-3-Clause / 0BSD / bzip2-1.0.6 |
 
-The third row is the significant finding. Those four binaries are byte-identical
-by GNU build-id to the copies installed on the machine that assembled the
-bundle. They are not artifacts of the AMD build that produced
-`libhsa-runtime64.so.1`. Only `librocprofiler-register.so.0` is actually
-required, as a `DT_NEEDED` of the HSA runtime; `libfmt` and `libglog` exist only
-to satisfy it, and `libgflags` only to satisfy `libglog`. Sourcing
-rocprofiler-register from the same AMD build as the HSA runtime may remove all
-four from the bundle, and with them four entries from this inventory.
+The Arch fmt, glog, gflags, and rocprofiler-register shared libraries have been
+removed. The archive contains 13 library files, including the duplicate
+`libhrx.so` / `libhrx.so.0` names. `loom-compile` is not shipped.
 
-Before publishing a replacement bundle:
-
-1. Rebuild inherited binaries from identified sources, or recover verifiable
-   build records. Record exact source revisions, patches, build commands and
-   binary digests in `provenance.json`, including statically linked dependencies.
-2. Complete the `THIRD-PARTY.json` inventory: it already maps each binary to its
-   source, version and evidence, but every `license.status` is `unconfirmed`.
-   Fill in license identifier(s) and included license text filenames from the
-   upstream source distributions, not from the binaries. Preserve required
-   copyright and attribution notices in `NOTICE`; include all applicable license
-   texts and required source materials or source-distribution arrangements.
-   Review these against the actual sources.
-3. Stage those files alongside the libraries. Bundles are flat: use names such
-   as `LICENSE-libfmt.txt`. `hrx pack` requires nonempty provenance, inventory and
-   notice files, refuses an inventory whose `status` is not `"complete"` or that
-   leaves any component's `license.status` unconfirmed, and hashes all staged
-   regular files into its manifest. Those checks confirm that a review was
-   recorded; they cannot confirm that it was correct.
-4. Publish the reviewed archive at an anonymously accessible HTTPS URL, update
-   `bundle.json`, and verify installation into an empty cache plus the complete
-   ignored test suite. Only then remove `publish = false`.
+The separate `hrx-native-sources.tar.gz` release asset contains the upstream
+sources, AMD build and patch scripts, HRX patches, source manifests, and notices.
+The inventory and NOTICE record its public URL and digest. Libelf and libnuma
+remain dynamically linked and replaceable through `HRX_RUNTIME_DIR`; debugging
+modifications to these LGPL libraries is permitted.
 
 ## Publication checklist
 
-`publish = false` stays in `Cargo.toml` until every line below is true. The Rust
-side is ready; each remaining item needs a decision or an artifact this
-repository cannot produce on its own.
-
-- [ ] Replace rocprofiler-register, fmt, glog and gflags with the AMD ROCm build,
-      or confirm their redistribution terms as Arch Linux binaries.
-- [ ] Record elfutils, libnuma and libdrm versions from the AMD build record.
-- [ ] Set `license.spdx` and `license.status: "confirmed"` for every component in
-      `THIRD-PARTY.json`, from upstream sources.
-- [ ] Stage the license texts and complete `NOTICE`, then set the inventory
-      `status` to `"complete"`.
-- [ ] Repack without `loom-compile`, update `bundle.json`, and re-run installation
-      into an empty cache plus the full ignored suite.
-- [ ] Publish the archive at an anonymously accessible HTTPS URL; the pinned
-      release currently 404s without authentication.
-- [ ] Remove `publish = false`.
+- [x] Replace the Arch libraries with the coherent AMD build.
+- [x] Record dependency versions and exact source/archive identities.
+- [x] Identify component licenses from upstream sources, including embedded code and generated-data inputs.
+- [x] Stage complete license texts, attributions, inventory, and corresponding source.
+- [x] Repack without `loom-compile` and pass installation and native tests.
+- [x] Make the repository publicly accessible.
+- [ ] Upload the reviewed binary and source archives and verify anonymous installation.
+- [ ] Remove `publish = false` after release verification.

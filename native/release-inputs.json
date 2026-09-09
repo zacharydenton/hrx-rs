@@ -1,0 +1,238 @@
+{
+  "schema": 1,
+  "hrx": {
+    "repository": "https://github.com/ROCm/hrx-system",
+    "revision": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+    "patches": {
+      "0001-vopd-source-cache-banks.patch": "cee76d2ab6cd3d279070a93e578b28931a7e6debd949080cd15a5bd0dcb3a06b",
+      "0002-amdgpu-fragment-repack.patch": "cc415b38829104821c7964c1c22aac764e2cb8aabc288f41a7536db32ccd884f",
+      "0003-smem-storage-reuse-drain.patch": "62506281067aa86810e4b373e3b7e1b150999c150fe753f524789695f50d96f0",
+      "0004-preserve-fragment-read-order.patch": "7608c0d3d86ce64b72a08f5310fb6657a1473e1e20428b14958a5091db6e06b5",
+      "0005-materialize-encoding-config.patch": "a74b0ae2cd73be6bbd219b8f27d324944df088eeb582e411baa47ebabbd6ead2",
+      "0006-bind-dependent-inline-types.patch": "c196c0e284c2d8ba6946c00b9816a43208ab6ef55dc1601fab30efc3b4f8d56c",
+      "0007-gfx11-vmem-source-reuse.patch": "032a77cd4786b71e916f9e1d7ce69faed1d8e8b22c7f111bfa1ca47b2d814556"
+    }
+  },
+  "therock": {
+    "the_rock_commit": "9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+    "github_job": "build_stage",
+    "github_run_id": "26672984641",
+    "rocm_package_version": "7.14.0a20260530",
+    "submodules": [
+      {
+        "submodule_name": "half",
+        "submodule_path": "base/half",
+        "submodule_url": "https://github.com/ROCm/half.git",
+        "pin_sha": "207ee58595a64b5c4a70df221f1e6e704b807811",
+        "patches": []
+      },
+      {
+        "submodule_name": "rocm-cmake",
+        "submodule_path": "base/rocm-cmake",
+        "submodule_url": "https://github.com/ROCm/rocm-cmake.git",
+        "pin_sha": "10155d7272ea1bf79f6b5a9dbc339657af1aa372",
+        "patches": []
+      },
+      {
+        "submodule_name": "llvm-project",
+        "submodule_path": "compiler/amd-llvm",
+        "submodule_url": "https://github.com/ROCm/llvm-project.git",
+        "pin_sha": "5c9bfa94a37c59923dee3c55942566db7904b659",
+        "patches": [
+          "patches/amd-mainline/llvm-project/0002-hipcc-fix-default-include-path-on-Windows-and-adapt-.patch",
+          "patches/amd-mainline/llvm-project/0006-Rework-constructHipPath-so-HIP_PATH-env-var-is-lower.patch"
+        ]
+      },
+      {
+        "submodule_name": "HIPIFY",
+        "submodule_path": "compiler/hipify",
+        "submodule_url": "https://github.com/ROCm/HIPIFY.git",
+        "pin_sha": "6acec7751d2b2bfe162dba9efdcf7c16efb27bd8",
+        "patches": []
+      },
+      {
+        "submodule_name": "spirv-llvm-translator",
+        "submodule_path": "compiler/spirv-llvm-translator",
+        "submodule_url": "https://github.com/ROCm/SPIRV-LLVM-Translator.git",
+        "pin_sha": "47d472b74d0f43bbd13d175d263221b0b6454a20",
+        "patches": []
+      },
+      {
+        "submodule_name": "rocgdb",
+        "submodule_path": "debug-tools/rocgdb/source",
+        "submodule_url": "https://github.com/ROCm/rocgdb.git",
+        "pin_sha": "7cc599ff77b36a57f9d23759dc8d95afb96b4b75",
+        "patches": []
+      },
+      {
+        "submodule_name": "libhipcxx",
+        "submodule_path": "math-libs/libhipcxx",
+        "submodule_url": "https://github.com/ROCm/libhipcxx.git",
+        "pin_sha": "bc2b452b8c86ab65ba53e79e292b6c121e21a573",
+        "patches": []
+      },
+      {
+        "submodule_name": "rocm-libraries",
+        "submodule_path": "rocm-libraries",
+        "submodule_url": "https://github.com/ROCm/rocm-libraries",
+        "pin_sha": "46653de70f6d71031bed76e15525edd331318a99",
+        "patches": []
+      },
+      {
+        "submodule_name": "rocm-systems",
+        "submodule_path": "rocm-systems",
+        "submodule_url": "https://github.com/ROCm/rocm-systems.git",
+        "pin_sha": "cb6561243e0a80215f5566a0feeb19eb44702aa4",
+        "patches": []
+      },
+      {
+        "submodule_name": "amd-mesa",
+        "submodule_path": "third-party/sysdeps/linux/amd-mesa/mesa-fork",
+        "submodule_url": "https://github.com/ROCm/mesa-fork.git",
+        "pin_sha": "9a0d5b03fd540cb2448c64bbda17dbf17ccb12bf",
+        "patches": []
+      }
+    ],
+    "flags": {
+      "KPACK_SPLIT_ARTIFACTS": true,
+      "HIP_KERNEL_PROVIDER_ENABLE": false,
+      "STAMP_LIBRARY_GIT_VERSIONS": false,
+      "INCLUDE_HRX": false
+    }
+  },
+  "downloads": {
+    "elfutils": {
+      "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/elfutils-0.192.tar.bz2",
+      "upstream_hash": {
+        "sha512": "543188f5f2cfe5bc7955a878416c5f252edff9926754e5de0c6c57b132f21d9285c9b29e41281e93baad11d4ae7efbbf93580c114579c182103565fe99bd3909"
+      },
+      "sha256": "616099beae24aba11f9b63d86ca6cc8d566d968b802391334c91df54eab416b4",
+      "archive": "elfutils-0.192.tar.bz2"
+    },
+    "numactl": {
+      "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/numactl-2.0.19.tar.gz",
+      "upstream_hash": {
+        "sha256": "f2672a0381cb59196e9c246bf8bcc43d5568bc457700a697f1a1df762b9af884"
+      },
+      "sha256": "f2672a0381cb59196e9c246bf8bcc43d5568bc457700a697f1a1df762b9af884",
+      "archive": "numactl-2.0.19.tar.gz"
+    },
+    "libdrm": {
+      "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/libdrm-libdrm-2.4.127.tar.bz2",
+      "upstream_hash": {
+        "sha256": "3a11654905c595fca2825d6e259a8086d04a448dce215b4cb03a49320d9259ec"
+      },
+      "sha256": "3a11654905c595fca2825d6e259a8086d04a448dce215b4cb03a49320d9259ec",
+      "archive": "libdrm-libdrm-2.4.127.tar.bz2"
+    },
+    "bzip2": {
+      "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/bzip2-1.0.8.tar.gz",
+      "upstream_hash": {
+        "sha512": "083f5e675d73f3233c7930ebe20425a533feedeaaa9d8cc86831312a6581cefbe6ed0d08d2fa89be81082f2a5abdabca8b3c080bf97218a1bd59dc118a30b9f3"
+      },
+      "sha256": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269",
+      "archive": "bzip2-1.0.8.tar.gz"
+    },
+    "zlib": {
+      "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/zlib-1.3.2.tar.gz",
+      "upstream_hash": {
+        "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
+      },
+      "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16",
+      "archive": "zlib-1.3.2.tar.gz"
+    },
+    "zstd": {
+      "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/zstd-1.5.7.tar.gz",
+      "upstream_hash": {
+        "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3"
+      },
+      "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3",
+      "archive": "zstd-1.5.7.tar.gz"
+    },
+    "liblzma": {
+      "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/xz-5.8.1.tar.bz2",
+      "upstream_hash": {
+        "sha256": "5965c692c4c8800cd4b33ce6d0f6ac9ac9d6ab227b17c512b6561bce4f08d47e"
+      },
+      "sha256": "5965c692c4c8800cd4b33ce6d0f6ac9ac9d6ab227b17c512b6561bce4f08d47e",
+      "archive": "xz-5.8.1.tar.bz2"
+    },
+    "fmt": {
+      "url": "https://codeload.github.com/fmtlib/fmt/tar.gz/123913715afeb8a437e6388b4473fcc4753e1c9a",
+      "revision": "123913715afeb8a437e6388b4473fcc4753e1c9a",
+      "sha256": "95f89f1eb3b53478417185afc0b7e3d40ec889687af86e890da20068534d29f7",
+      "archive": "fmt-123913715afeb8a437e6388b4473fcc4753e1c9a.tar.gz"
+    },
+    "glog": {
+      "url": "https://codeload.github.com/google/glog/tar.gz/7b134a5c82c0c0b5698bb6bf7a835b230c5638e4",
+      "revision": "7b134a5c82c0c0b5698bb6bf7a835b230c5638e4",
+      "sha256": "9c48c7c631be5af3502a19d06ebdb5c2f67d8d0bf216f896848089c1792e6193",
+      "archive": "glog-7b134a5c82c0c0b5698bb6bf7a835b230c5638e4.tar.gz"
+    },
+    "upstream-deps.tar.zst": {
+      "url": "https://github.com/ROCm/hrx-system/releases/download/v0.3.0/hrx-public-deps-linux-x86_64-v0.3.0.tar.zst",
+      "archive": "upstream-deps.tar.zst",
+      "sha256": "b156fa9602a282e464b7cf4eb91ca6698b2d991fe2568c523a400b6908f52a68"
+    },
+    "upstream-deps.manifest.json": {
+      "url": "https://github.com/ROCm/hrx-system/releases/download/v0.3.0/hrx-public-deps-linux-x86_64-v0.3.0.manifest.json",
+      "archive": "upstream-deps.manifest.json",
+      "sha256": "dc7a34c201f4b56de9e34dec38cbd18a07851c07a290e0271cac8282d105beb0"
+    },
+    "therock.tar.gz": {
+      "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+      "archive": "therock.tar.gz",
+      "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+    },
+    "rocm-systems.tar.gz": {
+      "url": "https://codeload.github.com/ROCm/rocm-systems/tar.gz/cb6561243e0a80215f5566a0feeb19eb44702aa4",
+      "archive": "rocm-systems.tar.gz",
+      "sha256": "70bd25e1d302f2b74c5786089e6f8840d4c0631afd04cf720c82f4fbaa4b1501"
+    },
+    "base_lib_generic.tar.zst": {
+      "url": "https://therock-nightly-artifacts.s3.amazonaws.com/26672984641-linux/base_lib_generic.tar.zst",
+      "archive": "base_lib_generic.tar.zst",
+      "sha256": "7f7b566a912033e37bac95c58acc80b61a136f2bcd1bce37bc69e8031fb27885"
+    },
+    "base_run_generic.tar.zst": {
+      "url": "https://therock-nightly-artifacts.s3.amazonaws.com/26672984641-linux/base_run_generic.tar.zst",
+      "archive": "base_run_generic.tar.zst",
+      "sha256": "ae9400769f326637afb3c870512dc2b8cfee3a85d933e0d7e853e9b06523b186"
+    },
+    "sysdeps_dev_generic.tar.zst": {
+      "url": "https://therock-nightly-artifacts.s3.amazonaws.com/26672984641-linux/sysdeps_dev_generic.tar.zst",
+      "archive": "sysdeps_dev_generic.tar.zst",
+      "sha256": "9de6d2468973d2753132e2c20279d54afc3588120506dbd474e4b0dca5b707e6"
+    },
+    "core-runtime_run_generic.tar.zst": {
+      "url": "https://therock-nightly-artifacts.s3.amazonaws.com/26672984641-linux/core-runtime_run_generic.tar.zst",
+      "archive": "core-runtime_run_generic.tar.zst",
+      "sha256": "e8d0afa961942d86adceea003805bef94314186ea64407623c81455aa8e5222b"
+    },
+    "hrx-system": {
+      "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+      "archive": "hrx-system-ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d.tar.gz",
+      "sha256": "f980fc81bd02234b2bcc141fb7af6c9430b9e9cfffe61aee8dfdf8b00068c9a5"
+    },
+    "spirv_headers": {
+      "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
+      "archive": "spirv_headers.tar.gz",
+      "sha256": "4d703067a7e06331ccb37bdfed3f9b7879cc61969a2689ae95c95db34a47ff07"
+    },
+    "vulkan_headers": {
+      "url": "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
+      "archive": "vulkan_headers.tar.gz",
+      "sha256": "e87dce08116151f6b6d7de6b6faf41498e87e6cf848ff16fa3bd5402190ad4a3"
+    },
+    "hsa_runtime_headers": {
+      "url": "https://github.com/iree-org/hsa-runtime-headers/archive/4285513114a70f7cf4830c89279c8cfa57b901bb.tar.gz",
+      "archive": "hsa_runtime_headers.tar.gz",
+      "sha256": "a906b35e77b9cee074995d144cf7718a0069eba08ba7bc741ee7576950fde923"
+    },
+    "amdgpu_isa_xml": {
+      "url": "https://gpuopen.com/download/AMD_GPU_MR_ISA_XML_2026_03_05.zip",
+      "archive": "AMD_GPU_MR_ISA_XML_2026_03_05.zip",
+      "sha256": "1f17587abc9d0d355cf6f65bdba7496838b4e8313922769199689615c434965c"
+    }
+  }
+}

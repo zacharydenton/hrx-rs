@@ -1,6 +1,25 @@
 # Validation
 
-## Local results, 2026-09-09
+## Reviewed native bundle, 2026-09-09
+
+The replacement bundle uses freshly built HRX/Loom and the AMD runtime from
+TheRock build 26672984641. Its 13 library files, license texts, inventory, and
+source-archive reference are pinned in `bundle.json`.
+
+```text
+06000605de874bc972e17e90f94a3816302fdd2a17040cfaf1df1f0b70483cc4
+```
+
+The library bytes passed all 23 CPU tests, the Rust doctest, and all 13 ignored
+GPU/compiler tests on gfx1151. Installation started with an empty cache and used
+no runtime, compiler, or HSA overrides. Every dynamic dependency resolves to the
+bundle or a documented host library. The Arch library chain and `loom-compile`
+are absent. Source hashes match the recorded upstream manifests; this does not
+claim byte-identical reconstruction of AMD's CI build.
+
+See [native/RELEASE.md](native/RELEASE.md) for source and build evidence.
+
+## Original bundle results, 2026-09-09
 
 Tested on Linux x86_64 with a gfx1151 GPU. Archive installation was checked with
 an empty cache. Native tests use the verified bundle cache with `HRX_OFFLINE=1`
@@ -30,8 +49,10 @@ c151a978eff1c7def5c54b9acfd595cc1e8ca21b793b4613864a18281d846bb1
 A cached directory matched every file digest in `bundle.json`. Repacking it
 reproduced this archive hash and replaced the stale `34591d78…` archive in
 `artifacts/`. The anonymous release URL returned 404 during the initial bundle
-check; availability was not rechecked for the Stream refactor. Dependency provenance
-and notices remain incomplete; see [THIRD-PARTY.md](THIRD-PARTY.md).
+check. After the repository became public, an unauthenticated HEAD request to
+the pinned archive returned HTTP 200 on 2026-09-09. This availability check did
+not repeat installation or GPU tests. Dependency provenance and notices remain
+incomplete; see [THIRD-PARTY.md](THIRD-PARTY.md).
 
 To repeat the bundle check with an empty cache:
 

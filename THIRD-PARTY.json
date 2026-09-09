@@ -1,132 +1,12 @@
 {
   "schema": 1,
-  "bundle_archive_sha256": "c151a978eff1c7def5c54b9acfd595cc1e8ca21b793b4613864a18281d846bb1",
-  "status": "incomplete",
-  "summary": "Component identification derived from the shipped binaries: GNU build-ids, DT_SONAME, DT_NEEDED, .comment toolchain records, debuglink names and embedded version strings. Versions and origins below are evidence-based. License fields are deliberately unset: they must be taken from each upstream source distribution, not inferred from a binary.",
-  "blocking": [
-    "No SPDX license identified for any component; every license.status is unconfirmed.",
-    "No upstream license texts or attribution notices have been collected.",
-    "librocprofiler-register.so.0, libfmt.so.12, libgflags.so.2.2 and libglog.so.2 are Arch Linux distribution binaries swept in from the build host, not artifacts of the AMD ROCm build that produced libhsa-runtime64.so.1. Replace them with the matching AMD build before redistributing.",
-    "elfutils, libnuma and libdrm versions are not recoverable from the binaries and must come from the AMD build record."
-  ],
+  "status": "complete",
   "components": {
-    "libfmt.so.12": {
-      "project": "fmt",
-      "version": "12.2.0",
-      "version_evidence": "debuglink libfmt.so.12.2.0.debug",
-      "origin": "Arch Linux distribution package, byte-identical (matching GNU build-id) to the host system copy",
-      "source_path_evidence": "/usr/src/debug/fmt",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
-      },
-      "note": "Arch package 'fmt'; required only by librocprofiler-register.so.0",
-      "sha256": "d4b82c135ffc0c4637c370b51b000c166ab7dd1ec7a9d3aeb27a68bdcdf45bd0",
-      "build_id": "b67217bc4e1555f5f1016987a8e5ee498b08572d",
-      "soname": "libfmt.so.12",
-      "needed": [
-        "libstdc++.so.6",
-        "libgcc_s.so.1",
-        "libc.so.6"
-      ]
-    },
-    "libgflags.so.2.2": {
-      "project": "gflags",
-      "version": "2.2.2",
-      "version_evidence": "debuglink libgflags.so.2.2.2.debug; source path gflags-2.2.2",
-      "origin": "Arch Linux distribution package, byte-identical (matching GNU build-id) to the host system copy",
-      "source_path_evidence": "/usr/src/debug/gflags",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
-      },
-      "note": "Arch package 'gflags'; required only by libglog.so.2",
-      "sha256": "aa44adf6abdc3e84a414efba826d6954cf1c65ae3ab7a4a67ff9246cb2b6850d",
-      "build_id": "cd3c08e3ba582ac0f41813dcbc1e568774e5fc66",
-      "soname": "libgflags.so.2.2",
-      "needed": [
-        "libstdc++.so.6",
-        "libgcc_s.so.1",
-        "libc.so.6"
-      ]
-    },
-    "libglog.so.2": {
-      "project": "glog",
-      "version": "0.7.1",
-      "version_evidence": "debuglink libglog.so.0.7.1.debug",
-      "origin": "Arch Linux distribution package, byte-identical (matching GNU build-id) to the host system copy",
-      "source_path_evidence": "/usr/src/debug/google-glog",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
-      },
-      "note": "Arch package 'google-glog'; required only by librocprofiler-register.so.0",
-      "sha256": "9b707fbef25040f461e6b60bf769d5b0c1b644be95ee19d8cfb0e84859d1ed89",
-      "build_id": "cbe734c0465057c4a621b1618219f04563b92446",
-      "soname": "libglog.so.2",
-      "needed": [
-        "libgflags.so.2.2",
-        "libstdc++.so.6",
-        "libgcc_s.so.1",
-        "libc.so.6",
-        "ld-linux-x86-64.so.2"
-      ]
-    },
-    "libhrx.so": {
-      "project": "HRX / Loom",
-      "origin": "Built from ROCm/hrx-system ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d with the seven patches in patches/loom; see provenance.json",
-      "provenance": "recorded",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "upstream ROCm/hrx-system licensing plus every statically linked dependency must be enumerated"
-      },
-      "sha256": "23d3710225e8f0a114cce36104b00922873a6bb50f749139bfebc2ce6adf970d",
-      "build_id": "473cdab24d38e705607597b5aa86400290f3a033",
-      "soname": "libhrx.so.0",
-      "needed": [
-        "libm.so.6",
-        "libc.so.6"
-      ]
-    },
-    "libhrx.so.0": {
-      "project": "HRX / Loom",
-      "origin": "Built from ROCm/hrx-system ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d with the seven patches in patches/loom; see provenance.json",
-      "provenance": "recorded",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "upstream ROCm/hrx-system licensing plus every statically linked dependency must be enumerated"
-      },
-      "sha256": "23d3710225e8f0a114cce36104b00922873a6bb50f749139bfebc2ce6adf970d",
-      "build_id": "473cdab24d38e705607597b5aa86400290f3a033",
-      "soname": "libhrx.so.0",
-      "needed": [
-        "libm.so.6",
-        "libc.so.6"
-      ]
-    },
     "libhsa-runtime64.so.1": {
       "project": "ROCR-Runtime",
       "version": "1.21.0",
-      "version_evidence": "embedded string: ROCR BUILD ID: \"1.21.0-local-build-2b22ab01\"",
-      "origin": "AMD ROCm release build (rockrel CI); see build paths under /__w/rockrel/rockrel",
-      "source_path_evidence": "rocm-systems/projects/rocr-runtime",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
-      },
-      "sha256": "15f8c717f4ebf0d00e64b95090466f35fcda78e0a4728fac010af55e91da3395",
-      "build_id": null,
-      "soname": "libhsa-runtime64.so.1",
+      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
+      "sha256": "180f6d080b9ff85bff064c2eec982e7422ac6f1c7759c81abe71528000f654dd",
       "needed": [
         "librocm_sysdeps_elf.so.1",
         "libdl.so.2",
@@ -141,105 +21,106 @@
         "libstdc++.so.6",
         "libm.so.6",
         "libgcc_s.so.1"
-      ]
-    },
-    "libloomc.so": {
-      "project": "HRX / Loom",
-      "origin": "Built from ROCm/hrx-system ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d with the seven patches in patches/loom; see provenance.json",
-      "provenance": "recorded",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "upstream ROCm/hrx-system licensing plus every statically linked dependency must be enumerated"
+      ],
+      "sources": {
+        "rocm-systems.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/rocm-systems/tar.gz/cb6561243e0a80215f5566a0feeb19eb44702aa4",
+          "archive": "rocm-systems.tar.gz",
+          "sha256": "70bd25e1d302f2b74c5786089e6f8840d4c0631afd04cf720c82f4fbaa4b1501"
+        },
+        "therock.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+          "archive": "therock.tar.gz",
+          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        }
       },
-      "sha256": "431baaff0d36c9d61a9a91a04100c6a2ef63f4aa782f0cf05cfdc058e28969b6",
-      "build_id": "e92737a2382da5d6848ad1f9648c01ce336dd5c5",
-      "soname": "libloomc.so.0",
-      "needed": [
-        "libm.so.6",
-        "libstdc++.so.6",
-        "libgcc_s.so.1",
-        "libc.so.6"
-      ]
-    },
-    "librocm_sysdeps_bz2.so": {
-      "project": "bzip2 (libbzip2)",
-      "version": "1.0.8",
-      "version_evidence": "embedded string: '1.0.8, 13-Jul-2019'",
-      "origin": "AMD ROCm release build (rockrel CI); see build paths under /__w/rockrel/rockrel",
-      "source_path_evidence": "build/third-party/sysdeps/linux",
-      "provenance": "identified, not verified",
       "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
+        "spdx": "NCSA AND MIT AND BSD-2-Clause",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-ROCR.txt",
+          "LICENSE-ROCT.txt",
+          "LICENSE-ROCT-rbtree.txt",
+          "LICENSE-libdrm.txt",
+          "LICENSE-source-attributions.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
       },
-      "note": "repackaged by AMD with renamed SONAME",
-      "sha256": "fe4102b002321cea17405cf9c6aa04cf46e726bea5666c40ac8639684314de02",
-      "build_id": "ba3e61267917fdbfb1b845335ff3ec6e93ea1ed1",
-      "soname": "librocm_sysdeps_bz2.so",
-      "needed": [
-        "libc.so.6"
-      ]
+      "statically_linked": {
+        "ROCT-Thunk": {
+          "revision": "cb6561243e0a80215f5566a0feeb19eb44702aa4",
+          "license": "MIT AND BSD-2-Clause",
+          "note": "Includes the Nginx-derived rbtree; its BSD-2-Clause notice is preserved."
+        }
+      }
     },
-    "librocm_sysdeps_drm.so.2": {
-      "project": "libdrm",
-      "version": null,
-      "version_evidence": "version string not embedded",
-      "origin": "AMD ROCm release build (rockrel CI); see build paths under /__w/rockrel/rockrel",
-      "source_path_evidence": "build/third-party/sysdeps/linux/libdrm",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
-      },
-      "note": "repackaged by AMD with renamed SONAME",
-      "sha256": "cf203bcf5f42df87c5e292b254ea6cd801c3612027c04e5f29bfc71607877775",
-      "build_id": "247a106ca10483f82a1de10c856c80b329b686fb",
-      "soname": "librocm_sysdeps_drm.so.2",
+    "librocprofiler-register.so.0": {
+      "project": "rocprofiler-register",
+      "version": "0.6.0",
+      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
+      "sha256": "7647ed03b1e6790f6043756f178f79c08b33d63058c9b83fa726cdad78093e0c",
       "needed": [
-        "libc.so.6"
-      ]
-    },
-    "librocm_sysdeps_drm_amdgpu.so.1": {
-      "project": "libdrm_amdgpu",
-      "version": null,
-      "version_evidence": "version string not embedded",
-      "origin": "AMD ROCm release build (rockrel CI); see build paths under /__w/rockrel/rockrel",
-      "source_path_evidence": "build/third-party/sysdeps/linux/libdrm",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
-      },
-      "note": "repackaged by AMD with renamed SONAME",
-      "sha256": "5485dbf004f79fe2ca51a11ff89625299a8602bb46ebc4f2a25471e81825faf5",
-      "build_id": "109f718f827f122e8ee778fb82659156b5aee747",
-      "soname": "librocm_sysdeps_drm_amdgpu.so.1",
-      "needed": [
-        "librocm_sysdeps_drm.so.2",
         "libpthread.so.0",
-        "libc.so.6"
-      ]
+        "libdl.so.2",
+        "libstdc++.so.6",
+        "libm.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "sources": {
+        "rocm-systems.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/rocm-systems/tar.gz/cb6561243e0a80215f5566a0feeb19eb44702aa4",
+          "archive": "rocm-systems.tar.gz",
+          "sha256": "70bd25e1d302f2b74c5786089e6f8840d4c0631afd04cf720c82f4fbaa4b1501"
+        },
+        "fmt": {
+          "url": "https://codeload.github.com/fmtlib/fmt/tar.gz/123913715afeb8a437e6388b4473fcc4753e1c9a",
+          "revision": "123913715afeb8a437e6388b4473fcc4753e1c9a",
+          "sha256": "95f89f1eb3b53478417185afc0b7e3d40ec889687af86e890da20068534d29f7",
+          "archive": "fmt-123913715afeb8a437e6388b4473fcc4753e1c9a.tar.gz"
+        },
+        "glog": {
+          "url": "https://codeload.github.com/google/glog/tar.gz/7b134a5c82c0c0b5698bb6bf7a835b230c5638e4",
+          "revision": "7b134a5c82c0c0b5698bb6bf7a835b230c5638e4",
+          "sha256": "9c48c7c631be5af3502a19d06ebdb5c2f67d8d0bf216f896848089c1792e6193",
+          "archive": "glog-7b134a5c82c0c0b5698bb6bf7a835b230c5638e4.tar.gz"
+        },
+        "therock.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+          "archive": "therock.tar.gz",
+          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        }
+      },
+      "license": {
+        "spdx": "MIT AND BSD-3-Clause",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-rocprofiler-register.txt",
+          "LICENSE-fmt.txt",
+          "LICENSE-glog.txt",
+          "LICENSE-source-attributions.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      },
+      "statically_linked": {
+        "fmt": {
+          "version": "11.1.4",
+          "revision": "123913715afeb8a437e6388b4473fcc4753e1c9a",
+          "license": "MIT"
+        },
+        "glog": {
+          "version": "0.7.1",
+          "revision": "7b134a5c82c0c0b5698bb6bf7a835b230c5638e4",
+          "license": "BSD-3-Clause"
+        }
+      }
     },
     "librocm_sysdeps_elf.so.1": {
-      "project": "elfutils (libelf)",
-      "version": null,
-      "version_evidence": "symbol versions AMDROCM_SYSDEPS_1.0_ELFUTILS_*; version string not embedded",
-      "origin": "AMD ROCm release build (rockrel CI); see build paths under /__w/rockrel/rockrel",
-      "source_path_evidence": "build/third-party/sysdeps/linux",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
-      },
-      "note": "repackaged by AMD with renamed SONAME and versioned symbols",
-      "sha256": "cc7c1d8faa3f067072c6496cdaba16ed792d94130c41b2b0d5f01bc6367631f5",
-      "build_id": "11dee761756ec5b1608540b5962d4e2e2a175c65",
-      "soname": "librocm_sysdeps_elf.so.1",
+      "project": "elfutils/libelf",
+      "version": "0.192",
+      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
+      "sha256": "85d47b2b98135ea30f4364144766873c119c79c7e5ff9d86f6410853667ddea4",
       "needed": [
         "librocm_sysdeps_z.so.1",
         "librocm_sysdeps_zstd.so.1",
@@ -247,115 +128,563 @@
         "librocm_sysdeps_bz2.so",
         "libc.so.6",
         "ld-linux-x86-64.so.2"
-      ]
-    },
-    "librocm_sysdeps_liblzma.so.5": {
-      "project": "XZ Utils (liblzma)",
-      "version": "5.8.1",
-      "version_evidence": "embedded version string 5.8.1",
-      "origin": "AMD ROCm release build (rockrel CI); see build paths under /__w/rockrel/rockrel",
-      "source_path_evidence": "build/third-party/sysdeps/linux",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
+      ],
+      "sources": {
+        "elfutils": {
+          "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/elfutils-0.192.tar.bz2",
+          "upstream_hash": {
+            "sha512": "543188f5f2cfe5bc7955a878416c5f252edff9926754e5de0c6c57b132f21d9285c9b29e41281e93baad11d4ae7efbbf93580c114579c182103565fe99bd3909"
+          },
+          "sha256": "616099beae24aba11f9b63d86ca6cc8d566d968b802391334c91df54eab416b4",
+          "archive": "elfutils-0.192.tar.bz2"
+        },
+        "therock.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+          "archive": "therock.tar.gz",
+          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        }
       },
-      "note": "repackaged by AMD with renamed SONAME",
-      "sha256": "15402b36e2fdb0762e0b6590c3470fccec5e80cc8010c84ac4835573d592c02d",
-      "build_id": "9830b336adb3f82b09d34f584fdde15f5dfd9c70",
-      "soname": "librocm_sysdeps_liblzma.so.5",
-      "needed": [
-        "libpthread.so.0",
-        "libc.so.6"
-      ]
+      "license": {
+        "spdx": "LGPL-3.0-or-later",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-elfutils-LGPL-3.0.txt",
+          "LICENSE-elfutils-GPL-3.0.txt",
+          "LICENSE-source-attributions.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      }
     },
     "librocm_sysdeps_numa.so.1": {
-      "project": "numactl (libnuma)",
-      "version": null,
-      "version_evidence": "symbol versions AMDROCM_SYSDEPS_1.0_libnuma_*; version string not embedded",
-      "origin": "AMD ROCm release build (rockrel CI); see build paths under /__w/rockrel/rockrel",
-      "source_path_evidence": "build/third-party/sysdeps/linux",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
-      },
-      "note": "repackaged by AMD with renamed SONAME and versioned symbols",
-      "sha256": "333b980e3f706f7196c73a33967c7979e9fd47b6d5f5f51ed3990142ef4142cb",
-      "build_id": "ec55f204edfe5332e94336ff95aa1da475a668b0",
-      "soname": "librocm_sysdeps_numa.so.1",
+      "project": "numactl/libnuma",
+      "version": "2.0.19",
+      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
+      "sha256": "3a890e253f910882d21aa83b838bd13e77ec28ad4f887de2466e5ec263c7b94b",
       "needed": [
+        "libatomic.so.1",
         "libc.so.6",
         "ld-linux-x86-64.so.2"
-      ]
+      ],
+      "sources": {
+        "numactl": {
+          "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/numactl-2.0.19.tar.gz",
+          "upstream_hash": {
+            "sha256": "f2672a0381cb59196e9c246bf8bcc43d5568bc457700a697f1a1df762b9af884"
+          },
+          "sha256": "f2672a0381cb59196e9c246bf8bcc43d5568bc457700a697f1a1df762b9af884",
+          "archive": "numactl-2.0.19.tar.gz"
+        },
+        "therock.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+          "archive": "therock.tar.gz",
+          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        }
+      },
+      "license": {
+        "spdx": "LGPL-2.1-only",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-numactl-LGPL-2.1.txt",
+          "LICENSE-source-attributions.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      }
+    },
+    "librocm_sysdeps_drm.so.2": {
+      "project": "libdrm",
+      "version": "2.4.127",
+      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
+      "sha256": "c439bb840caa35672a41d1e8257cf8e41f2bd630e5e99855da736ea047989df8",
+      "needed": [
+        "libc.so.6"
+      ],
+      "sources": {
+        "libdrm": {
+          "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/libdrm-libdrm-2.4.127.tar.bz2",
+          "upstream_hash": {
+            "sha256": "3a11654905c595fca2825d6e259a8086d04a448dce215b4cb03a49320d9259ec"
+          },
+          "sha256": "3a11654905c595fca2825d6e259a8086d04a448dce215b4cb03a49320d9259ec",
+          "archive": "libdrm-libdrm-2.4.127.tar.bz2"
+        },
+        "therock.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+          "archive": "therock.tar.gz",
+          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        }
+      },
+      "license": {
+        "spdx": "MIT",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-libdrm.txt",
+          "LICENSE-source-attributions.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      }
+    },
+    "librocm_sysdeps_drm_amdgpu.so.1": {
+      "project": "libdrm/AMDGPU",
+      "version": "2.4.127",
+      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
+      "sha256": "0bb6e3cdaed7ecd2d474a613810d631d1d2dad6714700764b03e6875c899a07a",
+      "needed": [
+        "librocm_sysdeps_drm.so.2",
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "sources": {
+        "libdrm": {
+          "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/libdrm-libdrm-2.4.127.tar.bz2",
+          "upstream_hash": {
+            "sha256": "3a11654905c595fca2825d6e259a8086d04a448dce215b4cb03a49320d9259ec"
+          },
+          "sha256": "3a11654905c595fca2825d6e259a8086d04a448dce215b4cb03a49320d9259ec",
+          "archive": "libdrm-libdrm-2.4.127.tar.bz2"
+        },
+        "therock.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+          "archive": "therock.tar.gz",
+          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        }
+      },
+      "license": {
+        "spdx": "MIT",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-libdrm.txt",
+          "LICENSE-source-attributions.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      }
+    },
+    "librocm_sysdeps_bz2.so": {
+      "project": "bzip2",
+      "version": "1.0.8",
+      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
+      "sha256": "fe4102b002321cea17405cf9c6aa04cf46e726bea5666c40ac8639684314de02",
+      "needed": [
+        "libc.so.6"
+      ],
+      "sources": {
+        "bzip2": {
+          "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/bzip2-1.0.8.tar.gz",
+          "upstream_hash": {
+            "sha512": "083f5e675d73f3233c7930ebe20425a533feedeaaa9d8cc86831312a6581cefbe6ed0d08d2fa89be81082f2a5abdabca8b3c080bf97218a1bd59dc118a30b9f3"
+          },
+          "sha256": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269",
+          "archive": "bzip2-1.0.8.tar.gz"
+        },
+        "therock.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+          "archive": "therock.tar.gz",
+          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        }
+      },
+      "license": {
+        "spdx": "bzip2-1.0.6",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-bzip2.txt",
+          "LICENSE-source-attributions.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      }
     },
     "librocm_sysdeps_z.so.1": {
       "project": "zlib",
       "version": "1.3.2",
-      "version_evidence": "embedded string: 'inflate 1.3.2 Copyright 1995-2026 Mark Adler'",
-      "origin": "AMD ROCm release build (rockrel CI); see build paths under /__w/rockrel/rockrel",
-      "source_path_evidence": "build/third-party/sysdeps/linux",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
-      },
-      "note": "repackaged by AMD with renamed SONAME",
+      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
       "sha256": "27361c0c552d2afd5ecf9079f356309ed827e9a27d35f2fc68c7b5e6b5c83199",
-      "build_id": "6121f46ff7c6e979bcbd76fd095e2a4f0c15767d",
-      "soname": "librocm_sysdeps_z.so.1",
       "needed": [
         "libc.so.6"
-      ]
+      ],
+      "sources": {
+        "zlib": {
+          "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/zlib-1.3.2.tar.gz",
+          "upstream_hash": {
+            "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
+          },
+          "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16",
+          "archive": "zlib-1.3.2.tar.gz"
+        },
+        "therock.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+          "archive": "therock.tar.gz",
+          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        }
+      },
+      "license": {
+        "spdx": "Zlib",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-zlib.txt",
+          "LICENSE-source-attributions.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      }
     },
     "librocm_sysdeps_zstd.so.1": {
       "project": "Zstandard",
       "version": "1.5.7",
-      "version_evidence": "embedded version string 1.5.7",
-      "origin": "AMD ROCm release build (rockrel CI); see build paths under /__w/rockrel/rockrel",
-      "source_path_evidence": "build/third-party/sysdeps/linux",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
-      },
-      "note": "repackaged by AMD with renamed SONAME",
+      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
       "sha256": "5fc4ab0e6899318ece9bea43d3d397d20053418a5e40cb6bc86efe19a801c75e",
-      "build_id": "388fd0963044a8d1c3dc0fc66bbca3f79ee6f650",
-      "soname": "librocm_sysdeps_zstd.so.1",
       "needed": [
         "libpthread.so.0",
         "libc.so.6"
-      ]
-    },
-    "librocprofiler-register.so.0": {
-      "project": "rocprofiler-register",
-      "version": "0.6.0",
-      "version_evidence": "debuglink librocprofiler-register.so.0.6.0.debug; source path rocm-systems-rocm-7.2.4",
-      "origin": "Arch Linux distribution package, byte-identical (matching GNU build-id) to the host system copy",
-      "source_path_evidence": "/usr/src/debug/rocprofiler-register",
-      "provenance": "identified, not verified",
-      "license": {
-        "spdx": null,
-        "status": "unconfirmed",
-        "basis": "identify from the exact upstream source distribution for this version; do not label from the binary"
+      ],
+      "sources": {
+        "zstd": {
+          "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/zstd-1.5.7.tar.gz",
+          "upstream_hash": {
+            "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3"
+          },
+          "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3",
+          "archive": "zstd-1.5.7.tar.gz"
+        },
+        "therock.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+          "archive": "therock.tar.gz",
+          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        }
       },
-      "note": "Arch package 'rocprofiler-register'; ROCm 7.2.4. Not from the same build as libhsa-runtime64.so.1",
-      "sha256": "40ec0d0d42723e107d1a8036d62e0301a3013e6b18525ed8f210ce560ee37e59",
-      "build_id": "066f40dbb0d0160632b908eb23c120b4d8a92fd9",
-      "soname": "librocprofiler-register.so.0",
+      "license": {
+        "spdx": "BSD-3-Clause",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-zstd.txt",
+          "LICENSE-source-attributions.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      }
+    },
+    "librocm_sysdeps_liblzma.so.5": {
+      "project": "XZ Utils/liblzma",
+      "version": "5.8.1",
+      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
+      "sha256": "15402b36e2fdb0762e0b6590c3470fccec5e80cc8010c84ac4835573d592c02d",
       "needed": [
-        "libfmt.so.12",
-        "libglog.so.2",
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "sources": {
+        "liblzma": {
+          "url": "https://rocm-third-party-deps.s3.us-east-2.amazonaws.com/xz-5.8.1.tar.bz2",
+          "upstream_hash": {
+            "sha256": "5965c692c4c8800cd4b33ce6d0f6ac9ac9d6ab227b17c512b6561bce4f08d47e"
+          },
+          "sha256": "5965c692c4c8800cd4b33ce6d0f6ac9ac9d6ab227b17c512b6561bce4f08d47e",
+          "archive": "xz-5.8.1.tar.bz2"
+        },
+        "therock.tar.gz": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
+          "archive": "therock.tar.gz",
+          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        }
+      },
+      "license": {
+        "spdx": "0BSD",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-xz-0BSD.txt",
+          "LICENSE-source-attributions.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      }
+    },
+    "libhrx.so": {
+      "project": "HRX / Loom",
+      "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+      "origin": "Fresh Release build of the pinned source plus the seven patches in patches/loom",
+      "sha256": "8d39a4360d137b65271447af5059773fbecce31a4a508bd8ac13b7ebcdbeec8f",
+      "needed": [
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "sources": {
+        "hrx-system": {
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+          "archive": "hrx-system-ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d.tar.gz",
+          "sha256": "f980fc81bd02234b2bcc141fb7af6c9430b9e9cfffe61aee8dfdf8b00068c9a5"
+        },
+        "hsa_runtime_headers": {
+          "url": "https://github.com/iree-org/hsa-runtime-headers/archive/4285513114a70f7cf4830c89279c8cfa57b901bb.tar.gz",
+          "archive": "hsa_runtime_headers.tar.gz",
+          "sha256": "a906b35e77b9cee074995d144cf7718a0069eba08ba7bc741ee7576950fde923"
+        },
+        "spirv_headers": {
+          "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
+          "archive": "spirv_headers.tar.gz",
+          "sha256": "4d703067a7e06331ccb37bdfed3f9b7879cc61969a2689ae95c95db34a47ff07"
+        },
+        "vulkan_headers": {
+          "url": "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
+          "archive": "vulkan_headers.tar.gz",
+          "sha256": "e87dce08116151f6b6d7de6b6faf41498e87e6cf848ff16fa3bd5402190ad4a3"
+        },
+        "amdgpu_isa_xml": {
+          "url": "https://gpuopen.com/download/AMD_GPU_MR_ISA_XML_2026_03_05.zip",
+          "archive": "AMD_GPU_MR_ISA_XML_2026_03_05.zip",
+          "sha256": "1f17587abc9d0d355cf6f65bdba7496838b4e8313922769199689615c434965c"
+        }
+      },
+      "license": {
+        "spdx": "Apache-2.0 WITH LLVM-exception AND MIT AND NCSA",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-HRX.txt",
+          "LICENSE-CORE-MATH.txt",
+          "LICENSE-HSA-headers.txt",
+          "LICENSE-SPIRV-Headers.txt",
+          "LICENSE-Vulkan-Headers.txt",
+          "LICENSE-AMDGPU-ISA.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      },
+      "statically_linked": {
+        "IREE": {
+          "revision": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+          "license": "Apache-2.0 WITH LLVM-exception"
+        }
+      }
+    },
+    "libhrx.so.0": {
+      "project": "HRX / Loom",
+      "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+      "origin": "Fresh Release build of the pinned source plus the seven patches in patches/loom",
+      "sha256": "8d39a4360d137b65271447af5059773fbecce31a4a508bd8ac13b7ebcdbeec8f",
+      "needed": [
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "sources": {
+        "hrx-system": {
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+          "archive": "hrx-system-ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d.tar.gz",
+          "sha256": "f980fc81bd02234b2bcc141fb7af6c9430b9e9cfffe61aee8dfdf8b00068c9a5"
+        },
+        "hsa_runtime_headers": {
+          "url": "https://github.com/iree-org/hsa-runtime-headers/archive/4285513114a70f7cf4830c89279c8cfa57b901bb.tar.gz",
+          "archive": "hsa_runtime_headers.tar.gz",
+          "sha256": "a906b35e77b9cee074995d144cf7718a0069eba08ba7bc741ee7576950fde923"
+        },
+        "spirv_headers": {
+          "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
+          "archive": "spirv_headers.tar.gz",
+          "sha256": "4d703067a7e06331ccb37bdfed3f9b7879cc61969a2689ae95c95db34a47ff07"
+        },
+        "vulkan_headers": {
+          "url": "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
+          "archive": "vulkan_headers.tar.gz",
+          "sha256": "e87dce08116151f6b6d7de6b6faf41498e87e6cf848ff16fa3bd5402190ad4a3"
+        },
+        "amdgpu_isa_xml": {
+          "url": "https://gpuopen.com/download/AMD_GPU_MR_ISA_XML_2026_03_05.zip",
+          "archive": "AMD_GPU_MR_ISA_XML_2026_03_05.zip",
+          "sha256": "1f17587abc9d0d355cf6f65bdba7496838b4e8313922769199689615c434965c"
+        }
+      },
+      "license": {
+        "spdx": "Apache-2.0 WITH LLVM-exception AND MIT AND NCSA",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-HRX.txt",
+          "LICENSE-CORE-MATH.txt",
+          "LICENSE-HSA-headers.txt",
+          "LICENSE-SPIRV-Headers.txt",
+          "LICENSE-Vulkan-Headers.txt",
+          "LICENSE-AMDGPU-ISA.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      },
+      "statically_linked": {
+        "IREE": {
+          "revision": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+          "license": "Apache-2.0 WITH LLVM-exception"
+        }
+      }
+    },
+    "libloomc.so": {
+      "project": "HRX / Loom",
+      "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+      "origin": "Fresh Release build of the pinned source plus the seven patches in patches/loom",
+      "sha256": "e66da21cc469071391a54055044bf5202a6c3d36eca4556f22d067f4e44b3fc3",
+      "needed": [
+        "libm.so.6",
         "libstdc++.so.6",
         "libgcc_s.so.1",
-        "libc.so.6",
-        "ld-linux-x86-64.so.2"
-      ]
+        "libc.so.6"
+      ],
+      "sources": {
+        "hrx-system": {
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+          "archive": "hrx-system-ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d.tar.gz",
+          "sha256": "f980fc81bd02234b2bcc141fb7af6c9430b9e9cfffe61aee8dfdf8b00068c9a5"
+        },
+        "hsa_runtime_headers": {
+          "url": "https://github.com/iree-org/hsa-runtime-headers/archive/4285513114a70f7cf4830c89279c8cfa57b901bb.tar.gz",
+          "archive": "hsa_runtime_headers.tar.gz",
+          "sha256": "a906b35e77b9cee074995d144cf7718a0069eba08ba7bc741ee7576950fde923"
+        },
+        "spirv_headers": {
+          "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
+          "archive": "spirv_headers.tar.gz",
+          "sha256": "4d703067a7e06331ccb37bdfed3f9b7879cc61969a2689ae95c95db34a47ff07"
+        },
+        "vulkan_headers": {
+          "url": "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
+          "archive": "vulkan_headers.tar.gz",
+          "sha256": "e87dce08116151f6b6d7de6b6faf41498e87e6cf848ff16fa3bd5402190ad4a3"
+        },
+        "amdgpu_isa_xml": {
+          "url": "https://gpuopen.com/download/AMD_GPU_MR_ISA_XML_2026_03_05.zip",
+          "archive": "AMD_GPU_MR_ISA_XML_2026_03_05.zip",
+          "sha256": "1f17587abc9d0d355cf6f65bdba7496838b4e8313922769199689615c434965c"
+        }
+      },
+      "license": {
+        "spdx": "Apache-2.0 WITH LLVM-exception AND MIT AND NCSA",
+        "status": "confirmed",
+        "files": [
+          "LICENSE-HRX.txt",
+          "LICENSE-CORE-MATH.txt",
+          "LICENSE-HSA-headers.txt",
+          "LICENSE-SPIRV-Headers.txt",
+          "LICENSE-Vulkan-Headers.txt",
+          "LICENSE-AMDGPU-ISA.txt"
+        ],
+        "basis": "Exact upstream source texts in license_files; see native/RELEASE.md for scope and modifications."
+      },
+      "statically_linked": {
+        "IREE": {
+          "revision": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+          "license": "Apache-2.0 WITH LLVM-exception"
+        },
+        "CORE-MATH adaptation": {
+          "revision": "e0a3599597503f2af90311c82e2ca92dc06c789a",
+          "license": "MIT"
+        }
+      },
+      "generated_code_inputs": {
+        "AMD GPU ISA XML": {
+          "version": "2026-03-05",
+          "license": "MIT"
+        },
+        "SPIRV-Headers": {
+          "version": "vulkan-sdk-1.4.357.0",
+          "license": "MIT"
+        },
+        "Vulkan-Headers": {
+          "version": "vulkan-sdk-1.4.357.0",
+          "license": "MIT"
+        }
+      }
     }
-  }
+  },
+  "license_files": {
+    "LICENSE-HRX.txt": {
+      "source_file": "hrx-source/LICENSE",
+      "sha256": "579fa63489ca4714793e90fa778b320f84527d7ebee37f1798db487e80c13cc0"
+    },
+    "LICENSE-HSA-headers.txt": {
+      "source_file": "hrx-clang/_deps/hsa_runtime_headers-src/LICENSE.txt",
+      "sha256": "437b7fc31bfad2be8bb6d972845fcf79ae08c817ed2c421490cf69ac9ae44701"
+    },
+    "LICENSE-SPIRV-Headers.txt": {
+      "source_file": "hrx-clang/_deps/spirv_headers-src/LICENSE",
+      "sha256": "ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613"
+    },
+    "LICENSE-Vulkan-Headers.txt": {
+      "source_file": "hrx-clang/_deps/vulkan_headers-src/LICENSES/MIT.txt",
+      "sha256": "1ca3502222d967f3be5751c55f6b7ee735b5383909c3b501495f54b216dbf227"
+    },
+    "LICENSE-ROCR.txt": {
+      "source_file": "rocm-systems/projects/rocr-runtime/LICENSE.txt",
+      "sha256": "ffa5a77ce21419e276bd9068faec94333128e49e1c95426d9c1d35435e8fe835"
+    },
+    "LICENSE-ROCT.txt": {
+      "source_file": "rocm-systems/projects/rocr-runtime/libhsakmt/LICENSE.md",
+      "sha256": "f45a5bc0bc68dd9a00e9609097788b1cbda79726fee02549cb0c04b90190b419"
+    },
+    "LICENSE-rocprofiler-register.txt": {
+      "source_file": "rocm-systems/projects/rocprofiler-register/LICENSE.md",
+      "sha256": "b185aaa652b0bf066c37a0d6314ce4bf4521e4a3c9bf46edd2f6a777ac522223"
+    },
+    "LICENSE-fmt.txt": {
+      "source_file": "sources/fmt/fmt-123913715afeb8a437e6388b4473fcc4753e1c9a/LICENSE",
+      "sha256": "07580f2a3b35709ce703d523f447b242f6dfec7582a8c0df102c7fa2849375f8"
+    },
+    "LICENSE-glog.txt": {
+      "source_file": "sources/glog/glog-7b134a5c82c0c0b5698bb6bf7a835b230c5638e4/COPYING",
+      "sha256": "136d48dea7a681413691f3db3098f6cf5ffaa3119d96d97bb83b8cff3ce38c4a"
+    },
+    "LICENSE-elfutils-LGPL-3.0.txt": {
+      "source_file": "sources/elfutils/elfutils-0.192/COPYING-LGPLV3",
+      "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
+    },
+    "LICENSE-elfutils-GPL-3.0.txt": {
+      "source_file": "sources/elfutils/elfutils-0.192/COPYING",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    "LICENSE-numactl-LGPL-2.1.txt": {
+      "source_file": "sources/numactl/numactl-2.0.19/LICENSE.LGPL2.1",
+      "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+    },
+    "LICENSE-bzip2.txt": {
+      "source_file": "sources/bzip2/bzip2-1.0.8/LICENSE",
+      "sha256": "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3"
+    },
+    "LICENSE-zstd.txt": {
+      "source_file": "sources/zstd/zstd-1.5.7/LICENSE",
+      "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
+    },
+    "LICENSE-xz-0BSD.txt": {
+      "source_file": "sources/liblzma/xz-5.8.1/COPYING.0BSD",
+      "sha256": "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1"
+    },
+    "LICENSE-TheRock.txt": {
+      "source_file": "therock/LICENSE",
+      "sha256": "7728762ecd3256782c89e28b1887727a484deda6356887ef2f2898598e950cb8"
+    },
+    "LICENSE-CORE-MATH.txt": {
+      "source_file": "hrx-source/runtime/src/iree/math/trigonometry.c",
+      "sha256": "4639ae96f455d387fd2b042ce11a2713ac3ee9bfc82591182683f4ee503be011"
+    },
+    "LICENSE-ROCT-rbtree.txt": {
+      "source_file": "rocm-systems/projects/rocr-runtime/libhsakmt/src/rbtree.c",
+      "sha256": "9cc75927153dbcdab6f40efdfeac37e58301db3c759ab3dc0ae16dd78d673869"
+    },
+    "LICENSE-zlib.txt": {
+      "source_file": "sources/zlib/zlib-1.3.2/zlib.h",
+      "sha256": "f293edbac5cb1cc2f7801ce3f59cb79ba30b370f663ba8376b317bece2834aa6"
+    },
+    "LICENSE-AMDGPU-ISA.txt": {
+      "source_file": "AMD_GPU_MR_ISA_XML_2026_03_05.zip: Document/Copyright and Document/License (MIT); standard MIT terms",
+      "sha256": "4b58c86ef9b8f1be198079e5b62ea5c2bea0cc2f9187d21463a9c5e4ca75d69c"
+    },
+    "LICENSE-libdrm.txt": {
+      "source_file": "sources/libdrm/libdrm-libdrm-2.4.127: core/AMDGPU source and header notices",
+      "sha256": "610a3673974e408babb4283d59455731353e016cf061b929013a998d3db01603"
+    },
+    "LICENSE-source-attributions.txt": {
+      "source_file": "Pinned elfutils, numactl, ROCR and ROCT source headers",
+      "sha256": "c15472bc8781f79b9ad7b8c2059478600eca87d23f635a8b708508a51decd9cb"
+    }
+  },
+  "corresponding_source": {
+    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260909-reviewed/hrx-native-sources.tar.gz",
+    "sha256": "9114155f1f591b580f09a08117e240e73d082169a30a1fe47ebdbde7e59fdaac"
+  },
+  "system_dependencies_not_shipped": [
+    "ld-linux-x86-64.so.2",
+    "libatomic.so.1",
+    "libc.so.6",
+    "libdl.so.2",
+    "libgcc_s.so.1",
+    "libm.so.6",
+    "libpthread.so.0",
+    "librt.so.1",
+    "libstdc++.so.6"
+  ],
+  "review_scope": "License identifiers confirmed against the pinned source files. AMD build identity is established by the public artifact manifest and TheRock build records; this is not a bit-reproducibility claim."
 }
