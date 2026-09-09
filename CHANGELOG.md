@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `THIRD-PARTY.json` and `NOTICE`, identifying every shipped native binary from
+  evidence in the binaries themselves. Both are marked incomplete: no license is
+  confirmed yet. Identification found that rocprofiler-register, fmt, glog and
+  gflags are build-host packages rather than AMD ROCm build artifacts.
 - Drop the unused `loom-compile` executable from the release bundle. HRX compiles
   in process, so the binary was never invoked; removing it cuts the archive by
   about 31% and removes one shipped binary from the third-party inventory.
