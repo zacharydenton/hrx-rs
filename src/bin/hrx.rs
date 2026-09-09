@@ -3,14 +3,18 @@ use hrx::{Error, Result};
 #[path = "hrx/pack.rs"]
 mod pack;
 fn main() -> std::process::ExitCode {
-    if let Err(e) = run() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // The launcher owns its own exit codes: usage errors exit 64, not 1.
+    if args.first().is_some_and(|a| a == "run") {
+        return hrx::runner::run(&args[1..]);
+    }
+    if let Err(e) = dispatch(&args) {
         eprintln!("{e}");
         return std::process::ExitCode::FAILURE;
     }
     std::process::ExitCode::SUCCESS
 }
-fn run() -> Result<()> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
+fn dispatch(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("pack") if args.len() == 5 || args.len() == 6 => {
             pack::pack(
@@ -65,7 +69,7 @@ fn run() -> Result<()> {
         }
         _ => {
             return Err(Error::Message(
-                "usage: hrx pack RUNTIME OUTPUT URL REVISION [TARGET] | prepare [bundle.tar.gz] | info | compile SOURCE SYMBOL [key=value ...]"
+                "usage: hrx run --hsaco FILE --kernel NAME [...] | pack RUNTIME OUTPUT URL REVISION [TARGET] | prepare [bundle.tar.gz] | info | compile SOURCE SYMBOL [key=value ...]"
                     .into(),
             ));
         }

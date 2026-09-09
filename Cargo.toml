@@ -1,6 +1,6 @@
 [package]
 name = "hrx-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -41,11 +41,6 @@ ureq = { version = "3", optional = true }
 [[bin]]
 name = "hrx"
 path = "src/bin/hrx.rs"
-required-features = ["runner"]
-
-[[bin]]
-name = "loomrun"
-path = "src/bin/loomrun.rs"
 required-features = ["runner"]
 
 [lints.clippy]

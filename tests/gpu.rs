@@ -299,7 +299,8 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
         std::fs::write(&input, &ones)?;
         std::fs::write(&velocity, &ones)?;
         let locks = tempfile::tempdir()?;
-        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_loomrun"))
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_hrx"))
+            .arg("run")
             .arg("--hsaco")
             .arg(&path)
             .args(["--kernel", "krea2_euler", "--block", "256"])

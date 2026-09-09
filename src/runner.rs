@@ -1,6 +1,6 @@
-//! loomrun — launch one Loom-compiled kernel on the GPU and dump its buffers.
+//! `hrx run` — launch one Loom-compiled kernel on the GPU and dump its buffers.
 //!
-//!   loomrun --hsaco k.hsaco --kernel name --grid 201 --block 256 \
+//!   hrx run --hsaco k.hsaco --kernel name --grid 201 --block 256 \
 //!           --i32 201 --in x.bin --in gamma.bin --in beta.bin --out y.bin:308736
 //!
 //! Arguments appear in the kernel's own declaration order: `--i32`/`--i64`/`--f32` are by-value arguments and
@@ -12,8 +12,8 @@
 //! hitting one matrix.
 //!
 //! It runs on libhrx rather than HIP, so a kernel test needs no ROCm headers or hipcc. Timing is wall
-//! clock around a synchronised run of `--repeat` launches; the JSON line on stdout is what
-//! `tools/kernel_test.py` reads.
+//! clock around a synchronised run of `--repeat` launches, reported as one JSON line on stdout for a
+//! harness to parse.
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
@@ -193,9 +193,9 @@ fn warms_up(repeat: u32) -> bool {
     repeat > 1
 }
 
-fn run(opt: Options) -> Result<(), String> {
+fn execute(opt: Options) -> Result<(), String> {
     let mut gpu = crate::Stream::open().map_err(|e| e.to_string())?;
-    // Safety: loomrun exists to run a code object the caller names, which is the whole of its job.
+    // Safety: this subcommand exists to run a code object the caller names, which is its whole job.
     // The contract is the operator's: --hsaco and --kernel identify the code, and --grid, --block and
     // the operand flags describe how it is meant to be called.
     let kernel = unsafe { gpu.load(&opt.hsaco, &opt.kernel) }.map_err(|e| e.to_string())?;
@@ -325,20 +325,20 @@ fn run(opt: Options) -> Result<(), String> {
     Ok(())
 }
 
-/// Run the command-line kernel launcher, returning a usage or runtime exit code.
-pub fn main() -> ExitCode {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    let opt = match parse_args(&argv) {
+/// Run the kernel launcher over already-split arguments, returning a usage or
+/// runtime exit code. Usage errors exit 64; runtime failures exit 1.
+pub fn run(argv: &[String]) -> ExitCode {
+    let opt = match parse_args(argv) {
         Ok(opt) => opt,
         Err(e) => {
             eprintln!("{e}");
             return ExitCode::from(EXIT_USAGE);
         }
     };
-    match run(opt) {
+    match execute(opt) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("loomrun: {e}");
+            eprintln!("hrx run: {e}");
             ExitCode::from(1)
         }
     }
