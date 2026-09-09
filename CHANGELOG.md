@@ -4,7 +4,8 @@
 
 - Remove `Gpu`, the `compat` and `ffi` modules, their features, and the bytemuck
   dependency. `Stream` owns execution directly; dispatch requires explicit
-  `Constants`.
+  `Constants`. The model C-ABI verification script and the allocator benchmark
+  superseded by the stream benchmark are removed with them.
 - Add a release benchmark for stream uploads, dispatch, graph replay and scratch reuse.
 - Kernel dispatch and graph recording reject workgroup dimensions that disagree
   with compiled export metadata.
