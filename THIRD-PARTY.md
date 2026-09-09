@@ -43,9 +43,29 @@ Before publishing a replacement bundle:
    Review these against the actual sources.
 3. Stage those files alongside the libraries. Bundles are flat: use names such
    as `LICENSE-libfmt.txt`. `hrx pack` requires nonempty provenance, inventory and
-   notice files and hashes all staged regular files into its manifest. Its
-   structural checks do not perform a legal or provenance review.
+   notice files, refuses an inventory whose `status` is not `"complete"` or that
+   leaves any component's `license.status` unconfirmed, and hashes all staged
+   regular files into its manifest. Those checks confirm that a review was
+   recorded; they cannot confirm that it was correct.
 4. Publish the reviewed archive at an anonymously accessible HTTPS URL, update
    `bundle.json`, and verify installation into an empty cache plus the complete
    ignored test suite. Only then remove `publish = false`.
 
+## Publication checklist
+
+`publish = false` stays in `Cargo.toml` until every line below is true. The Rust
+side is ready; each remaining item needs a decision or an artifact this
+repository cannot produce on its own.
+
+- [ ] Replace rocprofiler-register, fmt, glog and gflags with the AMD ROCm build,
+      or confirm their redistribution terms as Arch Linux binaries.
+- [ ] Record elfutils, libnuma and libdrm versions from the AMD build record.
+- [ ] Set `license.spdx` and `license.status: "confirmed"` for every component in
+      `THIRD-PARTY.json`, from upstream sources.
+- [ ] Stage the license texts and complete `NOTICE`, then set the inventory
+      `status` to `"complete"`.
+- [ ] Repack without `loom-compile`, update `bundle.json`, and re-run installation
+      into an empty cache plus the full ignored suite.
+- [ ] Publish the archive at an anonymously accessible HTTPS URL; the pinned
+      release currently 404s without authentication.
+- [ ] Remove `publish = false`.
