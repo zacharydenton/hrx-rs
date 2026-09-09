@@ -17,7 +17,7 @@ The unresolved inventory includes:
 | librocm_sysdeps_elf.so.1, librocm_sysdeps_numa.so.1 | Exact library sources and redistribution requirements |
 | librocm_sysdeps_bz2.so, librocm_sysdeps_z.so.1 | Exact compression library sources and notices |
 | librocprofiler-register.so.0 | Source revision, build recipe and notices |
-| libhrx.so, libloomc.so, loom-compile | Recorded upstream revision and patches, plus all linked dependencies |
+| libhrx.so, libloomc.so | Recorded upstream revision and patches, plus all linked dependencies |
 
 Before publishing a replacement bundle:
 
