@@ -67,7 +67,7 @@ too.
 ## CLI and native setup
 
 ```sh
-cargo install hrx-rs --version 0.1.0 --features runner
+cargo install hrx-rs --version 0.2.0 --features runner
 hrx prepare
 hrx info
 ```
