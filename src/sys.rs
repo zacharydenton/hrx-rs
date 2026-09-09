@@ -241,10 +241,9 @@ pub(crate) fn load() -> crate::Result<()> {
     }
     unsafe {
         use libloading::os::unix::{Library, RTLD_LOCAL, RTLD_NOW};
-        let provider = std::env::var_os("IREE_HAL_AMDGPU_LIBHSA_PATH")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| directory.join("libhsa-runtime64.so.1"));
-        let provider = std::fs::canonicalize(provider)?;
+        // HSA comes from the same verified directory as libhrx; a different tree
+        // is selected by pointing HRX_RUNTIME_DIR at it, not by a second variable.
+        let provider = std::fs::canonicalize(directory.join("libhsa-runtime64.so.1"))?;
         let hsa = Library::open(Some(&provider), RTLD_NOW | RTLD_LOCAL).map_err(|e| {
             crate::Error::from(e).context(format!("loading {}", provider.display()))
         })?;

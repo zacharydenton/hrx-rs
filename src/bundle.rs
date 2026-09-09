@@ -45,20 +45,30 @@ pub fn file_digest(path: &Path) -> Result<String> {
     }
     Ok(format!("{:x}", hash.finalize()))
 }
-/// Resolve the configured cache path without creating directories.
+/// Resolve the cache path without creating directories.
+///
+/// Follows the XDG Base Directory specification: `$XDG_CACHE_HOME/hrx`, or
+/// `$HOME/.cache/hrx` when that is unset or empty. The specification requires
+/// these variables to hold absolute paths and says a relative one is invalid and
+/// must be ignored, so a relative `XDG_CACHE_HOME` falls back to `$HOME` rather
+/// than resolving against the working directory.
 pub fn cache_root() -> Result<PathBuf> {
-    let base = std::env::var_os("HRX_CACHE_DIR")
+    let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
         .or_else(|| {
-            std::env::var_os("XDG_CACHE_HOME")
+            std::env::var_os("HOME")
                 .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-                .map(|p| p.join("hrx"))
+                .filter(|path| path.is_absolute())
+                .map(|home| home.join(".cache"))
         })
         .ok_or_else(|| {
-            Error::Message("set HRX_CACHE_DIR: no home or cache directory available".into())
+            Error::Message(
+                "set XDG_CACHE_HOME or HOME to an absolute path: no cache directory available"
+                    .into(),
+            )
         })?;
-    Ok(base)
+    Ok(base.join("hrx"))
 }
 
 /// An independently opened flock also serializes separate Rust copies in cdylibs.
@@ -328,9 +338,7 @@ pub fn resolve() -> Result<PathBuf> {
             "this HRX release supports Linux x86_64".into(),
         ));
     }
-    if let Some(path) =
-        std::env::var_os("HRX_RUNTIME_DIR").or_else(|| std::env::var_os("KREA2_RUNTIME"))
-    {
+    if let Some(path) = std::env::var_os("HRX_RUNTIME_DIR") {
         let path = fs::canonicalize(path)?;
         if path.join("manifest.json").is_file() {
             Manifest::parse(&fs::read(path.join("manifest.json"))?)?.verify(&path)?;

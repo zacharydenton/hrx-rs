@@ -10,7 +10,7 @@ source-archive reference are pinned in `bundle.json`.
 06000605de874bc972e17e90f94a3816302fdd2a17040cfaf1df1f0b70483cc4
 ```
 
-The library bytes passed all 23 CPU tests, the Rust doctest, and all 14 ignored
+The library bytes passed all 27 CPU tests, both Rust doctests, and all 18 ignored
 GPU/compiler tests on gfx1151. Installation started with an empty cache and used
 no runtime, compiler, or HSA overrides. Every dynamic dependency resolves to the
 bundle or a documented host library. The Arch library chain and `loom-compile`
@@ -43,9 +43,9 @@ and without runtime, compiler or HSA library overrides.
 
 | Check | Result |
 | --- | --- |
-| CPU tests | 23 passed |
-| Rust API doctests | 1 passed |
-| Ignored runtime and compiler tests | 13 passed |
+| CPU tests | 27 passed |
+| Rust API doctests | 2 passed |
+| Ignored runtime and compiler tests | 18 passed |
 | Feature matrix | All 8 subsets build, including on Rust 1.88 |
 | Clippy | Passes with warnings denied on stable and Rust 1.88 |
 | Rustdoc | Passes with warnings denied |

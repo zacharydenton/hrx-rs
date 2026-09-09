@@ -1656,9 +1656,12 @@ mod dag_probe {
             stream.read_blocking(buffers[NODES - 1].binding(), &mut seen)?;
             assert_eq!(seen, [0x3c; 4096], "every node ran");
         }
+        // A margin rather than a strict inequality: the property under test is
+        // that omitting edges still reaches the runtime, not that a shared CI
+        // runner is quiet. The measured gap is ~1.7x, so 1.2x is a wide floor.
         assert!(
-            timings[1] < timings[0],
-            "omitting edges should not be slower: {timings:?}"
+            timings[1] * 1.2 < timings[0],
+            "omitting edges should be materially cheaper: {timings:?}"
         );
         Ok(())
     }

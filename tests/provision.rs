@@ -120,16 +120,18 @@ fn separate_processes_provision_the_same_cache() {
     let manifest = fixture(dir.path());
     let manifest_path = dir.path().join("manifest.json");
     fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    let cache = dir.path().join("shared-cache");
+    // The cache location follows XDG, so isolate it by pointing XDG_CACHE_HOME
+    // at a temporary root; hrx appends its own directory under that.
+    let xdg = dir.path().join("xdg-cache");
+    let cache = xdg.join("hrx");
     let mut children: Vec<_> = (0..4)
         .map(|_| {
             std::process::Command::new(env!("CARGO_BIN_EXE_hrx"))
                 .arg("prepare")
-                .env("HRX_CACHE_DIR", &cache)
+                .env("XDG_CACHE_HOME", &xdg)
                 .env("HRX_BUNDLE_MANIFEST", &manifest_path)
                 .env_remove("HRX_OFFLINE")
                 .env_remove("HRX_RUNTIME_DIR")
-                .env_remove("KREA2_RUNTIME")
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .unwrap()
