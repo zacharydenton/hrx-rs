@@ -23,11 +23,36 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// How seriously the compiler meant a diagnostic. Ordered, so callers can
+/// filter with a comparison rather than a magic number: a spill remark and a
+/// type error arrive in the same list, and only one of them is worth a reader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    /// A remark: informational, including backend resource notes.
+    Note,
+    /// A warning: compilation continued.
+    Warning,
+    /// An error: compilation of this specialization failed.
+    Error,
+}
+impl From<u32> for Severity {
+    /// Unknown native severities are treated as errors, so a future compiler
+    /// cannot make a diagnostic disappear from a caller's error filter.
+    fn from(native: u32) -> Self {
+        match native {
+            0 => Self::Note,
+            1 => Self::Warning,
+            _ => Self::Error,
+        }
+    }
+}
+
 /// A compiler diagnostic copied out of native result storage.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Diagnostic {
-    /// Native diagnostic severity (remark, warning, or error).
-    pub severity: u32,
+    /// How seriously the compiler meant this diagnostic.
+    pub severity: Severity,
     /// Stable compiler diagnostic code.
     pub code: String,
     /// Rendered diagnostic message.
@@ -220,9 +245,6 @@ impl Compiler {
         self.0.native.trim();
     }
 }
-/// Native error severity; notes and warnings are 0 and 1.
-const SEVERITY_ERROR: u32 = 2;
-
 /// Render the diagnostic a caller should act on, not the whole cascade.
 ///
 /// A single rejected construct makes the rest of its block unparseable, so the
@@ -230,7 +252,7 @@ const SEVERITY_ERROR: u32 = 2;
 /// with all of them buries the cause; every diagnostic stays available through
 /// [`Error::Compile::diagnostics`].
 fn summarize(diagnostics: &[Diagnostic]) -> String {
-    let errors = || diagnostics.iter().filter(|d| d.severity >= SEVERITY_ERROR);
+    let errors = || diagnostics.iter().filter(|d| d.severity >= Severity::Error);
     let Some(first) = errors().next() else {
         return diagnostics
             .iter()
@@ -269,10 +291,10 @@ fn hint(message: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod diagnostic_tests {
-    use super::{Diagnostic, summarize};
+    use super::{Diagnostic, Severity, summarize};
     fn diagnostic(severity: u32, line: u32, message: &str) -> Diagnostic {
         Diagnostic {
-            severity,
+            severity: Severity::from(severity),
             code: String::new(),
             message: message.into(),
             line,

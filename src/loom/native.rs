@@ -142,7 +142,7 @@ impl Handle<loomc_result_t> {
                 .map(|i| {
                     let d = &*self.api.loomc_result_diagnostic_at(self.raw, i);
                     Diagnostic {
-                        severity: d.severity,
+                        severity: d.severity.into(),
                         code: string(d.code),
                         message: string(d.message),
                         line: d.range.start_line,

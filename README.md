@@ -32,6 +32,11 @@ fn main() -> hrx::Result<()> {
 ```
 
 `Device` selects a GPU, `Stream` orders work, and `Buffer` owns an allocation.
+A buffer is bound to its device, not to the stream that allocated it: any stream
+on that device may use it, and `record_event`/`wait_event` order conflicting
+access. Unordered cross-stream use yields whichever bytes the device held.
+Dispatches, fills and copies take `&self`; only staging-backed transfers and
+synchronization need `&mut`. `Kernel` is `Clone`, retaining the executable.
 Transfers, fills, copies and dispatch bindings use `View`. Borrow a whole buffer
 with `buffer.binding()` and a subregion with `view.slice(offset, length)?`.
 `upload` queues a transfer through owned staging; `upload_blocking` waits for it.

@@ -1,6 +1,5 @@
 use std::ffi::{CStr, CString, c_void};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Native export metadata used to validate dispatch shapes and arguments.
 pub use crate::sys::ExportInfo;
@@ -184,27 +183,26 @@ impl Stream {
 
 /// An owned device allocation. Use [`Buffer::binding`] or [`Buffer::try_slice`]
 /// to borrow a binding; this API does not expose host pointers.
-/// Each handle belongs to one stream; cross-stream use requires [`Buffer::share_on`].
+/// A handle is bound to its device. Any stream on that device may use it;
+/// ordering conflicting access is the caller's, with events.
 pub struct Buffer {
     raw: sys::Buffer,
     bytes: usize,
-    // Sticky on the original and every alias: shared allocations never enter scratch pools.
-    shared: AtomicBool,
     /// Keeps the device alive: releasing a buffer after its device is gone would be a use-after-free.
     _device: std::sync::Arc<Inner>,
 }
 
 // Safety: moving/releasing an allocation uses native atomic reference counts.
 // Every operation checks its owning Inner before touching native buffer state.
-// That stream is !Sync. Explicit cross-stream aliases require the unsafe
-// share_on contract to order conflicting accesses for their entire lifetime.
+// Streams are !Sync, and a buffer used from two streams needs events between
+// conflicting accesses; unordered use yields stale bytes, never invalid memory.
 unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
 
 /// A binding into a device allocation, borrowed from it.
 ///
 /// The borrow keeps the buffer alive and identifies the stream allowed to use
-/// this view. Cross-stream access requires a handle from [`Buffer::share_on`].
+/// this view. Any stream on the same device may use it, ordered by the caller.
 #[derive(Clone, Copy, Debug)]
 pub struct View<'a> {
     raw: sys::BufferRef,
@@ -251,28 +249,6 @@ impl<'a> View<'a> {
 }
 
 impl Buffer {
-    /// Retain this allocation for access through another stream on the same device.
-    /// Sharing permanently excludes both handles from [`Stream::recycle`], even
-    /// after the other handle is dropped.
-    ///
-    /// # Safety
-    /// Order all conflicting accesses through either handle, including graph replay,
-    /// with events or synchronization. This obligation lasts until every shared
-    /// handle and recorded use is gone. Host transfers must also obey this ordering.
-    pub unsafe fn share_on(&self, stream: &Stream) -> Result<Buffer> {
-        if self._device.device != stream.inner.device {
-            return Err(Error::Message("buffer belongs to another device".into()));
-        }
-        unsafe { sys::hrx_buffer_retain(self.raw) };
-        // Only a monotonic eligibility flag; no other data is published by this store.
-        self.shared.store(true, Ordering::Relaxed);
-        Ok(Buffer {
-            raw: self.raw,
-            bytes: self.bytes,
-            shared: AtomicBool::new(true),
-            _device: stream.inner.clone(),
-        })
-    }
     /// The actual allocation size, including rounding of empty allocations.
     pub fn bytes(&self) -> usize {
         self.bytes
@@ -340,6 +316,21 @@ impl Kernel {
     }
 }
 
+/// Cloning retains the native executable, so a kernel can be cached and handed
+/// out by value instead of behind an `Arc`. Export metadata is immutable, and
+/// the borrowed `ExportInfo::name` stays valid while any clone is alive.
+impl Clone for Kernel {
+    fn clone(&self) -> Self {
+        unsafe { sys::hrx_executable_retain(self.executable) };
+        Self {
+            executable: self.executable,
+            ordinal: self.ordinal,
+            info: self.info,
+            symbol: self.symbol.clone(),
+            _device: self._device.clone(),
+        }
+    }
+}
 impl Drop for Kernel {
     fn drop(&mut self) {
         unsafe { sys::hrx_executable_release(self.executable) }
@@ -377,11 +368,19 @@ mod tests {
     }
 }
 
+/// Buffers are bound to their device, not to the stream that allocated them.
+///
+/// The allocator is asked for `queue_affinity: u64::MAX` and executables are
+/// already device-scoped, so a stricter check here would be conservatism rather
+/// than a constraint. Ordering conflicting access across streams is the caller's
+/// job, and [`Stream::record_event`] / [`Stream::wait_event`] are the tools for
+/// it: a buffer written by one stream and read by another with no event between
+/// them yields whichever bytes the device happened to hold.
 fn owns(inner: &std::sync::Arc<Inner>, buffer: &Buffer) -> Result<()> {
-    if std::sync::Arc::ptr_eq(inner, &buffer._device) {
+    if inner.device == buffer._device.device {
         Ok(())
     } else {
-        Err(Error::Message("buffer belongs to another stream".into()))
+        Err(Error::Message("buffer belongs to another device".into()))
     }
 }
 
@@ -551,7 +550,6 @@ impl Stream {
         Ok(Buffer {
             raw: buffer,
             bytes: bytes.max(1),
-            shared: AtomicBool::new(false),
             _device: self.inner.clone(),
         })
     }
@@ -605,7 +603,7 @@ impl Stream {
         }
     }
     /// Queue a byte-pattern fill over a nonempty view owned by this stream.
-    pub fn fill(&mut self, dst: View<'_>, value: u8) -> Result<()> {
+    pub fn fill(&self, dst: View<'_>, value: u8) -> Result<()> {
         self.owns(dst.owner)?;
         if dst.is_empty() {
             return Err(Error::Message("empty stream fill".into()));
@@ -625,7 +623,7 @@ impl Stream {
         }
     }
     /// Queue a copy between equal, nonempty views owned by this stream.
-    pub fn copy(&mut self, dst: View<'_>, src: View<'_>) -> Result<()> {
+    pub fn copy(&self, dst: View<'_>, src: View<'_>) -> Result<()> {
         self.owns(dst.owner)?;
         self.owns(src.owner)?;
         if dst.len() != src.len() || dst.is_empty() {
@@ -737,7 +735,6 @@ impl Stream {
         Ok(Buffer {
             raw,
             bytes,
-            shared: AtomicBool::new(false),
             _device: self.inner.clone(),
         })
     }
@@ -817,7 +814,7 @@ impl Stream {
     /// Kernel, dimensions, constants and binding spans must agree. GPU addressing
     /// is not sandboxed by a binding's length.
     pub unsafe fn dispatch(
-        &mut self,
+        &self,
         kernel: &Kernel,
         grid: [u32; 3],
         block: [u32; 3],
@@ -887,17 +884,13 @@ impl Stream {
     }
     /// Return an allocation to this stream's bounded scratch pool after recording
     /// its final use. A later scratch request may reuse its storage.
-    /// Returns an error for foreign-stream buffers and any handle to an allocation
-    /// that has been shared with [`Buffer::share_on`].
+    /// Returns an error for a buffer another stream allocated: a scratch pool is
+    /// one stream's private free list, even though the buffer itself is usable
+    /// from any stream on the device.
     /// Recycling needs mutable stream access; there is no automatic return on drop.
     pub fn recycle(&mut self, buffer: Buffer) -> Result<()> {
         if !std::sync::Arc::ptr_eq(&buffer._device, &self.inner) {
             return Err(Error::Message("scratch belongs to another stream".into()));
-        }
-        if buffer.shared.load(Ordering::Relaxed) {
-            return Err(Error::Message(
-                "shared allocations cannot enter the scratch pool".into(),
-            ));
         }
         if buffer.bytes <= self.scratch_limit.saturating_sub(self.scratch_bytes) {
             self.scratch_bytes += buffer.bytes;
@@ -995,9 +988,17 @@ impl Default for Constants {
 }
 impl Constants {
     /// Pack an entry point whose scalar arguments are all unsigned Loom indices.
+    ///
     /// Loom lowers a homogeneous index list to 32- or 64-bit slots depending on
     /// its range analysis. This adapter is only for that model contract; mixed
     /// scalar types must use `push` with their explicit native widths.
+    ///
+    /// Neither [`ExportInfo`] nor the compiler's resource report carries per-slot
+    /// scalar types — only `constant_byte_length` and `parameter_count` — so no
+    /// API here can build a mixed-width constant block by construction. A width
+    /// inferred by dividing the byte count is wrong for a mixed `u32`/`u64`
+    /// signature, and wrong quietly. Take each width from the source that
+    /// declared it.
     pub fn indices(kernel: &Kernel, values: &[u32]) -> Result<Self> {
         let size = kernel.info.constant_byte_length as usize;
         let mut constants = Self::new();
@@ -1379,43 +1380,34 @@ mod staging_tests {
 
     #[test]
     #[ignore = "requires gfx1151"]
-    fn scratch_pools_reject_shared_handles_and_their_original() -> Result<()> {
+    fn a_scratch_pool_only_accepts_the_stream_that_allocated_the_buffer() -> Result<()> {
         let device = Device::open(0)?;
-        let mut source_stream = device.stream()?;
-        let mut compute = device.stream()?;
-        let mut third = device.stream()?;
-        let private = compute.scratch(4096)?;
+        let mut owner = device.stream()?;
+        let mut other = device.stream()?;
+        let private = other.scratch(4096)?;
         let private_raw = private.raw;
-        compute.recycle(private)?;
+        other.recycle(private)?;
 
-        let source = source_stream.allocate(4096)?;
-        // No accesses are queued through any shared handle in this test.
-        let shared = unsafe { source.share_on(&compute)? };
-        let chained = unsafe { shared.share_on(&third)? };
-        let same_stream = unsafe { source.share_on(&source_stream)? };
-        for result in [
-            compute.recycle(shared),
-            source_stream.recycle(source),
-            third.recycle(chained),
-            source_stream.recycle(same_stream),
-        ] {
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("shared allocations")
-            );
-        }
-        assert!(source_stream.scratch.is_empty());
-        assert!(third.scratch.is_empty());
-        assert_eq!(compute.scratch_bytes, 4096);
-        assert_eq!(compute.scratch(4096)?.raw, private_raw);
+        // Buffers are device-scoped, so another stream may read and write this one.
+        let buffer = owner.allocate(4096)?;
+        owner.fill(buffer.binding(), 0x5a)?;
+        let ready = owner.record_event()?;
+        other.wait_event(&ready)?;
+        let mut seen = [0u8; 16];
+        other.read_blocking(buffer.binding().slice(0, 16)?, &mut seen)?;
+        assert_eq!(seen, [0x5a; 16], "a foreign stream can use the allocation");
 
-        let source = source_stream.allocate(4096)?;
-        drop(unsafe { source.share_on(&compute)? });
-        // Dropping aliases does not restore pool eligibility: recorded uses may remain.
-        assert!(source_stream.recycle(source).is_err());
-        assert!(source_stream.scratch.is_empty());
+        // A scratch pool is still one stream's private free list, not shared state.
+        assert!(
+            other
+                .recycle(buffer)
+                .unwrap_err()
+                .to_string()
+                .contains("another stream")
+        );
+        assert!(owner.scratch.is_empty());
+        assert_eq!(other.scratch_bytes, 4096);
+        assert_eq!(other.scratch(4096)?.raw, private_raw);
         Ok(())
     }
 

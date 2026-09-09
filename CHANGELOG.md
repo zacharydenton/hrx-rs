@@ -2,6 +2,25 @@
 
 ## 0.2.0 (unreleased)
 
+- Buffers are bound to their device, not to the allocating stream. Any stream on
+  that device may transfer, fill, copy or dispatch against one; order conflicting
+  access with `record_event`/`wait_event`. This removes `Buffer::share_on`, which
+  existed only to work around the old check, and the sticky flag that kept shared
+  allocations out of scratch pools. A scratch pool still belongs to one stream.
+- `Stream::dispatch`, `fill` and `copy` take `&self`. They read only handles
+  behind the stream's `Arc` and mutate nothing; `&mut` was a pure exclusion
+  marker that forced callers to hoist intermediates. Transfers, `submit`,
+  `synchronize`, `scratch` and `recycle` still take `&mut`.
+- `Kernel` is `Clone`, retaining the native executable, so caches need no `Arc`.
+- `Diagnostic::severity` is a `Severity` enum (`Note`, `Warning`, `Error`) instead
+  of a bare `u32`, so callers can filter backend remarks from real errors without
+  hardcoding native values. Unknown native severities map to `Error`.
+- Document that the sequence API is for determinism and packaging, not
+  throughput: recording is strictly serial and replay saves only ~0.13 us of host
+  submission per operation. Document that neither `ExportInfo` nor the compiler
+  report carries per-slot scalar types, so mixed-width constants cannot be built
+  by construction and each width must come from the declaring source.
+
 - Add `Compiler::compile_all`, which runs a batch of specializations across
   `CompilerOptions::workers` workspaces and returns results in request order.
   `Module::compile` blocks, so that option previously did nothing unless the
