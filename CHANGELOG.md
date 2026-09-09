@@ -15,11 +15,19 @@
 - `Diagnostic::severity` is a `Severity` enum (`Note`, `Warning`, `Error`) instead
   of a bare `u32`, so callers can filter backend remarks from real errors without
   hardcoding native values. Unknown native severities map to `Error`.
-- Document that the sequence API is for determinism and packaging, not
-  throughput: recording is strictly serial and replay saves only ~0.13 us of host
-  submission per operation. Document that neither `ExportInfo` nor the compiler
-  report carries per-slot scalar types, so mixed-width constants cannot be built
-  by construction and each width must come from the declaring source.
+- Replace `SequenceBuilder` with `Graph`, a real dependency graph. `Stream::graph`
+  and `Stream::launch` replace `sequence`/`launch_sequence`, `FixedSequence`
+  becomes `GraphExec`, and `fill`/`copy`/`dispatch` take a leading `after: &[Node]`
+  and return a `Node`. `join` records a dependency-only node for fan-in. Nothing
+  is implicit: the old builder chained every operation to the previous one, which
+  is not what the runtime requires and costs about 0.95 us per needless edge --
+  64 tiny fill nodes replay in ~151 us chained and ~88 us independent on gfx1151.
+  A dependency can only name an already-recorded node, so a graph is acyclic by
+  construction and instantiation stays on the runtime's linear fast path;
+  duplicate entries in one list are collapsed rather than rejected.
+- Document that neither `ExportInfo` nor the compiler report carries per-slot
+  scalar types, so mixed-width constants cannot be built by construction and each
+  width must come from the declaring source.
 
 - Add `Compiler::compile_all`, which runs a batch of specializations across
   `CompilerOptions::workers` workspaces and returns results in request order.

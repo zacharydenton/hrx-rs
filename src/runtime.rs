@@ -1072,26 +1072,49 @@ impl Drop for Stream {
     }
 }
 
-/// Recording for a fixed sequence of operations. Each added operation depends on
-/// the previous one.
+/// A recorded operation, used to declare what later operations depend on.
 ///
-/// That chain is this builder's limitation, not the runtime's. `hrx_graph_*`
-/// takes a dependency array per node and implements `add_dependencies` and
-/// `add_empty_node`, so the native model is a real DAG; this type only ever
-/// declares a chain, and the difference is measurable. 64 tiny fill nodes replay
-/// in ~151 us chained and ~88 us with no declared dependencies on gfx1151 —
-/// roughly 0.95 us per avoided edge. `dag_probe` in this module measures it.
+/// Copy and cheap: it is an index into its own graph, not a native handle, so it
+/// never borrows the graph and can be held across recording calls. A node from
+/// another graph is rejected rather than silently indexing the wrong recording.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Node {
+    graph: u64,
+    index: u32,
+}
+
+static NEXT_GRAPH_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A recording of GPU work as a dependency graph, replayed as a unit.
 ///
-/// Until independent nodes can be expressed, treat this as a determinism and
-/// packaging tool rather than a throughput one: reach for it when a fixed
-/// pipeline should replay with identical addresses, constants and shapes.
+/// Every operation states what it comes after. Nothing is implicit: `&[]` records
+/// work that may run as soon as the graph starts, and `&[a, b]` records work that
+/// waits for both. The runtime schedules the result — `graph_analysis.c` does a
+/// topological sort, partitions it, and detects independent workstreams, running
+/// up to eight concurrently — so declaring only the edges that exist is what lets
+/// it overlap anything.
 ///
-/// Native capture and graph-exec update are genuinely unimplemented in the
-/// pinned revision rather than merely unwrapped: `hrx_graph_exec_update` is a
-/// 17-byte stub and `hrx_stream_capture_status` is 3 bytes.
-pub struct SequenceBuilder<'a> {
-    graph: sys::Graph,
-    last: sys::GraphNode,
+/// The edges are not free. 64 tiny fill nodes replay in roughly 151 us as a fully
+/// serial chain and 88 us with no declared dependencies on gfx1151, about 0.95 us
+/// per edge. Workstream parallelism additionally needs a run of at least 16
+/// schedulable nodes, so large graphs benefit most.
+///
+/// A dependency can only name an already-recorded node, so a recording is
+/// acyclic by construction and every edge points forward. That also keeps
+/// instantiation on the runtime's linear fast path. Naming the same node twice
+/// in one list is collapsed rather than rejected, so `after` may be assembled
+/// from overlapping stage outputs.
+///
+/// Addresses, constants and shapes are fixed at record time. Native capture and
+/// graph-exec update are unimplemented in the pinned revision rather than merely
+/// unwrapped: `hrx_graph_exec_update` is a 17-byte stub and
+/// `hrx_stream_capture_status` is 3 bytes, so changing a recording means
+/// recording a new one.
+pub struct Graph<'a> {
+    raw: sys::Graph,
+    // Brands this graph's nodes so another graph's cannot be resolved here.
+    id: u64,
+    nodes: Vec<sys::GraphNode>,
     inner: std::sync::Arc<Inner>,
     _resources: std::marker::PhantomData<(&'a Buffer, &'a Kernel)>,
 }
@@ -1100,102 +1123,164 @@ impl Stream {
     /// `finish` instantiates an owned executable and ends those borrows.
     ///
     /// ```compile_fail
-    /// fn escape() -> hrx::Result<hrx::SequenceBuilder<'static>> {
+    /// fn escape() -> hrx::Result<hrx::Graph<'static>> {
     ///     let stream = hrx::Stream::open()?;
-    ///     stream.sequence()
+    ///     stream.graph()
     /// }
     /// ```
-    pub fn sequence(&self) -> Result<SequenceBuilder<'_>> {
-        let mut graph = std::ptr::null_mut();
+    pub fn graph(&self) -> Result<Graph<'_>> {
+        let mut raw = std::ptr::null_mut();
         unsafe {
             check(
-                sys::hrx_graph_create(self.inner.device, 0, &mut graph),
-                "create sequence",
+                sys::hrx_graph_create(self.inner.device, 0, &mut raw),
+                "create graph",
             )?;
         }
-        Ok(SequenceBuilder {
-            graph,
-            last: std::ptr::null_mut(),
+        Ok(Graph {
+            raw,
+            id: NEXT_GRAPH_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            nodes: Vec::new(),
             inner: self.inner.clone(),
             _resources: std::marker::PhantomData,
         })
     }
-    /// Replay an instantiated sequence on its original stream.
-    pub fn launch_sequence(&mut self, sequence: &mut FixedSequence) -> Result<()> {
-        if !std::sync::Arc::ptr_eq(&sequence.inner, &self.inner) {
-            return Err(Error::Message("sequence belongs to another stream".into()));
+    /// Replay an instantiated graph on its original stream.
+    pub fn launch(&mut self, graph: &mut GraphExec) -> Result<()> {
+        if !std::sync::Arc::ptr_eq(&graph.inner, &self.inner) {
+            return Err(Error::Message("graph belongs to another stream".into()));
         }
         unsafe {
             check(
-                sys::hrx_graph_exec_launch(sequence.raw, self.inner.stream),
-                "launch sequence",
+                sys::hrx_graph_exec_launch(graph.raw, self.inner.stream),
+                "launch graph",
             )
         }
     }
 }
-impl<'a> SequenceBuilder<'a> {
-    fn deps(&self) -> (*const sys::GraphNode, usize) {
-        (&self.last, usize::from(!self.last.is_null()))
+impl<'a> Graph<'a> {
+    /// Translate caller-facing nodes into native handles, rejecting foreign ones.
+    /// Small fan-in stays on the stack, as dispatch bindings do.
+    fn resolve<'s>(
+        &self,
+        after: &[Node],
+        stack: &'s mut [std::mem::MaybeUninit<sys::GraphNode>; 16],
+    ) -> Result<std::borrow::Cow<'s, [sys::GraphNode]>> {
+        // The native sort counts in-degree per entry but clears it once, so a
+        // repeated dependency would strand a node. Collapsing here keeps the
+        // caller free to assemble `after` from overlapping stage outputs.
+        let mut unique: Vec<u32> = Vec::new();
+        for node in after {
+            if node.graph != self.id || node.index as usize >= self.nodes.len() {
+                return Err(Error::Message(
+                    "dependency node belongs to another graph".into(),
+                ));
+            }
+            if !unique.contains(&node.index) {
+                unique.push(node.index);
+            }
+        }
+        // Native in-degree is 16-bit.
+        if unique.len() > u16::MAX as usize {
+            return Err(Error::Message("too many graph dependencies".into()));
+        }
+        if unique.len() <= stack.len() {
+            for (out, index) in stack.iter_mut().zip(&unique) {
+                out.write(self.nodes[*index as usize]);
+            }
+            // Only the prefix written above is exposed, and a node handle is Copy.
+            Ok(std::borrow::Cow::Borrowed(unsafe {
+                std::slice::from_raw_parts(stack.as_ptr().cast(), unique.len())
+            }))
+        } else {
+            Ok(std::borrow::Cow::Owned(
+                unique
+                    .iter()
+                    .map(|index| self.nodes[*index as usize])
+                    .collect(),
+            ))
+        }
     }
-    /// Record a byte-pattern fill over a nonempty span owned by this stream.
-    pub fn fill(&mut self, dst: View<'a>, pattern: u8) -> Result<&mut Self> {
+    fn record(&mut self, raw: sys::GraphNode) -> Node {
+        let index = self.nodes.len() as u32;
+        self.nodes.push(raw);
+        Node {
+            graph: self.id,
+            index,
+        }
+    }
+    /// Record a byte-pattern fill over a nonempty span on this device.
+    pub fn fill(&mut self, after: &[Node], dst: View<'a>, pattern: u8) -> Result<Node> {
         owns(&self.inner, dst.owner)?;
         if dst.is_empty() {
-            return Err(Error::Message("empty sequence fill".into()));
+            return Err(Error::Message("empty graph fill".into()));
         }
         let attrs = sys::GraphFill {
             dst: dst.raw,
             pattern: pattern.into(),
             pattern_size: 1,
         };
-        let (deps, count) = self.deps();
+        let mut storage = [std::mem::MaybeUninit::uninit(); 16];
+        let deps = self.resolve(after, &mut storage)?;
         let mut next = std::ptr::null_mut();
         unsafe {
             check(
-                sys::hrx_graph_add_fill_buffer_node(self.graph, deps, count, &attrs, &mut next),
+                sys::hrx_graph_add_fill_buffer_node(
+                    self.raw,
+                    deps.as_ptr(),
+                    deps.len(),
+                    &attrs,
+                    &mut next,
+                ),
                 "record fill",
             )?;
         }
-        self.last = next;
-        Ok(self)
+        Ok(self.record(next))
     }
-    /// Record a copy between equal, nonempty spans owned by this stream.
-    pub fn copy(&mut self, dst: View<'a>, src: View<'a>) -> Result<&mut Self> {
+    /// Record a copy between equal, nonempty spans on this device.
+    pub fn copy(&mut self, after: &[Node], dst: View<'a>, src: View<'a>) -> Result<Node> {
         owns(&self.inner, dst.owner)?;
         owns(&self.inner, src.owner)?;
         if dst.len() != src.len() || dst.is_empty() {
             return Err(Error::Message(
-                "sequence copy requires equal nonempty spans".into(),
+                "graph copy requires equal nonempty spans".into(),
             ));
         }
         let attrs = sys::GraphCopy {
             src: src.raw,
             dst: dst.raw,
         };
-        let (deps, count) = self.deps();
+        let mut storage = [std::mem::MaybeUninit::uninit(); 16];
+        let deps = self.resolve(after, &mut storage)?;
         let mut next = std::ptr::null_mut();
         unsafe {
             check(
-                sys::hrx_graph_add_copy_buffer_node(self.graph, deps, count, &attrs, &mut next),
+                sys::hrx_graph_add_copy_buffer_node(
+                    self.raw,
+                    deps.as_ptr(),
+                    deps.len(),
+                    &attrs,
+                    &mut next,
+                ),
                 "record copy",
             )?;
         }
-        self.last = next;
-        Ok(self)
+        Ok(self.record(next))
     }
-    /// Record a kernel invocation after the preceding sequence operation.
+    /// Record a kernel invocation.
     ///
     /// # Safety
     /// As [`Stream::dispatch`]. Constants, addresses and grid are fixed for every
-    /// replay. To change them, build a new sequence.
+    /// replay. Two nodes that touch the same span must be ordered through `after`;
+    /// the runtime will otherwise schedule them concurrently.
     pub unsafe fn dispatch(
         &mut self,
+        after: &[Node],
         kernel: &'a Kernel,
         grid: [u32; 3],
         block: [u32; 3],
         constants: &Constants,
         bindings: &[View<'a>],
-    ) -> Result<&mut Self> {
+    ) -> Result<Node> {
         if kernel._device.device != self.inner.device {
             return Err(Error::Message("kernel belongs to another device".into()));
         }
@@ -1209,7 +1294,7 @@ impl<'a> SequenceBuilder<'a> {
             || kernel.info.constant_byte_length as usize != constants.len
         {
             return Err(Error::Message(
-                "sequence binding or constant byte count mismatch".into(),
+                "graph binding or constant byte count mismatch".into(),
             ));
         }
         // graph.c copies constants and binding descriptors into its arena, but
@@ -1229,50 +1314,73 @@ impl<'a> SequenceBuilder<'a> {
             binding_count: bindings.len(),
             flags: 0,
         };
-        let (deps, count) = self.deps();
+        let mut storage = [std::mem::MaybeUninit::uninit(); 16];
+        let deps = self.resolve(after, &mut storage)?;
         let mut next = std::ptr::null_mut();
         unsafe {
             check(
-                sys::hrx_graph_add_kernel_node(self.graph, deps, count, &attrs, &mut next),
+                sys::hrx_graph_add_kernel_node(
+                    self.raw,
+                    deps.as_ptr(),
+                    deps.len(),
+                    &attrs,
+                    &mut next,
+                ),
                 "record kernel",
             )?;
         }
-        self.last = next;
-        Ok(self)
+        Ok(self.record(next))
     }
-    /// Instantiate the recording, retaining native resources independently of its borrows.
-    pub fn finish(self) -> Result<FixedSequence> {
+    /// Record a node that does no work and exists only to collect dependencies.
+    ///
+    /// Joining many nodes once is cheaper than making every later node depend on
+    /// all of them, since each edge costs scheduling time.
+    pub fn join(&mut self, after: &[Node]) -> Result<Node> {
+        let mut storage = [std::mem::MaybeUninit::uninit(); 16];
+        let deps = self.resolve(after, &mut storage)?;
+        let mut next = std::ptr::null_mut();
+        unsafe {
+            check(
+                sys::hrx_graph_add_empty_node(self.raw, deps.as_ptr(), deps.len(), &mut next),
+                "record join",
+            )?;
+        }
+        Ok(self.record(next))
+    }
+    /// Instantiate the recording, retaining native resources independently of its
+    /// borrows. A cyclic graph is rejected here.
+    pub fn finish(self) -> Result<GraphExec> {
         let mut raw = std::ptr::null_mut();
         unsafe {
             check(
-                sys::hrx_graph_instantiate(self.graph, 0, &mut raw),
-                "instantiate sequence",
+                sys::hrx_graph_instantiate(self.raw, 0, &mut raw),
+                "instantiate graph",
             )?;
         }
-        Ok(FixedSequence {
+        Ok(GraphExec {
             raw,
             inner: self.inner.clone(),
         })
     }
 }
-impl Drop for SequenceBuilder<'_> {
+impl Drop for Graph<'_> {
     fn drop(&mut self) {
         unsafe {
-            sys::hrx_graph_release(self.graph);
+            sys::hrx_graph_release(self.raw);
         }
     }
 }
-/// An instantiated sequence. Native instantiation retains HAL allocations and
+/// An instantiated graph. Native instantiation retains HAL allocations and
 /// executables; the Arc keeps their device and originating stream alive.
 /// Recording borrows its inputs until finish; replay no longer borrows them.
-pub struct FixedSequence {
+pub struct GraphExec {
     raw: sys::GraphExec,
     inner: std::sync::Arc<Inner>,
 }
 // Exclusive launch access; the originating stream is checked on replay. The native
 // executable owns its recorded HAL resources and semaphore state.
-unsafe impl Send for FixedSequence {}
-impl Drop for FixedSequence {
+unsafe impl Send for GraphExec {}
+impl Drop for GraphExec {
     fn drop(&mut self) {
         unsafe {
             sys::hrx_graph_exec_release(self.raw);
@@ -1362,15 +1470,17 @@ impl std::fmt::Debug for Stream {
     }
 }
 
-impl std::fmt::Debug for SequenceBuilder<'_> {
+impl std::fmt::Debug for Graph<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SequenceBuilder").finish_non_exhaustive()
+        f.debug_struct("Graph")
+            .field("nodes", &self.nodes.len())
+            .finish_non_exhaustive()
     }
 }
 
-impl std::fmt::Debug for FixedSequence {
+impl std::fmt::Debug for GraphExec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FixedSequence").finish_non_exhaustive()
+        f.debug_struct("GraphExec").finish_non_exhaustive()
     }
 }
 
@@ -1485,77 +1595,56 @@ mod staging_tests {
 mod dag_probe {
     use super::*;
 
-    /// Does the native graph overlap independent nodes, or linearize them?
-    /// Latency-bound by construction: 64 tiny fills, so bandwidth cannot confound
-    /// the comparison. A serial chain pays one dependency edge per node; the
-    /// independent graph declares none.
+    /// Declared edges cost scheduling time, so the graph API must be able to omit
+    /// the ones a workload does not need. Latency-bound by construction: 64 tiny
+    /// fills, so bandwidth cannot confound the comparison.
     #[test]
     #[ignore = "requires gfx1151"]
-    fn independent_nodes_versus_a_serial_chain() -> Result<()> {
+    fn independent_nodes_beat_a_serial_chain() -> Result<()> {
         const NODES: usize = 64;
         let mut stream = Stream::open()?;
         let buffers: Vec<Buffer> = (0..NODES)
             .map(|_| stream.allocate(4096))
             .collect::<Result<_>>()?;
+        let mut timings = Vec::new();
         for chained in [true, false] {
-            let mut graph = std::ptr::null_mut();
-            unsafe {
-                check(
-                    sys::hrx_graph_create(stream.inner.device, 0, &mut graph),
-                    "create",
-                )?;
-                let mut last: sys::GraphNode = std::ptr::null_mut();
-                for buffer in &buffers {
-                    let attrs = sys::GraphFill {
-                        dst: buffer.binding().raw,
-                        pattern: 0x3c,
-                        pattern_size: 1,
-                    };
-                    let (deps, count) = if chained && !last.is_null() {
-                        (&raw const last, 1)
-                    } else {
-                        (std::ptr::null(), 0)
-                    };
-                    let mut node = std::ptr::null_mut();
-                    check(
-                        sys::hrx_graph_add_fill_buffer_node(graph, deps, count, &attrs, &mut node),
-                        "record fill",
-                    )?;
-                    last = node;
-                }
-                let mut exec = std::ptr::null_mut();
-                check(
-                    sys::hrx_graph_instantiate(graph, 0, &mut exec),
-                    "instantiate",
-                )?;
-                sys::hrx_graph_release(graph);
-                let mut sequence = FixedSequence {
-                    raw: exec,
-                    inner: stream.inner.clone(),
+            let mut graph = stream.graph()?;
+            let mut previous: Option<Node> = None;
+            for buffer in &buffers {
+                let after: &[Node] = match (chained, &previous) {
+                    (true, Some(node)) => std::slice::from_ref(node),
+                    _ => &[],
                 };
-                for _ in 0..3 {
-                    stream.launch_sequence(&mut sequence)?;
-                    stream.synchronize()?;
-                }
-                let mut samples = Vec::new();
-                for _ in 0..9 {
-                    let start = std::time::Instant::now();
-                    stream.launch_sequence(&mut sequence)?;
-                    stream.synchronize()?;
-                    samples.push(start.elapsed().as_secs_f64() * 1e6);
-                }
-                samples.sort_by(f64::total_cmp);
-                println!(
-                    "{:<12} {NODES} nodes: {:8.1} us total, {:6.2} us/node",
-                    if chained { "serial" } else { "independent" },
-                    samples[4],
-                    samples[4] / NODES as f64
-                );
-                let mut seen = [0u8; 4096];
-                stream.read_blocking(buffers[NODES - 1].binding(), &mut seen)?;
-                assert_eq!(seen, [0x3c; 4096], "every node ran");
+                previous = Some(graph.fill(after, buffer.binding(), 0x3c)?);
             }
+            let mut exec = graph.finish()?;
+            for _ in 0..3 {
+                stream.launch(&mut exec)?;
+                stream.synchronize()?;
+            }
+            let mut samples = Vec::new();
+            for _ in 0..9 {
+                let start = std::time::Instant::now();
+                stream.launch(&mut exec)?;
+                stream.synchronize()?;
+                samples.push(start.elapsed().as_secs_f64() * 1e6);
+            }
+            samples.sort_by(f64::total_cmp);
+            println!(
+                "{:<12} {NODES} nodes: {:8.1} us total, {:6.2} us/node",
+                if chained { "serial" } else { "independent" },
+                samples[4],
+                samples[4] / NODES as f64
+            );
+            timings.push(samples[4]);
+            let mut seen = [0u8; 4096];
+            stream.read_blocking(buffers[NODES - 1].binding(), &mut seen)?;
+            assert_eq!(seen, [0x3c; 4096], "every node ran");
         }
+        assert!(
+            timings[1] < timings[0],
+            "omitting edges should not be slower: {timings:?}"
+        );
         Ok(())
     }
 }

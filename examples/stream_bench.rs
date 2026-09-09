@@ -109,21 +109,45 @@ fn main() -> Result<()> {
     metrics.insert("dispatch_enqueue_ns", enqueue);
     metrics.insert("dispatch_complete_ns", complete);
 
-    let mut builder = stream.sequence()?;
+    // The Euler kernel accumulates in place, so every node must be ordered.
+    let mut builder = stream.graph()?;
+    let mut previous = None;
     for _ in 0..32 {
-        unsafe {
-            builder.dispatch(&kernel, [1; 3], [256, 1, 1], &constants, &bindings)?;
-        }
+        let after: &[hrx::Node] = match &previous {
+            Some(node) => std::slice::from_ref(node),
+            None => &[],
+        };
+        previous = Some(unsafe {
+            builder.dispatch(after, &kernel, [1; 3], [256, 1, 1], &constants, &bindings)?
+        });
     }
-    let mut sequence = builder.finish()?;
+    let mut chained = builder.finish()?;
     let (enqueue, ns) = measure(&mut stream, samples, 256 * 32, |stream| {
         for _ in 0..256 {
-            stream.launch_sequence(&mut sequence)?;
+            stream.launch(&mut chained)?;
         }
         Ok(())
     })?;
     metrics.insert("graph_enqueue_ns_per_replay", enqueue * 32.0);
     metrics.insert("graph_complete_ns_per_kernel", ns);
+
+    // The same 32 nodes with no declared edges. A zero timestep makes the result
+    // order-independent, so this measures scheduling cost and nothing else.
+    let mut builder = stream.graph()?;
+    for _ in 0..32 {
+        unsafe {
+            builder.dispatch(&[], &kernel, [1; 3], [256, 1, 1], &constants, &bindings)?;
+        }
+    }
+    let mut independent = builder.finish()?;
+    let (_, ns_free) = measure(&mut stream, samples, 256 * 32, |stream| {
+        for _ in 0..256 {
+            stream.launch(&mut independent)?;
+        }
+        Ok(())
+    })?;
+    metrics.insert("graph_independent_ns_per_kernel", ns_free);
+    metrics.insert("graph_edge_cost_ns", ns - ns_free);
     let mut output = vec![0; 512];
     stream.read_blocking(sample.binding(), &mut output)?;
     assert_eq!(output, ones);
