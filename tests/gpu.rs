@@ -1,6 +1,38 @@
 //! Explicit hardware suite: cargo test --all-features --test gpu -- --ignored
 use hrx::{Constants, Device, Stream};
 
+/// Counts heap allocations while armed, so a test can assert that a hot path
+/// stays on the stack instead of only intending to.
+mod counting {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    thread_local! { static ARMED: Cell<bool> = const { Cell::new(false) }; }
+    pub static COUNT: AtomicUsize = AtomicUsize::new(0);
+    pub struct Counting;
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            if ARMED.try_with(|armed| armed.get()).unwrap_or(false) {
+                COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+            unsafe { System.alloc(layout) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+    /// Allocations performed by `body`.
+    pub fn count(body: impl FnOnce()) -> usize {
+        COUNT.store(0, Ordering::Relaxed);
+        ARMED.with(|armed| armed.set(true));
+        body();
+        ARMED.with(|armed| armed.set(false));
+        COUNT.load(Ordering::Relaxed)
+    }
+}
+#[global_allocator]
+static ALLOCATOR: counting::Counting = counting::Counting;
+
 #[test]
 #[ignore = "requires gfx1151"]
 fn nested_views_bound_stream_and_graph_operations() -> hrx::Result<()> {
@@ -461,5 +493,35 @@ fn graphs_fork_join_and_reject_foreign_nodes() -> hrx::Result<()> {
     stream.read_blocking(merged.binding(), &mut bytes)?;
     assert!(bytes[..1024].iter().all(|b| *b == 0xa1), "left branch ran");
     assert!(bytes[1024..].iter().all(|b| *b == 0xb2), "right branch ran");
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires gfx1151"]
+fn small_fan_in_recording_does_not_allocate() -> hrx::Result<()> {
+    let mut stream = Stream::open()?;
+    let a = stream.allocate(1024)?;
+    let b = stream.allocate(1024)?;
+    let mut graph = stream.graph()?;
+    let first = graph.fill(&[], a.binding(), 1)?;
+    let second = graph.fill(&[], b.binding(), 2)?;
+    // Warm the node vector so its growth is not attributed to dependency resolution.
+    for _ in 0..8 {
+        graph.fill(&[first], a.binding(), 3)?;
+    }
+    // A 16-entry dependency list is the documented stack capacity; the duplicate
+    // forces the dedupe path, which is where the allocation used to live.
+    let deps = [first, second, first];
+    let mut recorded = Ok(first);
+    let allocations = counting::count(|| {
+        recorded = graph.fill(&deps, b.binding(), 4);
+    });
+    recorded?;
+    assert_eq!(allocations, 0, "small fan-in must stay on the stack");
+    let mut exec = graph.finish()?;
+    stream.launch(&mut exec)?;
+    let mut bytes = [0; 1024];
+    stream.read_blocking(b.binding(), &mut bytes)?;
+    assert_eq!(bytes, [4; 1024]);
     Ok(())
 }

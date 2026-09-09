@@ -1165,39 +1165,48 @@ impl<'a> Graph<'a> {
         after: &[Node],
         stack: &'s mut [std::mem::MaybeUninit<sys::GraphNode>; 16],
     ) -> Result<std::borrow::Cow<'s, [sys::GraphNode]>> {
-        // The native sort counts in-degree per entry but clears it once, so a
-        // repeated dependency would strand a node. Collapsing here keeps the
-        // caller free to assemble `after` from overlapping stage outputs.
-        let mut unique: Vec<u32> = Vec::new();
-        for node in after {
+        let handle = |node: &Node| -> Result<sys::GraphNode> {
             if node.graph != self.id || node.index as usize >= self.nodes.len() {
                 return Err(Error::Message(
                     "dependency node belongs to another graph".into(),
                 ));
             }
-            if !unique.contains(&node.index) {
-                unique.push(node.index);
-            }
-        }
-        // Native in-degree is 16-bit.
-        if unique.len() > u16::MAX as usize {
-            return Err(Error::Message("too many graph dependencies".into()));
-        }
-        if unique.len() <= stack.len() {
-            for (out, index) in stack.iter_mut().zip(&unique) {
-                out.write(self.nodes[*index as usize]);
+            Ok(self.nodes[node.index as usize])
+        };
+        // The native sort counts in-degree per entry but clears it once, so a
+        // repeated dependency would strand a node. Collapsing here keeps the
+        // caller free to assemble `after` from overlapping stage outputs.
+        if after.len() <= stack.len() {
+            // Small fan-in is the common case and never allocates: dedupe runs
+            // against indices already on the stack, beside the handles themselves.
+            let mut seen = [0u32; 16];
+            let mut count = 0;
+            for node in after {
+                let raw = handle(node)?;
+                if seen[..count].contains(&node.index) {
+                    continue;
+                }
+                seen[count] = node.index;
+                stack[count].write(raw);
+                count += 1;
             }
             // Only the prefix written above is exposed, and a node handle is Copy.
             Ok(std::borrow::Cow::Borrowed(unsafe {
-                std::slice::from_raw_parts(stack.as_ptr().cast(), unique.len())
+                std::slice::from_raw_parts(stack.as_ptr().cast(), count)
             }))
         } else {
-            Ok(std::borrow::Cow::Owned(
-                unique
-                    .iter()
-                    .map(|index| self.nodes[*index as usize])
-                    .collect(),
-            ))
+            let mut unique: Vec<sys::GraphNode> = Vec::with_capacity(after.len());
+            for node in after {
+                let raw = handle(node)?;
+                if !unique.contains(&raw) {
+                    unique.push(raw);
+                }
+            }
+            // Native in-degree is 16-bit; only a heap-sized fan-in can reach it.
+            if unique.len() > u16::MAX as usize {
+                return Err(Error::Message("too many graph dependencies".into()));
+            }
+            Ok(std::borrow::Cow::Owned(unique))
         }
     }
     fn record(&mut self, raw: sys::GraphNode) -> Node {
@@ -1377,8 +1386,14 @@ pub struct GraphExec {
     raw: sys::GraphExec,
     inner: std::sync::Arc<Inner>,
 }
-// Exclusive launch access; the originating stream is checked on replay. The native
-// executable owns its recorded HAL resources and semaphore state.
+// Send rests on native behaviour, not on anything the compiler checks. What is
+// asserted: an instantiated graph owns its recorded HAL resources and semaphore
+// state, so moving the handle between threads and launching from the receiving
+// one is sound. Rust contributes only exclusivity — launch takes `&mut` — and
+// `Arc::ptr_eq` in `Stream::launch`, which rejects a foreign stream but says
+// nothing about threads. `independent_streams_move_between_threads` exercises
+// this and is evidence, not proof; a native revision that made replay
+// thread-affine would invalidate the impl without failing to compile.
 unsafe impl Send for GraphExec {}
 impl Drop for GraphExec {
     fn drop(&mut self) {
