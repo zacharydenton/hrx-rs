@@ -105,7 +105,7 @@ fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
     let unused = allocate(4096)?;
     let c = allocate(bytes)?;
     let velocity = allocate(bytes)?;
-    for word in velocity.map_write()?.chunks_exact_mut(2) {
+    for word in velocity.map_write()?.as_chunks_mut::<2>().0 {
         word.copy_from_slice(&0x3f80u16.to_le_bytes());
     }
     let mut graph = runtime.graph();
@@ -142,7 +142,7 @@ fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
         } else {
             0x4000u16
         };
-        for word in a.map_write()?.chunks_exact_mut(2) {
+        for word in a.map_write()?.as_chunks_mut::<2>().0 {
             word.copy_from_slice(&initial.to_le_bytes());
         }
         let expected = if iteration % 2 == 0 {
@@ -157,8 +157,10 @@ fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
         }
         assert!(
             c.map_read()?
-                .chunks_exact(2)
-                .all(|word| u16::from_le_bytes([word[0], word[1]]) == expected)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .all(|word| u16::from_le_bytes(*word) == expected)
         );
     }
     TRACK.store(false, Ordering::Relaxed);
