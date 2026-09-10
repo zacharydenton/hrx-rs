@@ -123,7 +123,7 @@ fn main() -> Result<()> {
     let weights = allocate(b_bytes)?;
     let ones = allocate(a_bytes)?;
     for buffer in [&weights, &ones] {
-        for word in buffer.map_write()?.chunks_exact_mut(2) {
+        for word in buffer.map_write()?.as_chunks_mut::<2>().0 {
             word.copy_from_slice(&0x3f80u16.to_le_bytes());
         }
     }
@@ -160,8 +160,10 @@ fn main() -> Result<()> {
     let requests_per_second = 100.0 / start.elapsed().as_secs_f64();
     for c in [&c0, &c1] {
         if c.map_read()?
-            .chunks_exact(4)
-            .any(|v| f32::from_le_bytes(v.try_into().unwrap()) != k as f32 + 1.0)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|v| f32::from_le_bytes(*v) != k as f32 + 1.0)
         {
             return Err(hrx::Error::Message("GEMM pipeline output mismatch".into()));
         }
