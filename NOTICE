@@ -59,7 +59,7 @@ libelf is distributed under LGPL-3.0-or-later; libnuma under LGPL-2.1-only.
 Corresponding source, modification/build scripts, and all license texts are
 available alongside the binary archive at no charge:
 https://github.com/zacharydenton/hrx-rs/releases/download/native-20260910-gpu-npu/hrx-native-sources.tar.gz
-SHA-256: 2425d9a60c35e08995d88546c7a21fdf879aa5749913bf1bbe374607f79e30e3
+SHA-256: 9f3f8084368396eaf7b42673a9f241777aa478466ba06abe9650e0599576d3a6
 
 You may modify or replace these shared libraries. For a local replacement,
 copy the runtime directory, replace the library while preserving its ABI,

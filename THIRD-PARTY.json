@@ -396,7 +396,7 @@
       "project": "HRX / Loom",
       "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
       "origin": "Fresh Release build of the pinned source plus the eight patches in patches/loom",
-      "sha256": "3c4c331ad196784a446a4a8c14f01df666675ca561bf19bfe6c4b233b27b0eb9",
+      "sha256": "ef70ba69b3ef53bc7202f74e0f475841fdfcae02aba50b262fa6a759b8de61f7",
       "needed": [
         "libm.so.6",
         "libc.so.6"
@@ -452,7 +452,7 @@
       "project": "HRX / Loom",
       "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
       "origin": "Fresh Release build of the pinned source plus the eight patches in patches/loom",
-      "sha256": "3c4c331ad196784a446a4a8c14f01df666675ca561bf19bfe6c4b233b27b0eb9",
+      "sha256": "ef70ba69b3ef53bc7202f74e0f475841fdfcae02aba50b262fa6a759b8de61f7",
       "needed": [
         "libm.so.6",
         "libc.so.6"
@@ -508,7 +508,7 @@
       "project": "HRX / Loom",
       "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
       "origin": "Fresh Release build of the pinned source plus the eight patches in patches/loom",
-      "sha256": "30d19ede6ca2b4648794d48a4ca0e934c1d594982f53b97f5906aacb10f594dd",
+      "sha256": "95692e2365f9ca7592d4d7b9339799e9a2cff987f210e244289cbe386e3b86a3",
       "needed": [
         "libm.so.6",
         "libstdc++.so.6",
@@ -587,15 +587,15 @@
       "sha256": "579fa63489ca4714793e90fa778b320f84527d7ebee37f1798db487e80c13cc0"
     },
     "LICENSE-HSA-headers.txt": {
-      "source_file": "hrx-ubuntu/_deps/hsa_runtime_headers-src/LICENSE.txt",
+      "source_file": "hrx-clang/_deps/hsa_runtime_headers-src/LICENSE.txt",
       "sha256": "437b7fc31bfad2be8bb6d972845fcf79ae08c817ed2c421490cf69ac9ae44701"
     },
     "LICENSE-SPIRV-Headers.txt": {
-      "source_file": "hrx-ubuntu/_deps/spirv_headers-src/LICENSE",
+      "source_file": "hrx-clang/_deps/spirv_headers-src/LICENSE",
       "sha256": "ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613"
     },
     "LICENSE-Vulkan-Headers.txt": {
-      "source_file": "hrx-ubuntu/_deps/vulkan_headers-src/LICENSES/MIT.txt",
+      "source_file": "hrx-clang/_deps/vulkan_headers-src/LICENSES/MIT.txt",
       "sha256": "1ca3502222d967f3be5751c55f6b7ee735b5383909c3b501495f54b216dbf227"
     },
     "LICENSE-ROCR.txt": {
@@ -673,7 +673,7 @@
   },
   "corresponding_source": {
     "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260910-gpu-npu/hrx-native-sources.tar.gz",
-    "sha256": "2425d9a60c35e08995d88546c7a21fdf879aa5749913bf1bbe374607f79e30e3"
+    "sha256": "9f3f8084368396eaf7b42673a9f241777aa478466ba06abe9650e0599576d3a6"
   },
   "system_dependencies_not_shipped": [
     "ld-linux-x86-64.so.2",

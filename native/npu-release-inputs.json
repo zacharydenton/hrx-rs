@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "build_image": "docker.io/library/ubuntu@sha256:019e8eb29a85e74d64925745884f2ec79aa27e3feab36353d24656f4d6b89467",
+  "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",
   "sources": {
     ".": {
       "repository": "https://github.com/amd/xdna-driver.git",

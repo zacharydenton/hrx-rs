@@ -140,7 +140,7 @@ def main():
                  'build_packages_sha256': digest(args.work / 'build-packages.txt'),
                  'license_files': {name: digest(path) for name, path in files.items() if name.startswith('LICENSE-')},
                  'changes': 'Runtime-only XDNA packaging; use pinned AIEBU ISA headers; set DSO RUNPATH to $ORIGIN (shim: $ORIGIN/lib).',
-                 'scope': 'Fresh Ubuntu 24.04 build with pinned upstream sources; package versions recorded, not a bit-reproducibility claim.'}
+                 'scope': 'Fresh Ubuntu 26.04 build with pinned upstream sources; package versions recorded, not a bit-reproducibility claim.'}
     inventory_path = stage / 'THIRD-PARTY.json'
     inventory_path.write_text(json.dumps(inventory, indent=2) + '\n')
     shutil.copyfile(inventory_path, REPO / 'native/NPU-THIRD-PARTY.json')
@@ -158,7 +158,7 @@ def main():
     archive = args.output / 'hrx-npu-linux-x86_64.tar.gz'
     pack(archive, files)
     manifest = {'schema': 1, 'component': 'npu-runtime',
-                'revision': 'HRX NPU ABI 1; XRT c826a0efc56d; XDNA 8dfda66f67a8; Ubuntu 24.04',
+                'revision': 'HRX NPU ABI 1; XRT c826a0efc56d; XDNA 8dfda66f67a8; Ubuntu 26.04',
                 'url': args.url, 'archive_sha256': digest(archive),
                 'files': {name: digest(path) for name, path in sorted(files.items())}}
     (args.output / 'npu-bundle.json').write_text(json.dumps(manifest, indent=2) + '\n')

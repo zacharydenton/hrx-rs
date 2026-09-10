@@ -12,7 +12,8 @@ for lib in xrt_coreutil xrt_core xrt_driver_xdna; do
   patchelf --set-rpath '$ORIGIN' "/work/runtime/lib/lib${lib}.so.2"
 done
 cp -L /usr/lib/x86_64-linux-gnu/libuuid.so.1 /work/runtime/lib/
-cp /usr/share/doc/libboost1.83-dev/copyright /work/runtime/LICENSE-Boost.txt
+boost_headers_package="$(dpkg-query -S /usr/include/boost/version.hpp | cut -d: -f1)"
+cp "/usr/share/doc/$boost_headers_package/copyright" /work/runtime/LICENSE-Boost.txt
 cp /usr/share/doc/libuuid1/copyright /work/runtime/LICENSE-libuuid.txt
 cp /usr/share/common-licenses/GPL-2 /work/runtime/LICENSE-GPL-2.0.txt
 cp /usr/share/common-licenses/GPL-3 /work/runtime/LICENSE-GPL-3.0.txt

@@ -6,7 +6,7 @@ libraries: the HRX ABI 1 shim, XRT coreutil, XRT core, the open-source XDNA plug
 and libuuid. XRT discovers its plugin beside its loaded library; no process-global
 `XILINX_XRT` or `LD_LIBRARY_PATH` changes are required.
 
-`npu-release-inputs.json` pins the Ubuntu 24.04 build image and every Git source
+`npu-release-inputs.json` pins the Ubuntu 26.04 build image and every Git source
 revision, including nested modules. The matching XRT revision is the one recorded
 by the XDNA repository. The only source changes disable OS/VTD packaging and
 AIEBU documentation generation (the pinned source already includes its ISA
@@ -14,8 +14,8 @@ headers). Every shipped DSO has a relative RUNPATH; the shim uses `$ORIGIN/lib`,
 and XRT uses `$ORIGIN`. The builder records all Ubuntu package versions.
 
 The host supplies normal glibc/libstdc++/libgcc libraries, the `amdxdna` kernel
-driver, NPU firmware and device access. Builds target Ubuntu 24.04's glibc 2.39
-and GCC 13 C++ runtime. The per-library symbol requirements are recorded in
+driver, NPU firmware and device access. Builds target Ubuntu 26.04's glibc 2.43
+and GCC 15 C++ runtime. The per-library symbol requirements are recorded in
 `NPU-THIRD-PARTY.json`. The GPU bundle has its own host-library requirements.
 No XRT installation, Python, ONNX Runtime or Ryzen AI SDK is required to execute
 precompiled programs through Rust. Compiling new NPU kernels remains an optional

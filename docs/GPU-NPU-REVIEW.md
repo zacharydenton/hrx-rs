@@ -59,13 +59,13 @@ using the same xclbin; it does not qualify every pair of different xclbins.
 - `doctor` on both the published runtime and ABI 1 overlay: completed all diagnostics.
 - Installation from the verified Cargo package: passed (`runner,npu`). Both
   manifests and the percentile helper are included; no images/model files ship.
-- Ubuntu 24.04 container with no system XRT: preparation, offline reuse, doctor,
+- Ubuntu 26.04 container with no system XRT: preparation, offline reuse, doctor,
   Loom compilation and both heterogeneous hardware tests passed. Loader traces
   show all three XRT libraries loading from the NPU cache component.
-- Five fresh-process scheduler comparisons with the final runtime: median ratio
-  1.022; individual ratios 1.010, 1.045, 1.022, 1.068 and 0.979. One process exceeds
-  the advisory 1.05 target. Absolute timings vary substantially, so this is not a
-  guarantee of a fixed overhead. The reference target remains nonbinding.
+- Five fresh-process scheduler comparisons with the Ubuntu 26.04 bundles:
+  median ratio 1.010; individual ratios 1.019, 1.010, 0.995, 1.008 and 1.019.
+  The 5% reference target remains advisory. These measurements do not establish
+  a speedup from changing the build distribution.
 
 
 Percentiles are a convention rather than a unique indexing rule. Nearest rank
@@ -85,8 +85,8 @@ uses `ceil(n × p / 100) - 1`: p50/p95 select indices 49/94 for 100 samples, and
   CPU-accounting caveats; preprocessing documents partially padded edge patches.
   Nine CPU benchmark tests pass, including pipe framing and shard provenance.
 
-The final GPU and NPU binaries target Ubuntu 24.04. The GPU build recipe now
-uses Clang 18 in a pinned container, avoiding dependencies on the development
-host’s newer glibc. Doctor also probes Loom, so compiler-library load failures
+The final GPU and NPU binaries target Ubuntu 26.04. The GPU build recipe now
+uses Clang 21 in a pinned container, keeping the build tied to Ubuntu 26.04’s
+glibc and standard library versions. Doctor also probes Loom, so compiler-library load failures
 appear in diagnostics. Rust 1.88, all 64 feature combinations, Clippy and rustdoc
 checks passed; the pre-existing broken Kernel documentation link is corrected.
