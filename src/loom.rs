@@ -1143,6 +1143,42 @@ pub struct KeyedKernels<K> {
 }
 
 impl<K: Eq + std::hash::Hash> KeyedKernels<K> {
+    /// The underlying batch cache and its compiler.
+    pub fn kernels(&self) -> &Kernels {
+        &self.kernels
+    }
+
+    /// Index a pending request without compiling. Hits do not call the factory
+    /// or hash source. Failed compilation remains queued for a later retry.
+    /// The factory must not reenter this index.
+    ///
+    /// # Safety
+    /// Equal keys must describe the same source and specialization. Loading is
+    /// still governed by [`Pending::resolve`]'s trusted-code contract.
+    pub unsafe fn request_or_insert_with<S: AsRef<str>>(
+        &self,
+        stream: &crate::Stream,
+        key: K,
+        request: impl FnOnce(&K) -> Result<(S, Specialization)>,
+    ) -> Result<Pending> {
+        let mut keys = self
+            .keys
+            .lock()
+            .map_err(|_| Error::Message("kernel key index poisoned".into()))?;
+        self.kernels.0.locked()?.claim(stream)?;
+        if let Some(artifact) = keys.get(&key) {
+            return Ok(Pending {
+                key: artifact.clone(),
+                cache: self.kernels.0.clone(),
+                cell: std::sync::OnceLock::new(),
+            });
+        }
+        let (source, spec) = request(&key)?;
+        let pending = self.kernels.request(source.as_ref(), &spec)?;
+        keys.insert(key, pending.key.clone());
+        Ok(pending)
+    }
+
     /// Return the kernel named by `key`, constructing its request only on a miss.
     ///
     /// Failed requests are not indexed and can be retried. The factory is run
@@ -1167,7 +1203,18 @@ impl<K: Eq + std::hash::Hash> KeyedKernels<K> {
             let mut state = self.kernels.0.locked()?;
             state.claim(stream)?;
             if let Some(artifact) = keys.get(&key) {
-                return Ok(state.ready[artifact].clone());
+                if let Some(kernel) = state.ready.get(artifact) {
+                    return Ok(kernel.clone());
+                }
+                let pending = Pending {
+                    key: artifact.clone(),
+                    cache: self.kernels.0.clone(),
+                    cell: std::sync::OnceLock::new(),
+                };
+                drop(state);
+                drop(keys);
+                // Safety: equal keys identify the source vouched for by the caller.
+                return unsafe { pending.resolve(stream) }.cloned();
             }
         }
         let (source, spec) = request(&key)?;
