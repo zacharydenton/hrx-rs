@@ -600,7 +600,11 @@ mod tests {
 pub struct Kernels {
     compiler: Compiler,
     state: Arc<Mutex<Loaded>>,
+    report: Option<Reporter>,
 }
+
+/// Called with each artifact a [`Kernels`] builds. See [`Kernels::reporting`].
+type Reporter = Arc<dyn Fn(&Artifact) + Send + Sync>;
 
 #[derive(Default)]
 struct Loaded {
@@ -639,6 +643,24 @@ impl Kernels {
         Self {
             compiler,
             state: Arc::new(Mutex::new(Loaded::default())),
+            report: None,
+        }
+    }
+
+    /// Call `report` with each artifact as it is built, once, before it loads.
+    ///
+    /// A cache that returned only kernels would swallow what the compiler said
+    /// about them: warnings, and the backend remarks that are the only warning
+    /// a kernel is spilling registers. Cache hits report nothing, having built
+    /// nothing.
+    pub fn reporting(mut self, report: impl Fn(&Artifact) + Send + Sync + 'static) -> Self {
+        self.report = Some(Arc::new(report));
+        self
+    }
+
+    fn reported(&self, artifact: &Artifact) {
+        if let Some(report) = &self.report {
+            report(artifact);
         }
     }
 
@@ -679,6 +701,7 @@ impl Kernels {
             }
         }
         let artifact = module.compile(spec)?;
+        self.reported(&artifact);
         // Safety: the caller vouched for the source this artifact came from.
         let kernel = unsafe { stream.load_artifact(&artifact) }?;
         self.locked()?.ready.insert(key, kernel.clone());
@@ -733,12 +756,15 @@ impl Kernels {
         for ((key, _, _), built) in waiting.iter().zip(self.compiler.compile_all(&requests)) {
             match built {
                 // Safety: the caller vouched for the source when requesting it.
-                Ok(artifact) => match unsafe { stream.load_artifact(&artifact) } {
-                    Ok(kernel) => {
-                        self.locked()?.ready.insert(key.clone(), kernel);
+                Ok(artifact) => {
+                    self.reported(&artifact);
+                    match unsafe { stream.load_artifact(&artifact) } {
+                        Ok(kernel) => {
+                            self.locked()?.ready.insert(key.clone(), kernel);
+                        }
+                        Err(error) => failure = failure.or(Some(error)),
                     }
-                    Err(error) => failure = failure.or(Some(error)),
-                },
+                }
                 Err(error) => failure = failure.or(Some(error)),
             }
         }
@@ -779,6 +805,7 @@ impl Clone for Kernels {
         Self {
             compiler: self.compiler.clone(),
             state: self.state.clone(),
+            report: self.report.clone(),
         }
     }
 }
