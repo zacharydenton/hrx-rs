@@ -904,6 +904,19 @@ impl Pending {
 }
 
 impl Kernels {
+    /// Index this cache by a caller's compact request key.
+    ///
+    /// Source hashing and specialization construction happen only on a key
+    /// miss. Distinct caller keys that name the same artifact still share one
+    /// loaded executable. Include every input that changes the source or
+    /// specialization in the key.
+    pub fn keyed<K>(self) -> KeyedKernels<K> {
+        KeyedKernels {
+            kernels: self,
+            keys: Mutex::new(HashMap::new()),
+        }
+    }
+
     /// An empty cache over a compiler. Clone it to share one cache.
     pub fn new(compiler: Compiler) -> Self {
         Self(Arc::new(Cache {
@@ -964,6 +977,17 @@ impl Kernels {
     ) -> Result<crate::Kernel> {
         let module = self.0.compiler.module(source);
         let key = module.key(spec)?;
+        // Safety: the caller vouched for this module's source.
+        unsafe { self.get_module(stream, &module, key, spec) }
+    }
+
+    unsafe fn get_module(
+        &self,
+        stream: &crate::Stream,
+        module: &Module,
+        key: String,
+        spec: &Specialization,
+    ) -> Result<crate::Kernel> {
         {
             let mut state = self.0.locked()?;
             state.claim(stream)?;
@@ -1104,6 +1128,58 @@ impl Cache {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+}
+
+/// A caller-key index over HRX's artifact-keyed loaded kernels.
+///
+/// Create with [`Kernels::keyed`]. A hit checks device ownership and returns a
+/// shared executable without hashing source, serializing a specialization or
+/// invoking the request factory. The index stores artifact identities, not a
+/// second collection of executables.
+pub struct KeyedKernels<K> {
+    kernels: Kernels,
+    keys: Mutex<HashMap<K, String>>,
+}
+
+impl<K: Eq + std::hash::Hash> KeyedKernels<K> {
+    /// Return the kernel named by `key`, constructing its request only on a miss.
+    ///
+    /// Failed requests are not indexed and can be retried. The factory is run
+    /// under the index lock; it and the reporting callback must not reenter
+    /// this index. The underlying cache's device restriction applies to hits too.
+    ///
+    /// # Safety
+    /// As [`Kernels::get`]. Equal keys must always describe the same source and
+    /// specialization, including compiler-report settings. The factory is not
+    /// evaluated on a hit, so changing it does not change a cached kernel.
+    pub unsafe fn get_or_insert_with<'s>(
+        &self,
+        stream: &crate::Stream,
+        key: K,
+        request: impl FnOnce(&K) -> Result<(&'s str, Specialization)>,
+    ) -> Result<crate::Kernel> {
+        let mut keys = self
+            .keys
+            .lock()
+            .map_err(|_| Error::Message("kernel key index poisoned".into()))?;
+        {
+            let mut state = self.kernels.0.locked()?;
+            state.claim(stream)?;
+            if let Some(artifact) = keys.get(&key) {
+                return Ok(state.ready[artifact].clone());
+            }
+        }
+        let (source, spec) = request(&key)?;
+        let module = self.kernels.compiler().module(source);
+        let artifact = module.key(&spec)?;
+        // Safety: the caller vouched for the source and the request key.
+        let kernel = unsafe {
+            self.kernels
+                .get_module(stream, &module, artifact.clone(), &spec)
+        }?;
+        keys.insert(key, artifact);
+        Ok(kernel)
     }
 }
 
