@@ -26,6 +26,11 @@ shared native runtime setup, compiler pinning, and runnable hardware validation.
 The public GPU bundle currently predates the shared-memory native extension;
 the guide describes how to build and select the matching interop runtime.
 
+The [SCRFD + DINOv3 throughput benchmark](scripts/vision-bench/README.md) compares
+GPU-only and mixed GPU/NPU image processing with standalone model backends.
+Its [measured results](scripts/vision-bench/RESULTS.md) cover application throughput
+using those runtimes; they do not measure the Rust scheduler.
+
 ## Use from Rust
 
 ```toml
@@ -90,6 +95,16 @@ hrx info
 [bundle.json](bundle.json). GPU and compiler APIs also provision it on first use.
 For a matching local archive, run `hrx prepare /path/to/bundle.tar.gz`.
 Once prepared, `HRX_OFFLINE=1` disables network provisioning.
+
+For GPU + NPU support from this PR, install the checkout with
+`cargo install --path . --features runner,npu`, then run `hrx prepare` and
+`hrx doctor`. This provisions both user-space runtimes, including XRT; no separate
+XRT, Python or Ryzen AI SDK installation is needed for precompiled NPU programs.
+Linux GPU/NPU drivers, firmware and device permissions remain host prerequisites.
+The new native assets are staged, awaiting publication; use matching local archives
+until then. The published 0.2.0 crate does not include NPU support.
+See [the installation guide](docs/GPU-NPU.md#native-setup).
+
 
 | Setting | Purpose |
 | --- | --- |

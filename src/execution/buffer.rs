@@ -41,6 +41,10 @@ impl Visibility {
             visible: [true, false, false],
         }
     }
+    #[cfg(any(test, feature = "npu"))]
+    pub fn sync_to_device(&self, consumer: Engine) -> bool {
+        self.writer == Engine::Host || consumer == Engine::Npu
+    }
     pub fn wrote(&mut self, engine: Engine) {
         self.writer = engine;
         self.visible = [false; 3];
@@ -125,6 +129,15 @@ impl Buffer {
         Ok(WriteGuard { buffer: self })
     }
     fn acquire(&self, write: bool, wait: bool) -> Result<()> {
+        self.acquire_with(write, wait, || self.storage.make_visible(Engine::Host))
+    }
+    // Fault-injection seam for testing lease rollback when cache maintenance fails.
+    pub(super) fn acquire_with(
+        &self,
+        write: bool,
+        wait: bool,
+        make_visible: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
         if self.storage.pointer.is_null() {
             return Err(Error::Unsupported(
                 "GPU-local memory is not host mapped; use an explicit graph copy to shared storage"
@@ -162,12 +175,26 @@ impl Buffer {
                 .wait(scheduler)
                 .unwrap_or_else(|e| e.into_inner());
         }
-        self.storage.make_visible(Engine::Host)?;
         let mut host = self.storage.host.lock().unwrap_or_else(|e| e.into_inner());
         if write {
             host.writer = true;
         } else {
             host.readers += 1;
+        }
+        // Reserve the lease while submissions are excluded, then let unrelated
+        // allocations proceed during potentially expensive cache maintenance.
+        drop(host);
+        drop(scheduler);
+        if let Err(error) = make_visible() {
+            let mut host = self.storage.host.lock().unwrap_or_else(|e| e.into_inner());
+            if write {
+                host.writer = false;
+            } else {
+                host.readers -= 1;
+            }
+            drop(host);
+            core.host_changed.notify_all();
+            return Err(error);
         }
         Ok(())
     }
@@ -235,8 +262,9 @@ impl Storage {
         #[cfg(feature = "npu")]
         if let Some(bo) = &self.bo {
             // Only cross-engine transitions require maintenance. Producer work
-            // has already completed before this method can be reached.
-            bo.sync(engine == Engine::Npu, self.bytes)
+            // has already completed before this method can be reached. Host-dirty
+            // lines must be flushed even when the consumer is the GPU.
+            bo.sync(visibility.sync_to_device(engine), self.bytes)
                 .map_err(Error::Message)?;
             self.runtime
                 .core

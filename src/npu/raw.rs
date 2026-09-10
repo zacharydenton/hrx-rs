@@ -420,6 +420,10 @@ impl Context {
     /// NPU runs while the caller does host work; call `handle.wait(timeout)` to block on completion. Inputs
     /// must be synced TO_DEVICE before this, and the output synced FROM_DEVICE after wait() — same as `run`.
     ///
+    /// This convenience method requires the same owning context. For retained
+    /// buffers shared across contexts, use [`Self::run_start_shared`] and check
+    /// its device and memory-bank obligations.
+    ///
     /// # Safety
     ///
     /// The opaque instruction stream must be compiled for this xclbin and its
@@ -437,7 +441,7 @@ impl Context {
             .iter()
             .all(|bo| Arc::ptr_eq(&bo.inner.ctx, &self.inner))
         {
-            return Err("BO used with a different XRT context".into());
+            return Err("BO used with a different XRT context; use unsafe run_start_shared after validating device and bank compatibility".into());
         }
         self.run_start_inner(insts, insts_nbytes, a, b, c)
     }
@@ -723,6 +727,12 @@ pub(crate) struct PreparedRun {
 // creator-thread affinity. Bound arguments remain retained for its lifetime.
 unsafe impl Send for PreparedRun {}
 impl PreparedRun {
+    /// # Safety
+    /// Instructions must belong to this context and describe accesses within the
+    /// arguments. Each argument must be on the same physical device and in the
+    /// kernel argument's memory group; its owning context may differ. The caller
+    /// must exclude conflicting accesses during each execution and perform cache
+    /// maintenance before handing the arguments between engines.
     pub(crate) unsafe fn new(
         context: &Context,
         instructions: &Bo,
@@ -780,4 +790,11 @@ impl Drop for PreparedRun {
             std::mem::forget(resources);
         }
     }
+}
+
+// XRT xrt/detail/xrt_mem.h: group IDs encode bank in bits 0..15 and
+// xclbin slot in bits 16..23. xrt_kernel.cpp::validate_bo_at_index compares
+// the bank alone; a slot selects a context, not a different host memory bank.
+pub(crate) fn memory_bank(group: i32) -> u16 {
+    group as u16
 }

@@ -1,0 +1,18 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 305953d4..8136a022 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -63,7 +63,12 @@ target_compile_definitions(aiebu_zstd PRIVATE ZSTD_DISABLE_ASM)
+ message("-- AIEBU_NATIVE_BUILD: ${AIEBU_NATIVE_BUILD}")
+ add_subdirectory(src/cpp)
+ 
+-add_subdirectory(specification)
++# HRX uses the checked-in ISA headers from this pinned source revision.
++# Do not regenerate docs or fetch unpinned documentation tools during a runtime build.
++option(AIEBU_GENERATE_SPEC "Regenerate ISA specification and documentation" OFF)
++if(AIEBU_GENERATE_SPEC)
++  add_subdirectory(specification)
++endif()
+ 
+ if (AIEBU_CTRLCODE_CODEGEN)
+   add_subdirectory(lib)

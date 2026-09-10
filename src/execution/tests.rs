@@ -1,5 +1,9 @@
+#[path = "../benchmark_statistics.rs"]
+mod percentiles;
 use super::graph::{Backend, NodeState, Operation, Prepared, Slot, Use};
 use super::*;
+#[cfg(feature = "npu")]
+use percentiles::percentile;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -379,10 +383,44 @@ fn heterogeneous_latency_against_direct_backend() -> Result<()> {
     assert!(c.map_read()?.iter().all(|&b| b == 0x3d));
     println!(
         "paired_direct_p50_us={:.3} scheduled_p50_us={:.3} ratio={:.3} scheduled_p95_us={:.3}",
-        baseline[50] * 1e6,
-        scheduled[50] * 1e6,
-        scheduled[50] / baseline[50],
-        scheduled[95] * 1e6
+        percentile(&baseline, 50) * 1e6,
+        percentile(&scheduled, 50) * 1e6,
+        percentile(&scheduled, 50) / percentile(&baseline, 50),
+        percentile(&scheduled, 95) * 1e6
     );
     Ok(())
+}
+
+#[test]
+fn host_sync_releases_scheduler_lock_and_rolls_back_failed_leases() {
+    let runtime = Runtime::new().unwrap();
+    let buffer = buffer(&runtime);
+    for write in [false, true] {
+        let result = buffer.acquire_with(write, false, || {
+            assert!(runtime.inner.core.state.try_lock().is_ok());
+            let graph = mock(&runtime, Engine::Gpu, &buffer, Access::Write, || Ok(()));
+            assert!(matches!(graph.submit(), Err(Error::Busy(_))));
+            Err(Error::Message("injected sync failure".into()))
+        });
+        assert!(result.is_err());
+        // Neither a failed reader nor a failed writer leaves a phantom lease.
+        drop(buffer.try_map_write().unwrap());
+    }
+}
+
+#[test]
+fn cache_transitions_flush_host_writes_for_both_devices() {
+    for (producer, consumer, to_device) in [
+        (Engine::Host, Engine::Gpu, true),
+        (Engine::Host, Engine::Npu, true),
+        (Engine::Gpu, Engine::Host, false),
+        (Engine::Gpu, Engine::Npu, true),
+        (Engine::Npu, Engine::Host, false),
+        (Engine::Npu, Engine::Gpu, false),
+    ] {
+        let mut visibility = Visibility::new();
+        visibility.wrote(producer);
+        assert!(!visibility.visible[consumer as usize]);
+        assert_eq!(visibility.sync_to_device(consumer), to_device);
+    }
 }

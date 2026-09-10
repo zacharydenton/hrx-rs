@@ -74,27 +74,52 @@ cover the coordinated API, not calls through the low-level GPU or raw XRT APIs.
 
 ## Native setup
 
-Cargo builds and rustdoc do not require XRT or a C++ compiler. The NPU shim is
-loaded at runtime. For a development build with XRT headers and libraries installed:
+Cargo builds and rustdoc need no XRT installation, Python, ROCm SDK or C++ compiler.
+With this PR checked out:
 
 ```bash
-bash scripts/build-npu-shim.sh
-export HRX_NPU_RUNTIME_DIR="$PWD/artifacts/npu-runtime"
+cargo install --path . --features runner,npu
+hrx prepare
+hrx doctor
 ```
 
-Shared GPU buffers additionally require native HRX interop ABI 1. Rebuild the
-pinned native sources with `patches/loom/0008-export-owned-gpu-dmabuf.patch`, or
-use `scripts/build-interop-overlay.py BUILD OUTPUT` against an existing matching
-HRX build for local validation. The overlay script leaves that build unchanged.
-Point `HRX_RUNTIME_DIR` at the result plus its matching native dependencies.
-The currently published default bundle predates this extension; existing GPU-only
-low-level use continues to work with it.
+After the corresponding crate and native releases are published, use
+`cargo install hrx-rs --features runner,npu`. The published 0.2.0 crate predates
+NPU support. The native release assets pinned by this branch are staged locally
+and must be published before automatic downloads can succeed.
 
-`hrx prepare-npu MANIFEST [ARCHIVE]` installs a separately verified NPU component.
-`HRX_NPU_BUNDLE_MANIFEST` selects its pinned manifest; `HRX_OFFLINE=1` forbids
-network provisioning. Local `HRX_NPU_RUNTIME_DIR` overrides are trusted development
-inputs. `hrx doctor` reports device accessibility and configured runtime selection
-without installing drivers or compilers.
+`hrx prepare` downloads and verifies both manifests: `bundle.json` contains GPU
+interop ABI 1 and Loom, and `npu-bundle.json` contains the NPU shim, matching XRT
+core libraries, the XDNA plugin and libuuid. APIs also provision their runtime
+on first use. Precompiled NPU programs require no IRON, Python, vendor ONNX
+Runtime, Ryzen AI SDK or `xdna-vision` installation. NPU kernel compilation is
+an optional, separately configured toolchain as described below.
+
+The host still supplies Linux x86_64, its normal C/C++ runtime libraries,
+`amdgpu`/KFD, the `amdxdna` kernel driver, NPU firmware and device permissions.
+These are system prerequisites; Cargo cannot supply kernel drivers or firmware.
+The NPU binaries are built against Ubuntu 24.04 (glibc 2.39 and GCC 13 runtime).
+The GPU/Loom libraries are also built against Ubuntu 24.04.
+
+For an offline install, provide the two matching archives:
+
+```bash
+hrx prepare /path/to/gpu.tar.gz /path/to/npu.tar.gz
+HRX_OFFLINE=1 hrx doctor
+```
+
+`hrx prepare-npu` prepares only the NPU runtime; its optional `MANIFEST [ARCHIVE]`
+arguments support custom components. `HRX_NPU_BUNDLE_MANIFEST` selects a mirror or
+custom pinned runtime, and `HRX_OFFLINE=1` forbids network provisioning.
+`HRX_NPU_RUNTIME_DIR` and `HRX_RUNTIME_DIR` select trusted development runtimes.
+`hrx doctor` reports accessible devices and probes installed runtimes without
+provisioning. It checks the NPU shim ABI and linked dependencies; loading a
+particular program remains a separate hardware check.
+
+Maintainers can rebuild with `scripts/build-npu-runtime.sh`; see
+[native/NPU-RELEASE.md](../native/NPU-RELEASE.md). To develop only the shim with
+installed XRT headers/libraries, use `scripts/build-npu-shim.sh`. GPU development
+overlays remain available through `scripts/build-interop-overlay.py`.
 
 ## NPU compilation
 
@@ -155,3 +180,16 @@ allocation-free replay, the GEMM example and remaining release qualifications.
 Run `python3 scripts/qualify-npu-performance.py` with the same runtime and fixture
 environment for a five-process comparison against the 5% reference target.
 Add `--strict` only when a hard threshold is wanted.
+
+### Published runtime and alignment checks
+
+The coordinated `Graph::gpu` path requires the allocation-address query in interop
+ABI 1 even for `GpuLocal` buffers: checking view offsets alone does not prove base
+pointer alignment. The GPU bundle pinned by this branch includes this query. Its release assets
+must be published before an uncached automatic download can succeed. The
+low-level `hrx::gpu` API and coordinated GPU fill/copy operations do not gain this
+requirement. This is a native packaging limitation, not an NPU device requirement.
+
+NPU host-only and imported buffers may be passed between resident program contexts
+on the same device when their memory banks match the argument. The graph validates
+those properties and retains both contexts; it does not require context identity.

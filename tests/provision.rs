@@ -120,6 +120,36 @@ fn separate_processes_provision_the_same_cache() {
     let manifest = fixture(dir.path());
     let manifest_path = dir.path().join("manifest.json");
     fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    #[cfg(feature = "npu")]
+    let npu = {
+        let archive = dir.path().join("npu.tar.gz");
+        let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
+            fs::File::create(&archive).unwrap(),
+            flate2::Compression::default(),
+        ));
+        let bytes = b"test shim";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        tar.append_data(&mut header, "libhrx_npu.so.1", &bytes[..])
+            .unwrap();
+        tar.into_inner().unwrap().finish().unwrap();
+        let npu = hrx::npu::provision::Manifest {
+            schema: 1,
+            component: "npu-runtime".into(),
+            revision: "test".into(),
+            url: format!("file://{}", archive.display()),
+            archive_sha256: hrx::bundle::file_digest(&archive).unwrap(),
+            files: BTreeMap::from([("libhrx_npu.so.1".into(), digest(bytes))]),
+        };
+        fs::write(
+            dir.path().join("npu.json"),
+            serde_json::to_vec(&npu).unwrap(),
+        )
+        .unwrap();
+        npu
+    };
     // The cache location follows XDG, so isolate it by pointing XDG_CACHE_HOME
     // at a temporary root; hrx appends its own directory under that.
     let xdg = dir.path().join("xdg-cache");
@@ -130,8 +160,10 @@ fn separate_processes_provision_the_same_cache() {
                 .arg("prepare")
                 .env("XDG_CACHE_HOME", &xdg)
                 .env("HRX_BUNDLE_MANIFEST", &manifest_path)
+                .env("HRX_NPU_BUNDLE_MANIFEST", dir.path().join("npu.json"))
                 .env_remove("HRX_OFFLINE")
                 .env_remove("HRX_RUNTIME_DIR")
+                .env_remove("HRX_NPU_RUNTIME_DIR")
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .unwrap()
@@ -143,4 +175,26 @@ fn separate_processes_provision_the_same_cache() {
     manifest
         .verify(&cache.join("runtime").join(manifest.archive_sha256.clone()))
         .unwrap();
+    #[cfg(feature = "npu")]
+    npu.verify(&cache.join("npu-runtime").join(&npu.archive_sha256))
+        .unwrap();
+    // The CLI must reuse both components without consulting their download URLs.
+    fs::remove_file(dir.path().join("bundle.tar.gz")).unwrap();
+    #[cfg(feature = "npu")]
+    fs::remove_file(dir.path().join("npu.tar.gz")).unwrap();
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_hrx"))
+        .arg("prepare")
+        .env("XDG_CACHE_HOME", &xdg)
+        .env("HRX_BUNDLE_MANIFEST", &manifest_path)
+        .env("HRX_NPU_BUNDLE_MANIFEST", dir.path().join("npu.json"))
+        .env("HRX_OFFLINE", "1")
+        .env_remove("HRX_RUNTIME_DIR")
+        .env_remove("HRX_NPU_RUNTIME_DIR")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 }

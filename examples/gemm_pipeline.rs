@@ -1,6 +1,8 @@
 //! Real GPU preprocessing -> BF16 NPU GEMM -> GPU f32 epilogue.
 //! Usage: gemm_pipeline <row-major-bf16.xclbin> <instructions.bin> M K N
 //! Artifacts must implement A[M,K] * B[K,N] -> C[M,N] f32, using MLIR_AIE.
+#[path = "../src/benchmark_statistics.rs"]
+mod percentiles;
 use hrx::{
     Result,
     execution::{
@@ -8,6 +10,7 @@ use hrx::{
         MemoryPlacement, Runtime,
     },
 };
+use percentiles::percentile;
 use std::time::Instant;
 fn binding(bytes: usize, access: Access) -> BindingContract {
     BindingContract {
@@ -170,8 +173,8 @@ fn main() -> Result<()> {
     latency.sort_by(f64::total_cmp);
     println!(
         "M={m} K={k} N={n} p50_ms={:.3} p95_ms={:.3} pipelined_requests_s={requests_per_second:.2}",
-        latency[25] * 1e3,
-        latency[47] * 1e3
+        percentile(&latency, 50) * 1e3,
+        percentile(&latency, 95) * 1e3
     );
     println!("{}", serde_json::to_string(&after)?);
     Ok(())

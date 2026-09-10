@@ -376,9 +376,28 @@ pub struct GraphFill {
     pub pattern_size: usize,
 }
 
-/// Resolve an optional interop extension from the exact selected HRX library.
-pub(crate) unsafe fn interop_symbol<T: Copy>(name: &[u8]) -> crate::Result<T> {
+/// Optional functions and their owning library have the same process lifetime.
+pub(crate) struct InteropApi {
+    _library: libloading::Library,
+    pub allocation_address: unsafe extern "C" fn(Buffer, *mut u64) -> Status,
+    pub export_dmabuf: unsafe extern "C" fn(Buffer, *mut i32, *mut u64) -> Status,
+}
+static INTEROP: std::sync::OnceLock<Result<InteropApi, std::sync::Arc<crate::Error>>> =
+    std::sync::OnceLock::new();
+
+pub(crate) fn interop() -> crate::Result<&'static InteropApi> {
     load()?;
+    match INTEROP.get_or_init(|| resolve_interop().map_err(std::sync::Arc::new)) {
+        Ok(api) => Ok(api),
+        Err(error) => match error.as_ref() {
+            crate::Error::Unsupported(message) => Err(crate::Error::Unsupported(message.clone())),
+            _ => Err(crate::Error::Execution {
+                source: error.clone(),
+            }),
+        },
+    }
+}
+fn resolve_interop() -> crate::Result<InteropApi> {
     let directory = DIRECTORY.get().expect("loaded runtime directory");
     let library = unsafe { libloading::Library::new(directory.join("libhrx.so")) }?;
     let abi = unsafe { library.get::<unsafe extern "C" fn() -> u32>(b"hrx_interop_abi_version\0") }
@@ -392,7 +411,11 @@ pub(crate) unsafe fn interop_symbol<T: Copy>(name: &[u8]) -> crate::Result<T> {
             "incompatible shared-buffer ABI".into(),
         ));
     }
-    Ok(*unsafe { library.get::<T>(name) }?)
+    Ok(InteropApi {
+        allocation_address: *unsafe { library.get(b"hrx_buffer_allocation_address\0") }?,
+        export_dmabuf: *unsafe { library.get(b"hrx_buffer_export_dmabuf\0") }?,
+        _library: library,
+    })
 }
 
 #[cfg(test)]
