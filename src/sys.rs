@@ -13,6 +13,13 @@ pub type Stream = *mut c_void;
 pub type Buffer = *mut c_void;
 pub type Executable = *mut c_void;
 pub type Event = *mut c_void;
+pub type Semaphore = *mut c_void;
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TimelinePoint {
+    pub semaphore: Semaphore,
+    pub value: u64,
+}
 pub const EVENT_FLAG_DISABLE_TIMING: u32 = 2;
 
 /// `hrx_status_is_ok`, which the header defines as `static inline` rather than exporting.
@@ -112,6 +119,8 @@ native_api! {
     fn hrx_stream_create(device: Device, flags: u32, out_stream: *mut Stream) -> Status;
     fn hrx_stream_release(stream: Stream) -> ();
     fn hrx_stream_synchronize(stream: Stream) -> Status;
+    fn hrx_stream_get_timeline_position(stream: Stream, position: *mut TimelinePoint) -> Status;
+    fn hrx_semaphore_wait(semaphore: Semaphore, value: u64, timeout_ns: u64) -> Status;
     fn hrx_buffer_release(buffer: Buffer) -> ();
     fn hrx_stream_fill_buffer(stream: Stream,
     buffer: Buffer,

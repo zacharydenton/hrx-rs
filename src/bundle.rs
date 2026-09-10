@@ -247,13 +247,19 @@ fn directory_bytes(path: &Path) -> u64 {
         .sum()
 }
 
-/// The most recent access to anything in `path`, including `path` itself.
+/// The most recent access to a file in `path`.
 ///
-/// Reading a cached artifact updates the file's atime, not the directory's, so
-/// the entry's own timestamp would report when it was created. `None` means no
-/// timestamp could be read, which is treated as recently used: a collector that
+/// Reading a cached artifact updates the file's atime, not the directory's, so the entry's own
+/// timestamp would report when it was created — and, worse, the `read_dir` below updates it. A
+/// collector that counted the directory would refresh the clock it evicts by, and sweeping often
+/// enough would keep an unused artifact forever. Files are dated with `stat`, which updates
+/// nothing, so only the files are consulted; the directory is the fallback for an entry that holds
+/// no files at all.
+///
+/// `None` means no timestamp could be read, which is treated as recently used: a collector that
 /// deletes what it cannot date is not honouring the age it was given.
 fn last_access(path: &Path) -> Option<std::time::SystemTime> {
+    // Capture the fallback before read_dir can refresh an empty entry's atime.
     let own = fs::metadata(path).and_then(|m| m.accessed()).ok();
     let Ok(entries) = fs::read_dir(path) else {
         return own;
@@ -261,8 +267,8 @@ fn last_access(path: &Path) -> Option<std::time::SystemTime> {
     entries
         .flatten()
         .filter_map(|entry| entry.metadata().and_then(|m| m.accessed()).ok())
-        .chain(own)
         .max()
+        .or(own)
 }
 
 /// Remove cached runtime bundles other than `keep`, and compiled kernel
@@ -570,5 +576,74 @@ mod gc_tests {
         )
         .unwrap();
         assert_eq!((again.bundles, again.artifacts), (0, 0));
+    }
+
+    #[test]
+    fn empty_artifacts_are_dated_before_scanning_their_directories() {
+        let cache = tempfile::tempdir().unwrap();
+        let kernels = cache.path().join("kernels");
+        for (name, days) in [("empty-stale", 90), ("empty-fresh", 1)] {
+            let dir = kernels.join(digest(name.as_bytes()));
+            fs::create_dir_all(&dir).unwrap();
+            let when =
+                std::time::SystemTime::now() - std::time::Duration::from_secs(days * 24 * 60 * 60);
+            File::open(&dir)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_accessed(when).set_modified(when))
+                .unwrap();
+        }
+
+        let reclaimed = collect(
+            cache.path(),
+            &digest(b"keepme"),
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+        )
+        .unwrap();
+        assert_eq!(reclaimed.artifacts, 1);
+        assert!(!kernels.join(digest(b"empty-stale")).exists());
+        assert!(kernels.join(digest(b"empty-fresh")).is_dir());
+    }
+
+    /// A sweep reads every entry's directory, which updates that directory's access time. If the
+    /// collector counted it, collecting often enough would keep an unused artifact forever.
+    #[test]
+    fn a_sweep_is_not_a_use_of_what_it_spares() {
+        let cache = tempfile::tempdir().unwrap();
+        let kernels = cache.path().join("kernels");
+        let dir = kernels.join(digest(b"idle"));
+        fs::create_dir_all(&dir).unwrap();
+        let when = std::time::SystemTime::now() - std::time::Duration::from_secs(30);
+        for file in ["kernel.hsaco", "artifact.json"] {
+            let path = dir.join(file);
+            fs::write(&path, vec![0u8; 16]).unwrap();
+            File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_accessed(when).set_modified(when))
+                .unwrap();
+        }
+        File::open(&dir)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_accessed(when).set_modified(when))
+            .unwrap();
+
+        let spared = collect(
+            cache.path(),
+            &digest(b"keepme"),
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap();
+        assert_eq!(spared.artifacts, 0, "still inside the window");
+
+        // Nothing has read the artifact since; only the collector has looked at it.
+        let swept = collect(
+            cache.path(),
+            &digest(b"keepme"),
+            std::time::Duration::from_secs(10),
+        )
+        .unwrap();
+        assert_eq!(swept.artifacts, 1, "a previous sweep is not a use");
+        assert!(!dir.exists());
     }
 }

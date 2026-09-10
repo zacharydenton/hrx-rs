@@ -1123,10 +1123,10 @@ static NEXT_GRAPH_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 /// up to eight concurrently — so declaring only the edges that exist is what lets
 /// it overlap anything.
 ///
-/// The edges are not free. 64 tiny fill nodes replay in roughly 151 us as a fully
-/// serial chain and 88 us with no declared dependencies on gfx1151, about 0.95 us
-/// per edge. Workstream parallelism additionally needs a run of at least 16
-/// schedulable nodes, so large graphs benefit most.
+/// Dependencies affect barriers and partitioning; there is no fixed cost per
+/// edge. The pinned scheduler considers additional workstreams only after the
+/// first 16 recordable nodes of a partition, and an empty join node ends that
+/// partition. Declaring branches permits overlap but does not guarantee it.
 ///
 /// A dependency can only name an already-recorded node, so a recording is
 /// acyclic by construction and every edge points forward. That also keeps
@@ -1174,15 +1174,36 @@ impl Stream {
         })
     }
     /// Replay an instantiated graph on its original stream.
+    ///
+    /// A native submission failure may leave partial work in flight. Such a
+    /// graph cannot be replayed again and its native resources are retained on
+    /// drop because completion is unknown. Rejecting a foreign stream does not
+    /// invalidate the graph.
     pub fn launch(&mut self, graph: &mut GraphExec) -> Result<()> {
         if !std::sync::Arc::ptr_eq(&graph.inner, &self.inner) {
             return Err(Error::Message("graph belongs to another stream".into()));
         }
+        if matches!(graph.completion, GraphCompletion::Failed) {
+            return Err(Error::Message(
+                "graph has an untracked failed launch".into(),
+            ));
+        }
+        // A native launch can fail after submitting only part of its work. In
+        // that case the stream timeline does not cover everything submitted:
+        // neither an older fence nor a later successful launch makes release safe.
+        graph.completion = GraphCompletion::Failed;
         unsafe {
             check(
                 sys::hrx_graph_exec_launch(graph.raw, self.inner.stream),
                 "launch graph",
-            )
+            )?;
+            let mut point = sys::TimelinePoint::default();
+            check(
+                sys::hrx_stream_get_timeline_position(self.inner.stream, &mut point),
+                "snapshot graph completion",
+            )?;
+            graph.completion = GraphCompletion::Submitted(point);
+            Ok(())
         }
     }
 }
@@ -1308,8 +1329,8 @@ impl<'a> Graph<'a> {
     ///
     /// # Safety
     /// As [`Stream::dispatch`]. Constants, addresses and grid are fixed for every
-    /// replay. Two nodes that touch the same span must be ordered through `after`;
-    /// the runtime will otherwise schedule them concurrently.
+    /// replay. Nodes that access overlapping spans, with at least one write,
+    /// must be ordered through `after`. Shared read-only weights need no edge.
     pub unsafe fn dispatch(
         &mut self,
         after: &[Node],
@@ -1371,8 +1392,9 @@ impl<'a> Graph<'a> {
     }
     /// Record a node that does no work and exists only to collect dependencies.
     ///
-    /// Joining many nodes once is cheaper than making every later node depend on
-    /// all of them, since each edge costs scheduling time.
+    /// The pinned runtime gives this node its own partition and queue barrier.
+    /// For one consumer, pass the producer nodes directly to that operation.
+    /// A join can express a shared dependency, but is not necessarily cheaper.
     pub fn join(&mut self, after: &[Node]) -> Result<Node> {
         let mut storage = [std::mem::MaybeUninit::uninit(); 16];
         let deps = self.resolve(after, &mut storage)?;
@@ -1398,6 +1420,7 @@ impl<'a> Graph<'a> {
         Ok(GraphExec {
             raw,
             inner: self.inner.clone(),
+            completion: GraphCompletion::Idle,
         })
     }
 }
@@ -1411,9 +1434,19 @@ impl Drop for Graph<'_> {
 /// An instantiated graph. Native instantiation retains HAL allocations and
 /// executables; the Arc keeps their device and originating stream alive.
 /// Recording borrows its inputs until finish; replay no longer borrows them.
+/// Drop waits for its last replay, without submitting or waiting for later
+/// stream work. A graph that has never been launched is released immediately.
 pub struct GraphExec {
     raw: sys::GraphExec,
     inner: std::sync::Arc<Inner>,
+    completion: GraphCompletion,
+}
+
+enum GraphCompletion {
+    Idle,
+    // The semaphore is borrowed from the stream retained by GraphExec::inner.
+    Submitted(sys::TimelinePoint),
+    Failed,
 }
 // Send rests on native behaviour, not on anything the compiler checks. What is
 // asserted: an instantiated graph owns its recorded HAL resources and semaphore
@@ -1423,21 +1456,27 @@ pub struct GraphExec {
 // nothing about threads. `independent_streams_move_between_threads` exercises
 // this and is evidence, not proof; a native revision that made replay
 // thread-affine would invalidate the impl without failing to compile.
+// Drop waits only on a captured semaphore/value pair, never on mutable stream
+// state: the original Stream may be recording on another thread by then.
 unsafe impl Send for GraphExec {}
 impl Drop for GraphExec {
     fn drop(&mut self) {
         // Unlike a buffer, whose storage the command buffer retains, releasing
         // an executable graph that is still replaying frees native structures
         // the device is reading: the observed failure is an AMDGPU memory
-        // access fault, not an error a caller could handle. Draining here keeps
-        // the handle contract uniform -- dropping is always safe -- at the cost
-        // of a wait that only happens at teardown. A failed wait is no proof
-        // the replay is idle, so the handle leaks rather than freeing early.
-        let drained = check(
-            unsafe { sys::hrx_stream_synchronize(self.inner.stream) },
-            "hrx_stream_synchronize",
-        )
-        .is_ok();
+        // access fault, not an error a caller could handle. Wait for the last
+        // replay's immutable completion point, without flushing or reading the
+        // stream's current position. A failed launch or wait is no proof the
+        // replay is idle, so the native graph leaks rather than freeing early.
+        let drained = match self.completion {
+            GraphCompletion::Idle => true,
+            GraphCompletion::Submitted(point) => check(
+                unsafe { sys::hrx_semaphore_wait(point.semaphore, point.value, u64::MAX) },
+                "wait for graph completion",
+            )
+            .is_ok(),
+            GraphCompletion::Failed => false,
+        };
         if drained {
             unsafe { sys::hrx_graph_exec_release(self.raw) };
         }
@@ -1553,6 +1592,53 @@ impl std::fmt::Debug for Submission<'_> {
 }
 
 const STAGING_LIMIT: usize = 64 * 1024 * 1024;
+
+#[cfg(test)]
+mod graph_completion_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires gfx1151"]
+    fn dropping_a_graph_on_another_thread_does_not_submit_pending_work() -> Result<()> {
+        let mut stream = Stream::open()?;
+        let buffer = stream.allocate(4096)?;
+        let mut graph = stream.graph()?;
+        graph.fill(&[], buffer.binding(), 1)?;
+        let mut replay = graph.finish()?;
+        // A later replay must replace the earlier completion point.
+        stream.launch(&mut replay)?;
+        stream.launch(&mut replay)?;
+        let mut before = sys::TimelinePoint::default();
+        unsafe {
+            check(
+                sys::hrx_stream_get_timeline_position(stream.inner.stream, &mut before),
+                "snapshot timeline before drop",
+            )?;
+        }
+        stream.fill(buffer.binding(), 2)?;
+        std::thread::scope(|scope| {
+            let dropper = scope.spawn(move || drop(replay));
+            for _ in 0..64 {
+                stream.fill(buffer.binding(), 3).unwrap();
+            }
+            dropper.join().unwrap();
+        });
+        let mut after = sys::TimelinePoint::default();
+        unsafe {
+            check(
+                sys::hrx_stream_get_timeline_position(stream.inner.stream, &mut after),
+                "snapshot timeline after drop",
+            )?;
+        }
+        // This is deterministic even if the threads never overlap: the old
+        // destructor flushes the pending fill and advances this timeline.
+        assert_eq!(after.value, before.value, "drop submitted unrelated work");
+        let mut actual = [0; 4096];
+        stream.read_blocking(buffer.binding(), &mut actual)?;
+        assert_eq!(actual, [3; 4096]);
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod staging_tests {
