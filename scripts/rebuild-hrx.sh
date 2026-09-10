@@ -25,13 +25,10 @@ tar -xzf "$archive" -C "$source_dir" --strip-components=1
 for patch_file in "$repo_dir"/patches/loom/*.patch; do
   patch -d "$source_dir" -p1 --batch --forward < "$patch_file"
 done
-python3 "$source_dir/dev.py" --cmake-build-dir "$build_dir" cmake setup
-python3 "$source_dir/dev.py" --cmake-build-dir "$build_dir" cmake configure \
-  -G Ninja -DCMAKE_C_COMPILER=/opt/rocm/llvm/bin/clang \
-  -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++ \
-  -DCMAKE_BUILD_TYPE=Release -DLOOM_TARGET_AMDGPU=ON \
-  -DLOOM_TARGET_AMDGPU_TARGETS=gfx1151 -DIREE_ENABLE_LIBBACKTRACE=OFF \
-  -DIREE_HAL_DRIVER_AMDGPU=ON
-CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-16}" \
-  python3 "$source_dir/dev.py" --cmake-build-dir "$build_dir" cmake build \
-  loomc_shared libhrx_src_libhrx_hrx
+build_image="$(python3 - "$repo_dir" <<'PYCODE'
+import json, pathlib, sys
+print(json.loads((pathlib.Path(sys.argv[1]) / 'native/release-inputs.json').read_text())['build_image'])
+PYCODE
+)"
+podman run --rm -v "$work_dir:/work" -v "$repo_dir:/repo:ro" \
+  "$build_image" bash /repo/scripts/build-gpu-runtime-container.sh

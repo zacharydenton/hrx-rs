@@ -9,8 +9,10 @@
   a separately provisioned ABI shim. Remove the sibling Cargo dependency.
 - Add pinned IRON/AIE subprocess compilation, verified specialization caching,
   native diagnostics, hardware examples, Miri checks and NPU CI qualification.
-- Shared execution requires the new native interop ABI; the published default
-  GPU bundle has not yet been replaced. See `docs/GPU-NPU.md`.
+- Pin a rebuilt GPU bundle with interop ABI 1 and a separate relocatable NPU
+  runtime containing XRT and its XDNA plugin. With `npu` enabled, `hrx prepare`
+  provisions both; kernel drivers and firmware remain host prerequisites.
+  Native assets are staged pending publication. See `docs/GPU-NPU.md`.
 
 ## 0.2.0 — 2026-09-09
 

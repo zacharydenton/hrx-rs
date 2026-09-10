@@ -8,26 +8,21 @@ pub mod compiler;
 pub mod provision;
 pub mod raw;
 use crate::{Error, Result, execution::KernelContract};
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 pub(crate) fn load_shim() -> Result<libloading::Library> {
-    let directory = if let Some(path) = std::env::var_os("HRX_NPU_RUNTIME_DIR") {
-        PathBuf::from(path)
-    } else if let Some(path) = std::env::var_os("HRX_NPU_BUNDLE_MANIFEST") {
-        provision::Manifest::load(path)?.prepare(std::env::var_os("HRX_OFFLINE").is_some())?
-    } else {
-        crate::bundle::resolve()?
-    };
+    let directory = provision::resolve()?;
+    load_shim_from(&directory)
+}
+
+fn load_shim_from(directory: &Path) -> Result<libloading::Library> {
     if directory.join("component.json").is_file() {
-        provision::Manifest::load(directory.join("component.json"))?.verify(&directory)?;
+        provision::Manifest::load(directory.join("component.json"))?.verify(directory)?;
     }
     let path = directory.join("libhrx_npu.so.1");
     let library = unsafe { libloading::Library::new(&path) }.map_err(|e| {
         Error::from(e).context(format!(
-            "loading {}; build scripts/build-npu-shim.sh or prepare an NPU runtime",
+            "loading {}; run hrx prepare (or check HRX_NPU_RUNTIME_DIR)",
             path.display()
         ))
     })?;

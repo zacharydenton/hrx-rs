@@ -1,0 +1,14 @@
+diff --git a/CMake/native.cmake b/CMake/native.cmake
+index 63198eba..7853fa87 100644
+--- a/CMake/native.cmake
++++ b/CMake/native.cmake
+@@ -40,7 +40,8 @@ if(NOT SKIP_KMOD)
+   include(${CMAKE_CURRENT_SOURCE_DIR}/CMake/version.cmake)
+ endif()
+ 
+-include(${CMAKE_CURRENT_SOURCE_DIR}/CMake/pkg.cmake)
++# HRX builds only the open-source runtime, without VTD diagnostics or OS packages.
++set(XRT_PLUGIN_VERSION_STRING "${XRT_VERSION_STRING}")
+ 
+ add_subdirectory(src)
+ 

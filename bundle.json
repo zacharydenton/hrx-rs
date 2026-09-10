@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "target": "x86_64-unknown-linux-gnu-gfx1151",
-  "revision": "HRX ecaaf7376f7d + seven patches; TheRock 26672984641",
-  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260909-reviewed/hrx-linux-x86_64-gfx1151.tar.gz",
-  "archive_sha256": "06000605de874bc972e17e90f94a3816302fdd2a17040cfaf1df1f0b70483cc4",
+  "revision": "HRX ecaaf7376f7d + eight patches (interop ABI 1); TheRock 26672984641; Ubuntu 24.04",
+  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260910-gpu-npu/hrx-linux-x86_64-gfx1151.tar.gz",
+  "archive_sha256": "b9b07aab4b47998fe93c05a387a060673c00b437577d0ff11d8ac1949c90204b",
   "files": {
     "LICENSE-AMDGPU-ISA.txt": "4b58c86ef9b8f1be198079e5b62ea5c2bea0cc2f9187d21463a9c5e4ca75d69c",
     "LICENSE-CORE-MATH.txt": "4639ae96f455d387fd2b042ce11a2713ac3ee9bfc82591182683f4ee503be011",
@@ -27,12 +27,12 @@
     "LICENSE-xz-0BSD.txt": "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1",
     "LICENSE-zlib.txt": "f293edbac5cb1cc2f7801ce3f59cb79ba30b370f663ba8376b317bece2834aa6",
     "LICENSE-zstd.txt": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8",
-    "NOTICE": "7b8f863fed23450901ed2fde6d7507c188ebb98e8428f2bf16c2e184d1b7b409",
-    "THIRD-PARTY.json": "b7eb539a4c90631060992a1fe0834348b3368df3c474885b2a27aab222deed4e",
-    "libhrx.so": "8d39a4360d137b65271447af5059773fbecce31a4a508bd8ac13b7ebcdbeec8f",
-    "libhrx.so.0": "8d39a4360d137b65271447af5059773fbecce31a4a508bd8ac13b7ebcdbeec8f",
+    "NOTICE": "e6c330aa46af1a6305a71e63efc89c72eede7a5d4113eec7dec655c7bf38b2b4",
+    "THIRD-PARTY.json": "aa30f702ca3db58a529bf71c48859c068784c935eaabf8db02d162ef38b938d3",
+    "libhrx.so": "3c4c331ad196784a446a4a8c14f01df666675ca561bf19bfe6c4b233b27b0eb9",
+    "libhrx.so.0": "3c4c331ad196784a446a4a8c14f01df666675ca561bf19bfe6c4b233b27b0eb9",
     "libhsa-runtime64.so.1": "180f6d080b9ff85bff064c2eec982e7422ac6f1c7759c81abe71528000f654dd",
-    "libloomc.so": "e66da21cc469071391a54055044bf5202a6c3d36eca4556f22d067f4e44b3fc3",
+    "libloomc.so": "30d19ede6ca2b4648794d48a4ca0e934c1d594982f53b97f5906aacb10f594dd",
     "librocm_sysdeps_bz2.so": "fe4102b002321cea17405cf9c6aa04cf46e726bea5666c40ac8639684314de02",
     "librocm_sysdeps_drm.so.2": "c439bb840caa35672a41d1e8257cf8e41f2bd630e5e99855da736ea047989df8",
     "librocm_sysdeps_drm_amdgpu.so.1": "0bb6e3cdaed7ecd2d474a613810d631d1d2dad6714700764b03e6875c899a07a",
@@ -42,6 +42,6 @@
     "librocm_sysdeps_z.so.1": "27361c0c552d2afd5ecf9079f356309ed827e9a27d35f2fc68c7b5e6b5c83199",
     "librocm_sysdeps_zstd.so.1": "5fc4ab0e6899318ece9bea43d3d397d20053418a5e40cb6bc86efe19a801c75e",
     "librocprofiler-register.so.0": "7647ed03b1e6790f6043756f178f79c08b33d63058c9b83fa726cdad78093e0c",
-    "provenance.json": "c2091a6020c27f6a99c8a65bb590b49104ae96539dc443807cc39f6931284745"
+    "provenance.json": "c8e6ea66e50032b5492e300cde6a13ff2696a191b2217370d0377690ff986ae3"
   }
 }

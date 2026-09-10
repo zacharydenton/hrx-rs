@@ -169,3 +169,60 @@ fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+#[ignore = "requires XDNA2, shared ABI 1 and HRX_TEST_NPU_DIR passthrough artifacts"]
+fn npu_bindings_survive_a_different_program_context() -> Result<()> {
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("HRX_TEST_NPU_DIR")
+            .ok_or_else(|| hrx::Error::Message("set HRX_TEST_NPU_DIR".into()))?,
+    );
+    let runtime = Runtime::new()?;
+    let owner = unsafe { runtime.npu(0)?.load_program(directory.join("x.xclbin")) }?;
+    let bytes = 1 << 20;
+    let binding = |bytes, access| BindingContract {
+        bytes,
+        alignment: 4,
+        access,
+        layout: "passthrough".into(),
+    };
+    let buffers = [
+        MemoryPlacement::NpuLocal(owner.clone()),
+        MemoryPlacement::Shared(owner.clone()),
+    ]
+    .into_iter()
+    .map(|placement| -> Result<_> {
+        Ok((
+            runtime.allocate(bytes, placement.clone())?,
+            runtime.allocate(4096, placement.clone())?,
+            runtime.allocate(bytes, placement)?,
+        ))
+    })
+    .collect::<Result<Vec<_>>>()?;
+    // Program loads are weak-cached. Drop the program before loading again so
+    // this creates a new hardware context while the BOs retain their old one.
+    drop(owner);
+    let consumer = unsafe { runtime.npu(0)?.load_program(directory.join("x.xclbin")) }?;
+    let kernel = unsafe {
+        consumer.kernel(
+            &std::fs::read(directory.join("x.bin"))?,
+            KernelContract {
+                bindings: vec![
+                    binding(bytes, Access::Read),
+                    binding(4096, Access::Read),
+                    binding(bytes, Access::Write),
+                ],
+                constants: vec![],
+            },
+        )
+    }?;
+    for (input, unused, output) in buffers {
+        input.map_write()?.fill(0x6b);
+        let mut graph = runtime.graph();
+        graph.npu(&kernel, &[input.view(), unused.view(), output.view()])?;
+        let graph = graph.prepare()?;
+        graph.submit()?.wait()?;
+        assert!(output.map_read()?.iter().all(|&byte| byte == 0x6b));
+    }
+    Ok(())
+}

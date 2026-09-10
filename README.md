@@ -91,6 +91,16 @@ hrx info
 For a matching local archive, run `hrx prepare /path/to/bundle.tar.gz`.
 Once prepared, `HRX_OFFLINE=1` disables network provisioning.
 
+For GPU + NPU support from this PR, install the checkout with
+`cargo install --path . --features runner,npu`, then run `hrx prepare` and
+`hrx doctor`. This provisions both user-space runtimes, including XRT; no separate
+XRT, Python or Ryzen AI SDK installation is needed for precompiled NPU programs.
+Linux GPU/NPU drivers, firmware and device permissions remain host prerequisites.
+The new native assets are staged, awaiting publication; use matching local archives
+until then. The published 0.2.0 crate does not include NPU support.
+See [the installation guide](docs/GPU-NPU.md#native-setup).
+
+
 | Setting | Purpose |
 | --- | --- |
 | `HRX_RUNTIME_DIR` | Use a trusted local directory of native libraries, bypassing bundle verification |

@@ -16,7 +16,7 @@ and instructions for replacing the LGPL libraries.
 
 | Components | Source / version | Selected licenses |
 | --- | --- | --- |
-| HRX, IREE, Loom | `ecaaf7376f7d` + seven compiler patches | Apache-2.0 WITH LLVM-exception; MIT for the CORE-MATH adaptation and generated compiler data; NCSA for HSA headers |
+| HRX, IREE, Loom | `ecaaf7376f7d` + eight patches (compiler and interop) | Apache-2.0 WITH LLVM-exception; MIT for the CORE-MATH adaptation and generated compiler data; NCSA for HSA headers |
 | HSA runtime and embedded ROCT thunk | rocm-systems `cb6561243e0a8`, HSA 1.21.0 | NCSA, MIT, BSD-2-Clause for the embedded rbtree |
 | rocprofiler-register | 0.6.0 from the same AMD build | MIT; embedded fmt 11.1.4 (MIT) and glog 0.7.1 (BSD-3-Clause) |
 | libelf | elfutils 0.192 | LGPL-3.0-or-later |
@@ -57,3 +57,6 @@ It is not contained in the reviewed GPU bundle described above. Its source
 patch is pinned in `native/release-inputs.json`; the NPU staging script creates
 a separate hashed component manifest. System XRT remains dynamically linked
 and is not included in that archive. Chess is never redistributed.
+
+The separate NPU runtime has its own inventory, licenses and source archive; see
+[native/NPU-RELEASE.md](native/NPU-RELEASE.md).

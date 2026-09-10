@@ -1,9 +1,12 @@
 //! Warm end-to-end latency for a real NPU passthrough pipeline.
 //! Usage: shared_bench <passthrough.xclbin> <instructions.bin> <bytes>
+#[path = "../src/benchmark_statistics.rs"]
+mod percentiles;
 use hrx::{
     Result,
     execution::{Access, BindingContract, KernelContract, MemoryPlacement, Runtime},
 };
+use percentiles::percentile;
 use std::time::Instant;
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
@@ -58,8 +61,8 @@ fn main() -> Result<()> {
     samples.sort_by(f64::total_cmp);
     println!(
         "bytes={bytes} p50_us={:.2} p95_us={:.2}",
-        samples[50] * 1e6,
-        samples[95] * 1e6
+        percentile(&samples, 50) * 1e6,
+        percentile(&samples, 95) * 1e6
     );
     Ok(())
 }

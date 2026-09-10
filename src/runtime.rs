@@ -278,8 +278,7 @@ impl Buffer {
 
     /// The whole allocation.
     pub(crate) fn allocation_address(&self) -> Result<u64> {
-        type Address = unsafe extern "C" fn(sys::Buffer, *mut u64) -> sys::Status;
-        let address: Address = unsafe { sys::interop_symbol(b"hrx_buffer_allocation_address\0") }?;
+        let address = sys::interop()?.allocation_address;
         let mut value = 0;
         unsafe {
             check(
@@ -293,8 +292,7 @@ impl Buffer {
     #[cfg(feature = "npu")]
     pub(crate) fn export_dmabuf(&self) -> Result<(std::os::fd::OwnedFd, u64)> {
         use std::os::fd::FromRawFd;
-        type Export = unsafe extern "C" fn(sys::Buffer, *mut i32, *mut u64) -> sys::Status;
-        let export: Export = unsafe { sys::interop_symbol(b"hrx_buffer_export_dmabuf\0") }?;
+        let export = sys::interop()?.export_dmabuf;
         let mut descriptor = -1;
         let mut offset = 0;
         unsafe {
@@ -525,9 +523,8 @@ impl Device {
     /// Whether this native library exposes shared-allocation interop ABI 1.
     /// This checks the native API, not whether a particular NPU driver can import.
     pub fn supports_shared_interop(&self) -> Result<bool> {
-        type Abi = unsafe extern "C" fn() -> u32;
-        match unsafe { sys::interop_symbol::<Abi>(b"hrx_interop_abi_version\0") } {
-            Ok(abi) => Ok(unsafe { abi() } == 1),
+        match sys::interop() {
+            Ok(_) => Ok(true),
             Err(Error::Unsupported(_)) => Ok(false),
             Err(error) => Err(error),
         }

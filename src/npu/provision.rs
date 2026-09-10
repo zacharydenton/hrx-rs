@@ -30,6 +30,46 @@ fn hash(value: &str) -> bool {
             .bytes()
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
+
+/// The runtime shipped with this crate, including its matching XRT libraries.
+pub fn default_manifest() -> Result<Manifest> {
+    let manifest: Manifest = serde_json::from_str(include_str!("../../npu-bundle.json"))?;
+    manifest.validate()?;
+    Ok(manifest)
+}
+
+/// Select the pinned runtime manifest, respecting `HRX_NPU_BUNDLE_MANIFEST`.
+pub fn runtime_manifest() -> Result<Manifest> {
+    let manifest = match std::env::var_os("HRX_NPU_BUNDLE_MANIFEST") {
+        Some(path) => Manifest::load(path)?,
+        None => default_manifest()?,
+    };
+    if manifest.component != "npu-runtime" {
+        return Err(Error::Message("expected an npu-runtime manifest".into()));
+    }
+    Ok(manifest)
+}
+
+/// Resolve the runtime override or prepare the pinned user-space runtime.
+/// `HRX_OFFLINE` prevents downloads. No drivers or compiler tools are installed.
+pub fn resolve() -> Result<PathBuf> {
+    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        return Err(Error::Unsupported(
+            "the NPU runtime supports Linux x86_64".into(),
+        ));
+    }
+    if let Some(path) = std::env::var_os("HRX_NPU_RUNTIME_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+    runtime_manifest()?.prepare(std::env::var_os("HRX_OFFLINE").is_some())
+}
+
+/// Load an installed native runtime and check its ABI without downloading files
+/// or loading a program. This checks the shim and linked dependencies, not device access.
+pub fn probe_runtime(directory: impl AsRef<Path>) -> Result<()> {
+    super::load_shim_from(directory.as_ref()).map(|_| ())
+}
+
 impl Manifest {
     /// Read and structurally validate a component manifest.
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
@@ -204,6 +244,26 @@ mod tests {
             },
             archive,
         )
+    }
+    #[test]
+    fn pinned_runtime_includes_its_xrt_and_driver() {
+        let manifest = default_manifest().unwrap();
+        assert_eq!(manifest.component, "npu-runtime");
+        assert!(manifest.url.starts_with("https://"));
+        for path in [
+            "libhrx_npu.so.1",
+            "lib/libxrt_coreutil.so.2",
+            "lib/libxrt_core.so.2",
+            "lib/libxrt_driver_xdna.so.2",
+            "lib/libuuid.so.1",
+            "THIRD-PARTY.json",
+            "NOTICE",
+        ] {
+            assert!(
+                manifest.files.contains_key(Path::new(path)),
+                "missing {path}"
+            );
+        }
     }
     #[test]
     fn verified_install_reuses_and_repairs_without_exposing_partial_files() {

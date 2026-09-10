@@ -101,6 +101,8 @@ impl Graph {
         )
     }
     /// Invoke a trusted GPU kernel; binding extents and alignment are checked.
+    /// The selected runtime must expose allocation-address queries (interop ABI 1),
+    /// including for GPU-local bindings. No base-pointer alignment is assumed.
     pub fn gpu(&mut self, kernel: &GpuKernel, bindings: &[BufferView]) -> Result<Node> {
         if !Arc::ptr_eq(&kernel.runtime, &self.runtime.inner) {
             return Err(Error::Message("kernel belongs to another runtime".into()));
@@ -125,6 +127,8 @@ impl Graph {
         self.push(Description::Gpu(kernel.clone(), bindings.to_vec()), uses)
     }
     /// Invoke a trusted NPU specialization with checked device and group compatibility.
+    /// Host-only and imported BOs may originate in a different program context on
+    /// the same device and memory bank. Their owning contexts remain retained.
     #[cfg(feature = "npu")]
     pub fn npu(&mut self, kernel: &crate::npu::NpuKernel, bindings: &[BufferView]) -> Result<Node> {
         kernel.contract().check(bindings)?;
@@ -143,10 +147,11 @@ impl Graph {
                 ));
             }
             if storage.npu_device != Some(kernel.inner.program.inner.device)
-                || storage.group != Some(*group)
+                || storage.group.map(crate::npu::raw::memory_bank)
+                    != Some(crate::npu::raw::memory_bank(*group))
             {
                 return Err(Error::Unsupported(
-                    "NPU binding device or host memory group differs from the program".into(),
+                    "NPU binding device or host memory bank differs from the program".into(),
                 ));
             }
         }
@@ -183,6 +188,9 @@ impl Graph {
                         }
                     })
                     .collect::<Result<Vec<_>>>()?;
+                // HostOnly/imported BOs are device-global. Graph::npu checked
+                // their device and argument group; sub-BOs retain that mapping.
+                // PreparedRun retains both the dispatch and allocation contexts.
                 let run = unsafe {
                     crate::npu::raw::PreparedRun::new(
                         &kernel.inner.program.inner.context,
