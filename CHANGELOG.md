@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0 — 2026-09-10
+
+- Add `execution::Runtime`, explicit GPU/NPU/shared storage, checked kernel
+  contracts, guarded host mappings, inferred hazards, and bounded prepared graphs.
+  Completion supports blocking waits and executor-neutral futures.
+- Replace the old NPU shared-memory wrapper with retained dma-buf imports and
+  a separately provisioned ABI shim. Remove the sibling Cargo dependency.
+- Add pinned IRON/AIE subprocess compilation, verified specialization caching,
+  native diagnostics, hardware examples, Miri checks and NPU CI qualification.
+- Pin a rebuilt GPU bundle with interop ABI 1 and a separate relocatable NPU
+  runtime containing XRT and its XDNA plugin. With `npu` enabled, `hrx prepare`
+  provisions both; kernel drivers and firmware remain host prerequisites.
+  Bundles target Ubuntu 26.04 LTS (glibc 2.43). See `docs/GPU-NPU.md`.
+- Add an independent SCRFD + DINOv3 throughput benchmark with pinned sample
+  provenance and explicit measurement limitations.
+
 ## 0.2.0 — 2026-09-09
 
 - Graph drop waits for its last replay's immutable completion point, without
