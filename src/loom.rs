@@ -995,11 +995,23 @@ impl Kernels {
                 return Ok(kernel.clone());
             }
         }
+        // Share the batch publication lock so direct requests cannot load a
+        // second executable while a batch or another direct miss is in flight.
+        let _build = self
+            .0
+            .build
+            .lock()
+            .map_err(|_| Error::Message("kernel build poisoned".into()))?;
+        if let Some(kernel) = self.0.locked()?.ready.get(&key) {
+            return Ok(kernel.clone());
+        }
         let artifact = module.compile(spec)?;
         self.0.reported(&artifact);
         // Safety: the caller vouched for the source this artifact came from.
         let kernel = unsafe { stream.load_artifact(&artifact) }?;
-        self.0.locked()?.ready.insert(key, kernel.clone());
+        let mut state = self.0.locked()?;
+        state.waiting.retain(|(waiting, ..)| *waiting != key);
+        state.ready.insert(key, kernel.clone());
         Ok(kernel)
     }
 
