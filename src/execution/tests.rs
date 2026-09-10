@@ -45,11 +45,11 @@ fn interval_frontiers_preserve_reference_order_and_compact_repeated_writes() {
     let mut root = buffer(&runtime);
     Arc::get_mut(&mut root.storage).unwrap().shared = false;
     let mut random = 1234567u64;
-    for _ in 0..64 {
+    for _ in 0..if cfg!(miri) { 2 } else { 64 } {
         let mut frontier = dependencies::Frontier::default();
         let mut history: Vec<Vec<Use>> = Vec::new();
         let mut ancestors: Vec<BTreeSet<usize>> = Vec::new();
-        for node in 0..64 {
+        for node in 0..if cfg!(miri) { 16 } else { 64 } {
             let mut uses = Vec::new();
             for _ in 0..2 {
                 random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -459,20 +459,21 @@ fn heterogeneous_latency_against_direct_backend() -> Result<()> {
 
 #[test]
 fn host_sync_releases_scheduler_lock_and_rolls_back_failed_leases() {
-    let runtime = Runtime::new().unwrap();
+    // This test exercises lease acquisition, not device execution. No workers
+    // can contend for the lock, so try_lock directly detects a retained lock.
+    let options = RuntimeOptions::default();
+    let runtime = Runtime {
+        inner: Arc::new(RuntimeOwner {
+            core: Arc::new(Core::new(options.max_submissions)),
+            workers: Mutex::new(Vec::new()),
+            gpu_index: options.gpu_index,
+        }),
+        options,
+    };
     let buffer = buffer(&runtime);
     for write in [false, true] {
         let result = buffer.acquire_with(write, false, || {
-            // A worker may briefly acquire the mutex while starting. Distinguish
-            // that race from this callback retaining its own scheduler lock.
-            let deadline = std::time::Instant::now() + Duration::from_secs(1);
-            while runtime.inner.core.state.try_lock().is_err() {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "mapping retained scheduler lock"
-                );
-                std::thread::yield_now();
-            }
+            assert!(runtime.inner.core.state.try_lock().is_ok());
             let graph = mock(&runtime, Engine::Gpu, &buffer, Access::Write, || Ok(()));
             assert!(matches!(graph.submit(), Err(Error::Busy(_))));
             Err(Error::Message("injected sync failure".into()))

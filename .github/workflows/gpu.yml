@@ -62,3 +62,16 @@ jobs:
           export HRX_TEST_NPU_DIR="$(cargo run --locked --release --features npu-compile --example compile_npu -- "$HRX_NPU_TOOLCHAIN" 262144)"
           cargo run --locked --features runner,npu --bin hrx -- doctor
           cargo test --locked --all-features --test heterogeneous --test coordinated -- --ignored --test-threads=1
+
+  consumers:
+    if: ${{ vars.HRX_KREA_CHECKOUT != '' && vars.HRX_H3_CHECKOUT != '' }}
+    runs-on: [self-hosted, linux, x64, gfx1151]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check committed model snapshots against the candidate runtime
+        env:
+          KREA_CHECKOUT: ${{ vars.HRX_KREA_CHECKOUT }}
+          H3_CHECKOUT: ${{ vars.HRX_H3_CHECKOUT }}
+          HRX_OFFLINE: '1'
+        run: python3 scripts/check-consumers.py "$KREA_CHECKOUT" "$H3_CHECKOUT"

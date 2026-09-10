@@ -37,8 +37,13 @@ environment = {key: value for key, value in os.environ.items() if key in {
     'HOME', 'PATH', 'PYTHONPATH', 'LD_LIBRARY_PATH', 'AIETOOLS_ROOT', 'CHESS_LICENSE_FILE',
     'XILINXD_LICENSE_FILE', 'LM_LICENSE_FILE', 'PEANO_INSTALL_DIR', 'MLIR_AIE_INSTALL_DIR',
     'AIE_INSTALL_DIR', 'AIE_OPT_DIR', 'LLVM_AIE_INSTALL_DIR', 'XILINX_VITIS',
+    'XILINX_VITIS_AIETOOLS', 'RDI_DATADIR', 'BOOST_DIR', 'CPATH', 'LIBRARY_PATH',
 }}
-environment['PATH'] = str(python.parent) + os.pathsep + environment.get('PATH', '/usr/bin:/bin')
+# Preserve wrapper precedence established by the sourced compiler environment.
+search_path = environment.get('PATH', '/usr/bin:/bin')
+if str(python.parent) not in search_path.split(os.pathsep):
+    search_path = str(python.parent) + os.pathsep + search_path
+environment['PATH'] = search_path
 environment['PYTHONDONTWRITEBYTECODE'] = '1'
 args.output.parent.mkdir(parents=True, exist_ok=True)
 args.output.write_text(json.dumps({'python': str(python), 'aiecc': str(aiecc), 'backend': args.backend, 'files': files, 'environment': environment}, indent=2) + '\n')

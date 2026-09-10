@@ -196,3 +196,40 @@ requirement. No NPU device is required for coordinated GPU-only graphs.
 NPU host-only and imported buffers may be passed between resident program contexts
 on the same device when their memory banks match the argument. The graph validates
 those properties and retains both contexts; it does not require context identity.
+
+## Existing Stream code and GPU-only transfers
+
+`MemoryPlacement::HostVisible` provides coherent host-local storage without an
+NPU. Map it with the same guards used for shared storage, then record a graph
+copy into or out of `GpuLocal` memory. Mapping and submission retain their usual
+mutual-exclusion rules.
+
+`Runtime::adopt_gpu_kernel` retains an already-loaded GPU executable with its
+fixed contract. It does not reopen an artifact or copy its code. The unsafe
+`adopt_gpu_buffer` transfers an initialized allocation into the coordinated
+runtime; prior uses must have completed and old pointers or recordings must no
+longer access it. `Shared(program)` imports that allocation once into XRT.
+
+For incremental integrations, `Runtime::with_gpu_access` lends GPU views to a
+callback running on an existing Stream. Declare every access with `GpuAccess`.
+The runtime reserves whole allocations, waits for conflicting coordinated work,
+and establishes cache visibility before entering the callback. It drains the
+supplied Stream before releasing reservations, including on error or panic.
+Uncertain completion poisons and quarantines the allocations. The callback is
+unsafe because raw pointers and recorded uses must not escape onto later work
+or other streams. Use one callback for a complete GPU stage, rather than wrapping
+every dispatch and synchronizing after each kernel.
+
+Graph preparation now tracks interval frontiers and retains compact summaries
+for replay. Repeated writes form a chain rather than depending on every prior
+writer. Shared storage still reserves the entire allocation; separate pipeline
+slots must use separate allocations. `cargo run --release --example graph_prepare`
+compares construction with an explicit dependency chain.
+
+For Chess, source the installed compiler environment before running
+`scripts/pin-npu-toolchain.py --backend Chess`. The recorder preserves PATH
+precedence and captures the Chess data/include/library environment. If a local
+`xchesscc_wrapper` lives outside the virtualenv and `AIETOOLS_ROOT`, include its
+directory with `--identity-root`. The intrinsic wrapper shipped by MLIR-AIE must
+match the installed Chess release; record the toolchain after that setup is
+complete. Compiler binaries and license settings stay in the local manifest.
