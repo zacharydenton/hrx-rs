@@ -29,6 +29,7 @@ pub(super) struct Use {
     pub access: Access,
 }
 impl Use {
+    #[cfg(test)]
     pub fn conflicts(&self, other: &Self) -> bool {
         self.view.conflicts(&other.view) && (self.access.writes() || other.access.writes())
     }
@@ -220,16 +221,12 @@ impl Graph {
             let mut graph = stream.graph()?;
             let mut nodes = Vec::new();
             let mut uses = Vec::new();
+            let mut frontier = super::dependencies::Frontier::default();
             for (i, entry) in self.entries[start..index].iter().enumerate() {
-                let dependencies = self.entries[start..start + i]
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, old)| {
-                        old.uses
-                            .iter()
-                            .any(|a| entry.uses.iter().any(|b| a.conflicts(b)))
-                    })
-                    .map(|(j, _)| nodes[j])
+                let dependencies = frontier
+                    .dependencies(i, &entry.uses)
+                    .into_iter()
+                    .map(|j| nodes[j])
                     .collect::<Vec<_>>();
                 let node = match &entry.operation {
                     Description::Fill(dst, value) => {
@@ -272,24 +269,17 @@ impl Graph {
                     })
                     .sum(),
                 backend: Backend::Gpu(Mutex::new((stream, executable))),
-                uses,
+                uses: super::dependencies::summarize(uses),
                 dependencies: Vec::new(),
             });
         }
-        for index in 0..operations.len() {
-            operations[index].dependencies = (0..index)
-                .filter(|&previous| {
-                    operations[previous]
-                        .uses
-                        .iter()
-                        .any(|a| operations[index].uses.iter().any(|b| a.conflicts(b)))
-                })
-                .collect();
+        let mut frontier = super::dependencies::Frontier::default();
+        for (index, operation) in operations.iter_mut().enumerate() {
+            operation.uses = super::dependencies::summarize(operation.uses.drain(..));
+            operation.dependencies = frontier.dependencies(index, &operation.uses);
         }
-        let uses = operations
-            .iter()
-            .flat_map(|o| o.uses.iter().cloned())
-            .collect();
+        let uses =
+            super::dependencies::summarize(operations.iter().flat_map(|o| o.uses.iter().cloned()));
         let slots = (0..self.runtime.options.graph_slots)
             .map(|_| Slot {
                 nodes: vec![NodeState::Pending; operations.len()],

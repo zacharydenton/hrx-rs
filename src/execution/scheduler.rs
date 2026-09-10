@@ -49,11 +49,7 @@ impl Scheduler {
     fn blocked(&self, job: &Pending) -> bool {
         self.pending.iter().any(|earlier| {
             earlier.order < job.order
-                && earlier
-                    .graph
-                    .uses
-                    .iter()
-                    .any(|a| job.graph.uses.iter().any(|b| a.conflicts(b)))
+                && super::dependencies::conflicts(&earlier.graph.uses, &job.graph.uses)
         })
     }
 }

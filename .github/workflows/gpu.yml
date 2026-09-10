@@ -42,3 +42,23 @@ jobs:
           HRX_NPU_WORK: ${{ runner.temp }}/hrx-npu-validation
           HRX_QUALIFY_PERFORMANCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: bash scripts/test-npu-hardware.sh
+
+  published-npu:
+    if: ${{ vars.HRX_NPU_TOOLCHAIN != '' }}
+    runs-on: [self-hosted, linux, x64, gfx1151, xdna2]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute the published GPU and NPU bundles
+        env:
+          HRX_NPU_TOOLCHAIN: ${{ vars.HRX_NPU_TOOLCHAIN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_CACHE_HOME="$RUNNER_TEMP/hrx-published-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          unset HRX_RUNTIME_DIR HRX_NPU_RUNTIME_DIR HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST HRX_NPU_BUNDLE_MANIFEST HRX_OFFLINE
+          cargo run --locked --features runner,npu --bin hrx -- prepare
+          export HRX_OFFLINE=1
+          export HRX_TEST_NPU_DIR="$(cargo run --locked --release --features npu-compile --example compile_npu -- "$HRX_NPU_TOOLCHAIN" 262144)"
+          cargo run --locked --features runner,npu --bin hrx -- doctor
+          cargo test --locked --all-features --test heterogeneous --test coordinated -- --ignored --test-threads=1
