@@ -24,7 +24,21 @@ jobs:
             curl --fail --location --proto '=https' "$BUNDLE_MIRROR" --output "$RUNNER_TEMP/hrx-manifest.json"
             export HRX_BUNDLE_MANIFEST="$RUNNER_TEMP/hrx-manifest.json"
           fi
-          cargo +stable run --locked --all-features --bin hrx -- prepare
+          cargo +stable run --locked --features runner --bin hrx -- prepare
           export HRX_OFFLINE=1
-          cargo +stable run --locked --all-features --bin hrx -- info
-          cargo +stable test --locked --all-features -- --ignored --test-threads=1
+          cargo +stable run --locked --features runner --bin hrx -- info
+          cargo +stable test --locked --features runner -- --ignored --test-threads=1
+
+  npu:
+    if: ${{ vars.HRX_NATIVE_BUILD != '' && vars.HRX_NPU_TOOLCHAIN != '' }}
+    runs-on: [self-hosted, linux, x64, gfx1151, xdna2]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and execute GPU/NPU fixtures
+        env:
+          HRX_NATIVE_BUILD: ${{ vars.HRX_NATIVE_BUILD }}
+          HRX_NPU_TOOLCHAIN: ${{ vars.HRX_NPU_TOOLCHAIN }}
+          HRX_NPU_WORK: ${{ runner.temp }}/hrx-npu-validation
+          HRX_QUALIFY_PERFORMANCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+        run: bash scripts/test-npu-hardware.sh

@@ -1,0 +1,553 @@
+{
+  "date": "2026-09-10",
+  "summary": {
+    "median_images_per_second": {
+      "gpu_serial": 88.7874620542075,
+      "gpu_parallel": 92.48265309913938,
+      "mixed_parallel": 8.387657866856262,
+      "mixed_balanced": 94.81917679144964
+    },
+    "corpus_kind": "single_image_repeated",
+    "unique_images": 1,
+    "images_with_float32_cpu_reference": 1,
+    "mixed_speedup_over_best_gpu": {
+      "mixed_parallel": 0.09069439063199101,
+      "mixed_balanced": 1.0252644535381739
+    },
+    "min_cls_cosine": 0.999454915523529,
+    "min_pooled_cosine": 0.9995535016059875,
+    "timing": "cached compressed images; includes decode, preprocess, IPC, copies, models, face decode/NMS, pooling and result delivery; excludes setup and validation",
+    "scope": "application placement using existing model runtimes; not an hrx-native or zero-copy benchmark"
+  },
+  "measurements": [
+    {
+      "round": 0,
+      "mode": "gpu_serial",
+      "images": 256,
+      "seconds": 2.867301807011245,
+      "images_per_second": 89.28254408866839,
+      "latency_p50_ms": 350.608581022243,
+      "latency_p95_ms": 388.4617042640457,
+      "cpu_core_equivalents": 3.2065905924230873,
+      "mean_preprocess_ms": 8.596113683211115,
+      "mean_face_service_ms_per_image": 2.5827924374652866,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 8.418918945153564
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 256,
+        "npu": 0
+      }
+    },
+    {
+      "round": 0,
+      "mode": "gpu_parallel",
+      "images": 256,
+      "seconds": 2.774678068992216,
+      "images_per_second": 92.26295578606751,
+      "latency_p50_ms": 343.634838500293,
+      "latency_p95_ms": 368.85704450833146,
+      "cpu_core_equivalents": 4.306899288082251,
+      "mean_preprocess_ms": 8.131084863293836,
+      "mean_face_service_ms_per_image": 4.231663261748508,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 10.72221771482873
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 256,
+        "npu": 0
+      }
+    },
+    {
+      "round": 0,
+      "mode": "mixed_parallel",
+      "images": 256,
+      "seconds": 30.61134086397942,
+      "images_per_second": 8.362913638364564,
+      "latency_p50_ms": 3806.62264599232,
+      "latency_p95_ms": 3821.2911910086405,
+      "cpu_core_equivalents": 0.10323964618350812,
+      "mean_preprocess_ms": 8.004514124991147,
+      "mean_face_service_ms_per_image": 2.6510664960142094,
+      "mean_embedding_service_ms_per_image": {
+        "npu": 119.44636696910038
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 0,
+        "npu": 256
+      }
+    },
+    {
+      "round": 0,
+      "mode": "mixed_balanced",
+      "images": 256,
+      "seconds": 2.617525345995091,
+      "images_per_second": 97.80230032602715,
+      "latency_p50_ms": 322.4564379925141,
+      "latency_p95_ms": 396.7958354987786,
+      "cpu_core_equivalents": 4.352337224711376,
+      "mean_preprocess_ms": 8.549325985768519,
+      "mean_face_service_ms_per_image": 4.069377913765493,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 10.911469395455725,
+        "npu": 121.7971176665742
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 235,
+        "npu": 21
+      }
+    },
+    {
+      "round": 1,
+      "mode": "gpu_parallel",
+      "images": 256,
+      "seconds": 2.76274409799953,
+      "images_per_second": 92.6614955707865,
+      "latency_p50_ms": 332.0277910097502,
+      "latency_p95_ms": 434.20230475021526,
+      "cpu_core_equivalents": 4.334719241160065,
+      "mean_preprocess_ms": 8.249338168297982,
+      "mean_face_service_ms_per_image": 4.30349948840103,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 10.691808140791181
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 256,
+        "npu": 0
+      }
+    },
+    {
+      "round": 1,
+      "mode": "mixed_parallel",
+      "images": 256,
+      "seconds": 30.470532920997357,
+      "images_per_second": 8.401559653181828,
+      "latency_p50_ms": 3807.7213920041686,
+      "latency_p95_ms": 3816.8948059828836,
+      "cpu_core_equivalents": 0.10338818189258248,
+      "mean_preprocess_ms": 8.296767878960054,
+      "mean_face_service_ms_per_image": 2.5675916758700623,
+      "mean_embedding_service_ms_per_image": {
+        "npu": 118.88666136314896
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 0,
+        "npu": 256
+      }
+    },
+    {
+      "round": 1,
+      "mode": "mixed_balanced",
+      "images": 256,
+      "seconds": 2.7046445599989966,
+      "images_per_second": 94.65199375406836,
+      "latency_p50_ms": 327.1455679932842,
+      "latency_p95_ms": 396.59914648655104,
+      "cpu_core_equivalents": 4.256314922210801,
+      "mean_preprocess_ms": 8.817871825499424,
+      "mean_face_service_ms_per_image": 3.94196191393803,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 11.188335089250787,
+        "npu": 121.68532881663519
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 234,
+        "npu": 22
+      }
+    },
+    {
+      "round": 1,
+      "mode": "gpu_serial",
+      "images": 256,
+      "seconds": 2.979496530984761,
+      "images_per_second": 85.9205564892498,
+      "latency_p50_ms": 344.5098725060234,
+      "latency_p95_ms": 461.6570019934443,
+      "cpu_core_equivalents": 3.2753063809658554,
+      "mean_preprocess_ms": 8.772349310220307,
+      "mean_face_service_ms_per_image": 2.5634550546556056,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 8.893176316291829
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 256,
+        "npu": 0
+      }
+    },
+    {
+      "round": 2,
+      "mode": "mixed_parallel",
+      "images": 256,
+      "seconds": 30.491512459004298,
+      "images_per_second": 8.395779000605197,
+      "latency_p50_ms": 3809.61746450339,
+      "latency_p95_ms": 3820.1832950217067,
+      "cpu_core_equivalents": 0.10391019482093168,
+      "mean_preprocess_ms": 8.071017433394445,
+      "mean_face_service_ms_per_image": 2.6293483008430485,
+      "mean_embedding_service_ms_per_image": {
+        "npu": 118.97289956993973
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 0,
+        "npu": 256
+      }
+    },
+    {
+      "round": 2,
+      "mode": "mixed_balanced",
+      "images": 256,
+      "seconds": 2.6951238100009505,
+      "images_per_second": 94.98635982883091,
+      "latency_p50_ms": 337.8282639750978,
+      "latency_p95_ms": 377.902175518102,
+      "cpu_core_equivalents": 4.286419405717769,
+      "mean_preprocess_ms": 8.992870597467117,
+      "mean_face_service_ms_per_image": 3.993897078316877,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 11.208645658021291,
+        "npu": 121.38409799875014
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 234,
+        "npu": 22
+      }
+    },
+    {
+      "round": 2,
+      "mode": "gpu_serial",
+      "images": 256,
+      "seconds": 2.8994574610260315,
+      "images_per_second": 88.2923800197466,
+      "latency_p50_ms": 329.8954014899209,
+      "latency_p95_ms": 468.9660652438761,
+      "cpu_core_equivalents": 3.3035459663582865,
+      "mean_preprocess_ms": 9.747355153081116,
+      "mean_face_service_ms_per_image": 2.6323752186954152,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 8.451612300405031
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 256,
+        "npu": 0
+      }
+    },
+    {
+      "round": 2,
+      "mode": "gpu_parallel",
+      "images": 256,
+      "seconds": 2.771155803988222,
+      "images_per_second": 92.3802261971583,
+      "latency_p50_ms": 338.6908350075828,
+      "latency_p95_ms": 360.48295251384843,
+      "cpu_core_equivalents": 4.3245886726226725,
+      "mean_preprocess_ms": 8.878537370492268,
+      "mean_face_service_ms_per_image": 4.178912348038466,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 10.721321613345935
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 256,
+        "npu": 0
+      }
+    },
+    {
+      "round": 3,
+      "mode": "mixed_balanced",
+      "images": 256,
+      "seconds": 2.8243227940110955,
+      "images_per_second": 90.64119743778632,
+      "latency_p50_ms": 341.79808100452647,
+      "latency_p95_ms": 417.1361602639081,
+      "cpu_core_equivalents": 4.273506564332359,
+      "mean_preprocess_ms": 9.5597000631642,
+      "mean_face_service_ms_per_image": 4.265946491273098,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 11.717329730075893,
+        "npu": 121.59820108892113
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 233,
+        "npu": 23
+      }
+    },
+    {
+      "round": 3,
+      "mode": "gpu_serial",
+      "images": 256,
+      "seconds": 2.800084672984667,
+      "images_per_second": 91.425806680026,
+      "latency_p50_ms": 347.92585649120156,
+      "latency_p95_ms": 357.6995865078061,
+      "cpu_core_equivalents": 3.303764735849703,
+      "mean_preprocess_ms": 9.5393071323997,
+      "mean_face_service_ms_per_image": 2.597932847379525,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 8.139371843867593
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 256,
+        "npu": 0
+      }
+    },
+    {
+      "round": 3,
+      "mode": "gpu_parallel",
+      "images": 256,
+      "seconds": 2.765024342981633,
+      "images_per_second": 92.58508000112046,
+      "latency_p50_ms": 343.2614869961981,
+      "latency_p95_ms": 374.1598217457067,
+      "cpu_core_equivalents": 4.575208544586765,
+      "mean_preprocess_ms": 11.857399157293003,
+      "mean_face_service_ms_per_image": 4.256764293245396,
+      "mean_embedding_service_ms_per_image": {
+        "gpu": 10.687941914056864
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 256,
+        "npu": 0
+      }
+    },
+    {
+      "round": 3,
+      "mode": "mixed_parallel",
+      "images": 256,
+      "seconds": 30.550614927022252,
+      "images_per_second": 8.379536733107328,
+      "latency_p50_ms": 3816.933535505086,
+      "latency_p95_ms": 3824.7760315061896,
+      "cpu_core_equivalents": 0.10527284009446551,
+      "mean_preprocess_ms": 8.37340797215802,
+      "mean_face_service_ms_per_image": 2.692632914204296,
+      "mean_embedding_service_ms_per_image": {
+        "npu": 119.19298948419055
+      },
+      "faces": 256,
+      "embedding_images": {
+        "gpu": 0,
+        "npu": 256
+      }
+    }
+  ],
+  "quality": [
+    {
+      "gpu_vs_f32": [
+        0.9999200701713562,
+        0.9999228715896606
+      ],
+      "npu_vs_f32": [
+        0.9994626641273499,
+        0.9995174407958984
+      ],
+      "image": "artifacts/vision-bench-lena/lena.jpg",
+      "cls_cosine": 0.999454915523529,
+      "pooled_cosine": 0.9995535016059875,
+      "faces": 1
+    }
+  ],
+  "configuration": {
+    "scrfd": "/home/zach/code/scrfd-loom",
+    "gpu_model": "/home/zach/.cache/huggingface/hub/models--facebook--dinov3-vitl16-pretrain-lvd1689m/snapshots/ea8dc2863c51be0a264bab82070e3e8836b02d51",
+    "npu_model": "/home/zach/code/hrx.rs-gpu-npu/artifacts/vision-bench-models/dinov3-vitl16.onnx",
+    "npu_python": "/mnt/usb/sdk/tools/ryzen_ai-1.8.0/venv/bin/python",
+    "xrt_root": "/usr",
+    "npu_lib_dir": [],
+    "images": "/home/zach/code/hrx.rs-gpu-npu/artifacts/vision-bench-lena",
+    "output": "/home/zach/code/hrx.rs-gpu-npu/artifacts/vision-bench-standalone-lena",
+    "rounds": 4,
+    "repeats": 256,
+    "depth": 32,
+    "gpu_batch": 8,
+    "cpu_threads": 2,
+    "preprocess_workers": 8,
+    "timeout": 300,
+    "modes": [
+      "gpu_serial",
+      "gpu_parallel",
+      "mixed_parallel",
+      "mixed_balanced"
+    ],
+    "gpu_mode": "compile",
+    "min_cosine": 0.997,
+    "corpus": [
+      {
+        "path": "/home/zach/code/hrx.rs-gpu-npu/artifacts/vision-bench-lena/lena.jpg",
+        "sha256": "7de7ed51a1594fff247f4cae2301eceacf5313d6011e37b4a4c8733f7bb72c07"
+      }
+    ],
+    "corpus_kind": "single_image_repeated",
+    "corpus_sources": {
+      "lena.jpg": {
+        "url": "https://raw.githubusercontent.com/opencv/opencv/4.10.0/samples/data/lena.jpg",
+        "sha256": "7de7ed51a1594fff247f4cae2301eceacf5313d6011e37b4a4c8733f7bb72c07"
+      }
+    },
+    "host": {
+      "uname": [
+        "Linux",
+        "halo",
+        "7.2.3-arch1-3",
+        "#1 SMP PREEMPT_DYNAMIC Sun, 06 Sep 2026 13:01:04 +0000",
+        "x86_64",
+        ""
+      ],
+      "cpu_count": 32,
+      "cpu_model": "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S"
+    },
+    "sysfs": {
+      "/sys/class/accel/accel0/device/fw_version": "1.1.2.65",
+      "/sys/class/drm/card1/device/power_dpm_force_performance_level": "auto"
+    },
+    "source_revisions": {
+      "benchmark": {
+        "head": "2f29b3ec3a34ca824f353830a5197a5849e7581f",
+        "status": "?? scripts/vision-bench/"
+      },
+      "scrfd": {
+        "head": "3b765943e56123198485fe80e94096525139e8c5",
+        "status": ""
+      }
+    },
+    "script_sha256": "e5a031cc510f78fd3ee1eb48013e2a01af082d0d6b0cbbb5e12d2107b7fd6e3a",
+    "code_sha256": {
+      "bench.py": "e5a031cc510f78fd3ee1eb48013e2a01af082d0d6b0cbbb5e12d2107b7fd6e3a",
+      "preprocess.py": "adc084ccc1533afd5cc4cd5cf49829b0ef09aa30a3f70a187b8e776c28cd5a8f",
+      "npu_environment.py": "641275d28f6c1a906846c97f6aac499c7d04284e18aa18b29a76facdfb783d0a"
+    },
+    "scrfd_artifacts_sha256": {
+      "build/libscrfd.so": "31de8d4bbf66aa2b07bffe35dff490a01aa8d0b4bd18df73e78ced4f5bfe9c38",
+      "build/weights/weights_f16.bin": "5b132cc5df61322ff4ba957501bfa4047627c380dd75cd53dfb94cfa1c22f280",
+      "build/weights/manifest_f16.txt": "c40dce7413d462657a86247fcd81710a58f5d665a14535f4cde3495c0517d9a8",
+      "build/weights/weights.bin": "e56b098bc6d510bea900dd9b6d8c39c8990c20df3827a58356b2535e2060dac5",
+      "build/weights/shapes.txt": "74c55928f1755f4534a07f12f3927bff611c7706d0b0136c4f5e2c3fc882c5e6",
+      "build/weights/manifest.txt": "afc22b073378f6660e79853450739a04d2c707195aae8afe47a416faa70c7ce7",
+      "build/kernels/conv3x3_plain_80x80_s1_c56of64_k512_n64.hsaco": "7f08c909ec53effdfa2f55d85be13c0583e09e97eca275c278bc5fedd4708c57",
+      "build/kernels/conv3x3_plain_40x40_s2_c56of64_k512_n64.hsaco": "c7395da0817cb36ba68d8e80f27557f6c40609facceee64e0d708b39a6ae4175",
+      "build/kernels/conv3x3_plain_40x40_s1_c56of64_k512_n64.hsaco": "9b9b9314ab1b2cac0a31ba0a6a6f52f39c5e920b86ebb6331ff6ec4e75a650d0",
+      "build/kernels/matmul_add_resized_k128_n64_80x80.hsaco": "1517817d573e82e060b4a1fd2d306be41d8a245dc1429d8d44ffc88fdfc8a743",
+      "build/kernels/matmul_plain_k256_n64.hsaco": "abfba0dfd2d408495d0f3c1eb95484306ac321b1003b557f27d83c770a5a5885",
+      "build/kernels/conv3x3_n128_relu_160x160_s2_c56of64_k512_n128.hsaco": "bfb2af90c92b76bfdb9da3b55d154d48caf16f912ce72abead53ea196a37907e",
+      "build/kernels/matmul_plain_k64_n128.hsaco": "251fc7633bcd12371075c61253505eb0632fe2f23982df428b178866b7cae6c6",
+      "build/kernels/pool2_mean_160x160_c64.hsaco": "f9bdc548abc190ccd3319c3bd311f8545043f20e5023d6fa55f279a8616500ca",
+      "build/kernels/conv3x3_n128_relu_add_40x40_s1_c88of128_k800_n128.hsaco": "ef0ff5ccbf61a77e44c6006909c790cd8f4df0ad7be95113be7553c4ff26e682",
+      "build/kernels/conv3x3_n128_relu_40x40_s1_c80of128_k736_n128.hsaco": "91c0b74ca79a32c695446350ab9855e08c5ef3424ed68531a4c6dd70ffc4ac19",
+      "build/kernels/conv3x3_plain_20x20_s1_c56of64_k512_n64.hsaco": "7f541ec2bf46d6da21059f0ec5a2cf0c9033c4856bf1e297fcfdae5a950295d5",
+      "build/kernels/pool2_mean_40x40_c128.hsaco": "77353b22c3df2bbccc61e8637171fc9ed067bd9d1988b9e6bc101acddb2f7dad",
+      "build/kernels/conv3x3_n128_relu_20x20_s1_c56of64_k512_n128.hsaco": "7765d3300dce1650eca6cc10ea64f2228c4251529047b836a6b879a80423c0db",
+      "build/kernels/pool2_mean_80x80_c128.hsaco": "8707ed2c2f9b5dc7ba959d40ba74ae0818acb17d8269eae4f8dd9934648ad195",
+      "build/kernels/conv3x3_add_40x40_s1_c56of64_k512_n64.hsaco": "9e646be9a419879fb03acefa51f2d05c103b490b35f9adaaafc5897d53f50010",
+      "build/kernels/conv3x3_n128_relu_40x40_s1_c56of64_k512_n128.hsaco": "9fca79981f0aae9226fdae5b90516c24a25067b986959066f378aeb960525da3",
+      "build/kernels/conv3x3_relu_160x160_s1_c56of64_k512_n64.hsaco": "ec3ee00d140967687c1e58026016da9cc14ed18e050663c7e79d41f98f41d004",
+      "build/kernels/conv3x3_plain_20x20_s1_c80of128_k736_n64.hsaco": "41557a54a519a02f0ffe1dd7521f3b2e5b528390e30cdcd97d5ced2ea6fffd58",
+      "build/kernels/conv3x3_add_20x20_s1_c56of64_k512_n64.hsaco": "a994261a4d9034cb8c320d961f1b1ab694dd5b6bb0d7a0adf75d7a022ba5b412",
+      "build/kernels/hwc_u8_to_nhwc.hsaco": "ee3319221fac14d1195927867686a97373a30c65faabc818bdbf50ec5e8cc188",
+      "build/kernels/conv3x3_n128_relu_80x80_s1_c80of128_k736_n128.hsaco": "27854987ceff069212b40d0b142818403c20f33bc2305d00cdf03e83a0779ddf",
+      "build/kernels/conv3x3_n128_relu_add_80x80_s1_c88of128_k800_n128.hsaco": "69982ef35c0ba20934f436d8676384e1d630085d0c92ce547e3baa60b5fb41f6",
+      "build/kernels/conv3x3_n128_relu_80x80_s2_c88of128_k800_n128.hsaco": "8e84f934e1234b3f200339fe0dca91568bcc1c286d3c082140b7a8a0afc05558",
+      "build/kernels/pool2_max_320x320_c64.hsaco": "6705accd237767bf9dcea1acad064f572182ebc20f5191b007ed4e22b1b07f00",
+      "build/kernels/conv3x3_relu_320x320_s1_c32of64_k288_n64.hsaco": "672285bd9708768f0b59918c5233d907cf01f8f27bfde8e5fb31c5317b1a69f6",
+      "build/kernels/conv3x3_plain_80x80_s2_c56of64_k512_n64.hsaco": "55d9582bb2382bfe7131e91999d8c9dcb6ec8c87cabb2b670ac81ae823c6596e",
+      "build/kernels/conv3x3_n128_relu_40x40_s1_c88of128_k800_n128.hsaco": "f71d221885def2e8bb29aa726851672d745defc5eaebf9b7b8215d702b329885",
+      "build/kernels/conv3x3_n128_relu_20x20_s1_c80of128_k736_n128.hsaco": "819e33b6ccf8c20195989439d0377bf9e40aaa000ede59a4841558d517ad8c4f",
+      "build/kernels/conv3x3_plain_80x80_s1_c80of128_k736_n64.hsaco": "d938177d6120ef6c525c60d60d423b04088e23ba1b158ccb77caf8a8bc794d7c",
+      "build/kernels/matmul_plain_k128_n128.hsaco": "0057cb810da0443fba175a2cf65ad0f5cf2e95384707ef0e12cef3ced8cc4851",
+      "build/kernels/conv3x3_relu_20x20_s1_c224of256_k2016_n256.hsaco": "63055fb3e801ce4d4a31aed9dd3507ecbba89b8b9eb8175033d0e0d6bd1f5023",
+      "build/kernels/conv3x3_relu_add_20x20_s1_c224of256_k2016_n256.hsaco": "391a850ec69a8f0c844242adc3396306ad6a5d10f9c1c7f504f537111e114fc5",
+      "build/kernels/conv3x3_relu_640x640_s2_c8of8_k96_n64.hsaco": "6f12c18aa7284aba197451cdd036e258fce294a3110013f4f1e93730dada7a14",
+      "build/kernels/conv3x3_relu_40x40_s2_c88of128_k800_n256.hsaco": "07597ed722cb3027da8c26c0934c46920b6cadfa5e3a8e345d70f283fb2f7697",
+      "build/kernels/conv3x3_relu_add_160x160_s1_c56of64_k512_n64.hsaco": "4bda258ebbaf32b561d80ecc7734005c94e42471f60275764b30db5b10ddc0e1",
+      "build/kernels/matmul_add_resized_k128_n64_40x40.hsaco": "55dd9dd7950210122bcde0064db73a39e4bc336ce7ca16afbd673a8a570e5db0",
+      "build/kernels/matmul_plain_k128_n256.hsaco": "4f22708e67e430701442e89cea534592103ab2a719faa43978373bb6de040aa3",
+      "build/kernels/conv3x3_n128_relu_80x80_s1_c88of128_k800_n128.hsaco": "490f1521f4d2aafb06e0568e748d549e8aa755be8c0dae7b08f0a2621439b1e8",
+      "build/kernels/conv3x3_plain_40x40_s1_c80of128_k736_n64.hsaco": "f8c0f31533381b3b24d90267acc906aa567fba356376bae44a46e6779d7fe2de",
+      "build/kernels/conv3x3_n128_relu_80x80_s1_c56of64_k512_n128.hsaco": "e068e9a9601a12b24de9e02cb43d2d98a3c87a69d32ec9da215daf4ca9bf2b4f"
+    },
+    "model_sha256": {
+      "npu": "00f5a79a15be722ea12173a9e4fe10fc8735740938528a4437ad5293300ee494",
+      "gpu": "dcb2e45127cccbf1601e5f42fef165eea275c8e5213197e8dcf3f48822718179"
+    },
+    "npu_environment": {
+      "XILINX_XRT": "/usr",
+      "LD_LIBRARY_PATH": "/home/zach/code/hrx.rs-gpu-npu/artifacts/vision-bench-standalone-lena/runtime-libs:/usr/lib:/mnt/usb/sdk/tools/ryzen_ai-1.8.0/venv/lib/python3.12/site-packages/lib/lnx64.o:/mnt/usb/sdk/tools/ryzen_ai-1.8.0/venv/lib/python3.12/site-packages/ryzenai_dynamic_dispatch/lib:/mnt/usb/sdk/tools/ryzen_ai-1.8.0/venv/lib/python3.12/site-packages/voe/lib:/mnt/usb/sdk/tools/ryzen_ai-1.8.0/venv/deployment/lib:/mnt/usb/sdk/tools/ryzen_ai-1.8.0/venv/onnxruntime/lib:/home/zach/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib"
+    },
+    "preprocessing": "centered bicubic thumbnail 224, no upscale, RGB ImageNet normalization, patch-center mask",
+    "workers": {
+      "face": {
+        "role": "face",
+        "pid": 3282358,
+        "python": "3.14.7 (main, Aug 10 2026, 07:46:56) [GCC 16.1.1 20260728]",
+        "numpy": "2.5.3",
+        "backend": "SCRFD-10GF / Loom HIP",
+        "open_accelerator_devices": [
+          "/dev/accel/accel0",
+          "/dev/dri/renderD128",
+          "/dev/kfd"
+        ],
+        "setup_seconds": 0.2883010390214622,
+        "peak_rss_bytes": 251949056
+      },
+      "gpu": {
+        "role": "gpu",
+        "pid": 3282380,
+        "python": "3.14.7 (main, Aug 10 2026, 07:46:56) [GCC 16.1.1 20260728]",
+        "numpy": "2.5.3",
+        "backend": "HF DINOv3-ViT-L/16 bf16 SDPA",
+        "mode": "compile",
+        "torch": "2.13.0",
+        "gpu": "AMD Radeon 8060S Graphics",
+        "open_accelerator_devices": [
+          "/dev/accel/accel0",
+          "/dev/dri/renderD128",
+          "/dev/kfd"
+        ],
+        "setup_seconds": 6.325712493999163,
+        "peak_rss_bytes": 2884792320
+      },
+      "npu": {
+        "role": "npu",
+        "pid": 3282645,
+        "python": "3.12.12 (main, Jan 27 2026, 23:58:14) [Clang 21.1.4 ]",
+        "numpy": "1.26.4",
+        "backend": "DINOv3-ViT-L/16 VitisAI EPContext",
+        "onnxruntime": "1.27.0",
+        "providers": [
+          "VitisAIExecutionProvider",
+          "CPUExecutionProvider"
+        ],
+        "cpu_fallback": false,
+        "open_accelerator_devices": [
+          "/dev/accel/accel0"
+        ],
+        "setup_seconds": 1.7773175830079708,
+        "peak_rss_bytes": 1775259648
+      },
+      "reference": {
+        "role": "reference",
+        "pid": 3282797,
+        "python": "3.14.7 (main, Aug 10 2026, 07:46:56) [GCC 16.1.1 20260728]",
+        "numpy": "2.5.3",
+        "backend": "HF DINOv3-ViT-L/16 float32 CPU eager reference",
+        "torch": "2.13.0",
+        "open_accelerator_devices": [],
+        "setup_seconds": 2.651676325011067,
+        "peak_rss_bytes": 1071767552
+      }
+    }
+  }
+}

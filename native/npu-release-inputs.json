@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",
+  "sources": {
+    ".": {
+      "repository": "https://github.com/amd/xdna-driver.git",
+      "revision": "8dfda66f67a84aecf26cf68336efc9e4cc1756c3"
+    },
+    "xrt": {
+      "repository": "https://github.com/Xilinx/XRT.git",
+      "revision": "c826a0efc56d5503a6feaf6a232dcbf3e2669920"
+    },
+    "xrt/src/runtime_src/core/common/aiebu": {
+      "repository": "https://github.com/Xilinx/aiebu.git",
+      "revision": "bea53095db6d253049519ed3198f221fde1491e8"
+    },
+    "xrt/src/runtime_src/core/common/aiebu/src/cpp/ELFIO": {
+      "repository": "https://github.com/serge1/ELFIO.git",
+      "revision": "f849001fc229c2598f8557e0df22866af194ef98"
+    },
+    "xrt/src/runtime_src/core/common/aiebu/src/cpp/cxxopts": {
+      "repository": "https://github.com/jarro2783/cxxopts",
+      "revision": "10a7a647791fa3a24ec4f572f2573a6e0aaa881b"
+    },
+    "xrt/src/runtime_src/core/common/aiebu/src/cpp/zstd": {
+      "repository": "https://github.com/facebook/zstd.git",
+      "revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99"
+    },
+    "xrt/src/runtime_src/core/common/elf": {
+      "repository": "https://github.com/serge1/ELFIO.git",
+      "revision": "f849001fc229c2598f8557e0df22866af194ef98"
+    },
+    "xrt/src/runtime_src/core/common/gsl": {
+      "repository": "https://github.com/microsoft/GSL.git",
+      "revision": "a3534567187d2edc428efd3f13466ff75fe5805c"
+    },
+    "xrt/src/runtime_src/core/pcie/driver/linux/xocl/lib/libqdma": {
+      "repository": "https://github.com/Xilinx/dma_ip_drivers.git",
+      "revision": "77ceefed27bc2d512254763ee2609c9a08e7d973"
+    },
+    "xrt/src/runtime_src/core/tools/xbtracer/Detours": {
+      "repository": "https://github.com/microsoft/Detours.git",
+      "revision": "9764cebcb1a75940e68fa83d6730ffaf0f669401"
+    },
+    "xrt/src/runtime_src/xdp": {
+      "repository": "https://github.com/Xilinx/XDP.git",
+      "revision": "ac4ee6077a1e4ddcecaf4fb7de7e6e76eb1617f1"
+    },
+    "xrt/src/runtime_src/xdp/aie-codegen": {
+      "repository": "https://github.com/Xilinx/aie-codegen.git",
+      "revision": "68adc3461c0b922418fa060c681b06496431ac1b"
+    },
+    "xrt/src/runtime_src/xdp/aie-codegen/aie-regdb": {
+      "repository": "https://github.com/Xilinx/aie-regdb.git",
+      "revision": "3faba137f02db4dd3f64331e3a74a9b5584df8b7"
+    }
+  },
+  "patches": {
+    "patches/xdna/0001-runtime-only.patch": ".",
+    "patches/aiebu/0001-use-pinned-isa-headers.patch": "xrt/src/runtime_src/core/common/aiebu"
+  }
+}

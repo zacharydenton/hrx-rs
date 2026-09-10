@@ -311,30 +311,31 @@ pub fn collect(cache: &Path, keep: &str, unused_for: std::time::Duration) -> Res
     }
     // `cache` is the root, not necessarily the process's own: tests and tools
     // collect a cache they were handed. `kernel_cache` names the default.
-    let kernels = cache.join("kernels");
-    if let Ok(entries) = fs::read_dir(&kernels) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else { continue };
-            if !valid_digest(name) || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                continue;
+    for kernels in [cache.join("kernels"), cache.join("kernels/npu")] {
+        if let Ok(entries) = fs::read_dir(&kernels) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue };
+                if !valid_digest(name) || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    continue;
+                }
+                // Serialize with compilation, cache repair, and other collectors.
+                // Read the timestamp only after a waiting writer has finished.
+                let _lock = Lock::acquire(&kernels.join(format!("{name}.lock")))?;
+                if !entry.path().is_dir() {
+                    continue;
+                }
+                // Last access, not age, and taken from the filesystem rather than from
+                // any file this layout happens to contain: entries written by an older
+                // release are dated the same way as current ones.
+                if last_access(&entry.path()).is_none_or(|used| used >= cutoff) {
+                    continue;
+                }
+                let bytes = directory_bytes(&entry.path());
+                fs::remove_dir_all(entry.path())?;
+                reclaimed.artifacts += 1;
+                reclaimed.artifact_bytes += bytes;
             }
-            // Serialize with compilation, cache repair, and other collectors.
-            // Read the timestamp only after a waiting writer has finished.
-            let _lock = Lock::acquire(&kernels.join(format!("{name}.lock")))?;
-            if !entry.path().is_dir() {
-                continue;
-            }
-            // Last access, not age, and taken from the filesystem rather than from
-            // any file this layout happens to contain: entries written by an older
-            // release are dated the same way as current ones.
-            if last_access(&entry.path()).is_none_or(|used| used >= cutoff) {
-                continue;
-            }
-            let bytes = directory_bytes(&entry.path());
-            fs::remove_dir_all(entry.path())?;
-            reclaimed.artifacts += 1;
-            reclaimed.artifact_bytes += bytes;
         }
     }
     Ok(reclaimed)
@@ -548,6 +549,17 @@ mod gc_tests {
                 .set_times(fs::FileTimes::new().set_accessed(when).set_modified(when))
                 .unwrap();
         }
+        let npu = kernels.join("npu").join(digest(b"stale-npu"));
+        fs::create_dir_all(&npu).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(90 * 24 * 60 * 60);
+        let image = npu.join("x.xclbin");
+        fs::write(&image, b"old image").unwrap();
+        File::options()
+            .write(true)
+            .open(image)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_accessed(old).set_modified(old))
+            .unwrap();
         let reclaimed = collect(
             cache.path(),
             &digest(b"keepme"),
@@ -556,7 +568,11 @@ mod gc_tests {
         .unwrap();
         assert_eq!(reclaimed.bundles, 2);
         assert!(reclaimed.bundle_bytes >= 2048);
-        assert_eq!(reclaimed.artifacts, 2, "stale and legacy entries both go");
+        assert_eq!(
+            reclaimed.artifacts, 3,
+            "stale GPU, legacy and NPU entries go"
+        );
+        assert!(!npu.exists());
         assert!(
             runtime.join(digest(b"keepme")).is_dir(),
             "pinned bundle survives"
