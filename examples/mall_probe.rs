@@ -113,11 +113,10 @@ fn main() -> Result<(), String> {
             "exceeds"
         };
         match measure(&dir, n, seconds) {
-            Ok((gb_s, dispatches)) => println!(
-                "{n:>12} {:>9} MiB {position:>10} {gb_s:>12.1} {dispatches:>10.1}",
-                mib
-            ),
-            Err(error) => println!("{n:>12} {:>9} MiB {position:>10}   error: {error}", mib),
+            Ok((gb_s, dispatches)) => {
+                println!("{n:>12} {mib:>9} MiB {position:>10} {gb_s:>12.1} {dispatches:>10.1}")
+            }
+            Err(error) => println!("{n:>12} {mib:>9} MiB {position:>10}   error: {error}"),
         }
     }
     Ok(())
