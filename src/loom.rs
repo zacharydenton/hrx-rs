@@ -16,7 +16,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     num::NonZeroUsize,
     path::{Path, PathBuf},
@@ -97,6 +97,14 @@ struct Inner {
     path: PathBuf,
     identity: String,
 }
+
+#[derive(Hash, PartialEq, Eq)]
+struct SharedCompilerKey {
+    path: PathBuf,
+    target: String,
+    workers: NonZeroUsize,
+    module_cache_capacity: usize,
+}
 /// A pinned compiler library and reusable native state, shared by cheap clones.
 #[derive(Clone)]
 pub struct Compiler(Arc<Inner>);
@@ -116,18 +124,22 @@ impl Compiler {
     pub fn resolve(library: Option<&Path>) -> Result<Self> {
         Self::with_options(library, CompilerOptions::default())
     }
-    /// The compiler for this library and target, resolved once per process.
+    /// The compiler for this library, target and limits, resolved once per process.
     ///
     /// Resolving is not cheap: it canonicalizes the library path and digests
     /// the whole shared object, twice. A consumer that asks for a compiler per
     /// kernel pays that per kernel, so every consumer memoized it themselves.
     ///
-    /// The cache is keyed by the resolved path and target, so `HRX_LOOM_LIBRARY`
-    /// is honoured on each call rather than frozen at the first.
+    /// The cache includes all compiler options. `HRX_LOOM_LIBRARY` is resolved
+    /// on each call rather than frozen at the first.
     pub fn shared(library: Option<&Path>, options: CompilerOptions) -> Result<Self> {
-        static RESOLVED: Mutex<Option<HashMap<(PathBuf, String), Compiler>>> = Mutex::new(None);
-        let path = Self::resolved_library(library)?;
-        let key = (path, options.target.as_str().to_owned());
+        static RESOLVED: Mutex<Option<HashMap<SharedCompilerKey, Compiler>>> = Mutex::new(None);
+        let key = SharedCompilerKey {
+            path: Self::resolved_library(library)?,
+            target: options.target.as_str().to_owned(),
+            workers: options.workers,
+            module_cache_capacity: options.module_cache_capacity,
+        };
         let mut cache = RESOLVED
             .lock()
             .map_err(|_| Error::Message("compiler cache poisoned".into()))?;
@@ -135,7 +147,7 @@ impl Compiler {
         if let Some(compiler) = cache.get(&key) {
             return Ok(compiler.clone());
         }
-        let compiler = Self::with_options(library, options)?;
+        let compiler = Self::with_options(Some(&key.path), options)?;
         cache.insert(key, compiler.clone());
         Ok(compiler)
     }
@@ -557,6 +569,212 @@ fn cached(dir: &Path, key: &str) -> Option<Artifact> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires libloomc.so, no GPU"]
+    fn shared_compilers_respect_all_limits_and_reuse_matching_options() -> Result<()> {
+        let options = CompilerOptions {
+            workers: NonZeroUsize::new(2).unwrap(),
+            module_cache_capacity: 2,
+            ..Default::default()
+        };
+        let first = Compiler::shared(None, options.clone())?;
+        let same = Compiler::shared(None, options.clone())?;
+        assert!(Arc::ptr_eq(&first.0, &same.0));
+        let serial_options = CompilerOptions {
+            workers: NonZeroUsize::new(1).unwrap(),
+            ..options
+        };
+        let serial = Compiler::shared(None, serial_options.clone())?;
+        assert_eq!(serial.workers().get(), 1);
+        assert!(!Arc::ptr_eq(&first.0, &serial.0));
+        let uncached = Compiler::shared(
+            None,
+            CompilerOptions {
+                module_cache_capacity: 0,
+                ..serial_options
+            },
+        )?;
+        assert!(!Arc::ptr_eq(&serial.0, &uncached.0));
+        serial.module("// retained");
+        uncached.module("// not retained");
+        assert!(!serial.0.modules.lock().unwrap().is_empty());
+        assert!(uncached.0.modules.lock().unwrap().is_empty());
+        Ok(())
+    }
+
+    fn euler_spec() -> Specialization {
+        let mut spec = Specialization::new("krea2_euler");
+        spec.config.insert("krea2.euler.grid_x".into(), "1".into());
+        spec.config.insert("krea2.euler.grid_y".into(), "1".into());
+        spec
+    }
+
+    #[test]
+    #[ignore = "requires libloomc.so, no GPU"]
+    fn reporting_preserves_shared_requests_and_can_be_replaced_from_a_callback() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let kernels = Kernels::new(Compiler::resolve(None)?);
+        let clone = kernels.clone();
+        let pending =
+            kernels.request(include_str!("../tests/kernels/euler.loom"), &euler_spec())?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let reported = calls.clone();
+        let weak = Arc::downgrade(&kernels.0);
+        let kernels = kernels.reporting(move |_| {
+            reported.fetch_add(1, Ordering::SeqCst);
+            // Replacing a reporter must not hold its lock while invoking it.
+            // A weak reference avoids a callback/cache ownership cycle.
+            let next = reported.clone();
+            Kernels(weak.upgrade().unwrap()).reporting(move |_| {
+                next.fetch_add(10, Ordering::SeqCst);
+            });
+        });
+        assert!(Arc::ptr_eq(&kernels.0, &clone.0));
+        assert!(Arc::ptr_eq(&kernels.0, &pending.cache));
+        for cache in [&clone.0, &pending.cache] {
+            let mut attempts = 0;
+            let outcome = cache.build_with(1, |artifact| {
+                attempts += 1;
+                assert_eq!(artifact.record.key, pending.key);
+                Err(Error::Message("injected load failure".into()))
+            });
+            assert_eq!(outcome.unwrap_err().to_string(), "injected load failure");
+            assert_eq!(attempts, 1);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 11);
+        assert_eq!(kernels.0.locked()?.waiting.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires libloomc.so, no GPU"]
+    fn requests_during_build_are_deduplicated_and_new_requests_survive() -> Result<()> {
+        let kernels = Kernels::new(Compiler::resolve(None)?);
+        let source = include_str!("../tests/kernels/euler.loom");
+        let spec = euler_spec();
+        let pending = kernels.request(source, &spec)?;
+        let mut other_spec = spec.clone();
+        other_spec
+            .config
+            .insert("krea2.euler.grid_x".into(), "2".into());
+        let other_key = kernels.compiler().module(source).key(&other_spec)?;
+        let outcome = kernels.0.build_with(1, |_| {
+            // Another caller requests both the active kernel and a new one
+            // while loading is paused here. No native GPU load is performed.
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| {
+                        for _ in 0..2 {
+                            let duplicate = kernels.request(source, &spec).unwrap();
+                            assert_eq!(duplicate.key, pending.key);
+                            kernels.request(source, &other_spec).unwrap();
+                        }
+                    })
+                    .join()
+                    .unwrap();
+            });
+            assert_eq!(kernels.0.locked().unwrap().waiting.len(), 1);
+            Err(Error::Message("injected load failure".into()))
+        });
+        assert_eq!(outcome.unwrap_err().to_string(), "injected load failure");
+        {
+            let state = kernels.0.locked()?;
+            let waiting: Vec<_> = state.waiting.iter().map(|r| r.0.as_str()).collect();
+            assert_eq!(waiting, vec![pending.key.as_str(), other_key.as_str()]);
+            assert!(state.active.is_empty());
+        }
+        let mut attempts = Vec::new();
+        let outcome = kernels.0.build_with(1, |artifact| {
+            attempts.push(artifact.record.key.clone());
+            Err(Error::Message("injected retry failure".into()))
+        });
+        assert!(outcome.is_err());
+        assert_eq!(attempts, vec![pending.key, other_key]);
+        assert_eq!(kernels.0.locked()?.waiting.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires libloomc.so, no GPU"]
+    fn compile_and_load_failures_remain_requested_for_retry() -> Result<()> {
+        let kernels = Kernels::new(Compiler::resolve(None)?);
+        let source = include_str!("../tests/kernels/euler.loom");
+        let bad = kernels.request(source, &Specialization::new("missing_export"))?;
+        let good = kernels.request(source, &euler_spec())?;
+        for _ in 0..2 {
+            let mut attempted = Vec::new();
+            let result = kernels.0.build_with(1, |artifact| {
+                attempted.push(artifact.record.key.clone());
+                Err(Error::Message("injected transient load failure".into()))
+            });
+            let error = result.unwrap_err().to_string();
+            assert!(
+                !error.contains("injected transient load failure"),
+                "the first compile failure must be returned: {error}"
+            );
+            assert_eq!(
+                attempted,
+                vec![good.key.clone()],
+                "the later request was attempted"
+            );
+            let state = kernels.0.locked()?;
+            let waiting: Vec<_> = state.waiting.iter().map(|r| r.0.as_str()).collect();
+            assert_eq!(waiting, vec![bad.key.as_str(), good.key.as_str()]);
+        }
+        assert!(good.built().is_none());
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires libloomc.so, no GPU"]
+    fn concurrent_build_waits_for_the_active_batch_and_retries_its_failure() -> Result<()> {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let kernels = Kernels::new(Compiler::resolve(None)?);
+        let pending =
+            kernels.request(include_str!("../tests/kernels/euler.loom"), &euler_spec())?;
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let first_cache = &kernels.0;
+            let first = scope.spawn(move || {
+                first_cache.build_with(1, |_| {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                    Err(Error::Message("first load failed".into()))
+                })
+            });
+            entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert!(
+                kernels.0.locked().unwrap().waiting.is_empty(),
+                "batch has drained"
+            );
+            let second = scope.spawn(|| {
+                started_tx.send(()).unwrap();
+                let result = kernels
+                    .0
+                    .build_with(1, |_| Err(Error::Message("retry failed".into())));
+                done_tx.send(result.map_err(|e| e.to_string())).unwrap();
+            });
+            started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            let early = done_rx.recv_timeout(Duration::from_millis(100));
+            release_tx.send(()).unwrap();
+            assert!(first.join().unwrap().is_err());
+            second.join().unwrap();
+            assert!(
+                matches!(early, Err(mpsc::RecvTimeoutError::Timeout)),
+                "build returned before the active batch finished"
+            );
+            assert_eq!(done_rx.recv().unwrap(), Err("retry failed".into()));
+        });
+        assert!(pending.built().is_none());
+        assert_eq!(kernels.0.locked()?.waiting.len(), 1);
+        Ok(())
+    }
+
     #[test]
     #[ignore = "requires libloomc.so, no GPU"]
     fn module_cache_eviction_preserves_live_modules() -> Result<()> {
@@ -588,7 +806,7 @@ mod tests {
 ///
 /// The compiler already caches *compilation* on disk. This caches the loaded
 /// executable, which is what a dispatch loop needs: turning a cached artifact
-/// into a [`Kernel`] is a native load every time, and a model that dispatches
+/// into a [`crate::Kernel`] is a native load every time, and a model that dispatches
 /// the same kernel per block would pay it per block. Every consumer of this
 /// crate wrote this cache, so it lives here instead.
 ///
@@ -603,7 +821,9 @@ pub struct Kernels(Arc<Cache>);
 struct Cache {
     compiler: Compiler,
     state: Mutex<Loaded>,
-    report: Option<Reporter>,
+    /// Covers draining, compiling, publishing and requeuing one complete batch.
+    build: Mutex<()>,
+    report: Mutex<Option<Reporter>>,
 }
 
 /// Called with each artifact a [`Kernels`] builds. See [`Kernels::reporting`].
@@ -616,6 +836,8 @@ struct Loaded {
     ready: HashMap<String, crate::Kernel>,
     /// Requested but not yet built, in request order.
     waiting: Vec<(String, String, Specialization)>,
+    /// Keep drained requests known until their results are published or requeued.
+    active: HashSet<String>,
 }
 
 /// A kernel that has been asked for but not yet built.
@@ -687,7 +909,8 @@ impl Kernels {
         Self(Arc::new(Cache {
             compiler,
             state: Mutex::new(Loaded::default()),
-            report: None,
+            build: Mutex::new(()),
+            report: Mutex::new(None),
         }))
     }
 
@@ -697,16 +920,19 @@ impl Kernels {
     /// about them: warnings, and the backend remarks that are the only warning
     /// a kernel is spilling registers. Cache hits report nothing, having built
     /// nothing.
+    /// Installing a reporter updates every clone and existing pending handle.
+    /// An invocation already in progress may finish using the previous reporter.
+    /// The callback must not build or resolve requests on this same cache.
     pub fn reporting(self, report: impl Fn(&Artifact) + Send + Sync + 'static) -> Self {
-        let cache = Arc::try_unwrap(self.0).unwrap_or_else(|shared| Cache {
-            compiler: shared.compiler.clone(),
-            state: Mutex::new(Loaded::default()),
-            report: shared.report.clone(),
-        });
-        Self(Arc::new(Cache {
-            report: Some(Arc::new(report)),
-            ..cache
-        }))
+        let previous = self
+            .0
+            .report
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replace(Arc::new(report));
+        // Captured values can have arbitrary destructors; drop outside the lock.
+        drop(previous);
+        self
     }
 
     /// The compiler these were built with.
@@ -761,6 +987,7 @@ impl Kernels {
         let key = self.0.compiler.module(source).key(spec)?;
         let mut state = self.0.locked()?;
         let known = state.ready.contains_key(&key)
+            || state.active.contains(&key)
             || state.waiting.iter().any(|(waiting, ..)| *waiting == key);
         if !known {
             state
@@ -776,6 +1003,7 @@ impl Kernels {
     }
 
     /// Build every outstanding request, in one batch.
+    /// Concurrent builds wait for the active batch before checking for more work.
     ///
     /// # Safety
     /// As [`Kernels::get`], for every source passed to [`Kernels::request`].
@@ -793,7 +1021,13 @@ impl Cache {
     }
 
     fn reported(&self, artifact: &Artifact) {
-        if let Some(report) = &self.report {
+        let report = self
+            .report
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        // A reporter may replace itself or inspect the cache.
+        if let Some(report) = report {
             report(artifact);
         }
     }
@@ -806,10 +1040,29 @@ impl Cache {
     /// asked for it waiting on nothing, with no way to say why, while returning
     /// it means the next attempt reports the same failure again.
     unsafe fn build(&self, stream: &crate::Stream) -> Result<()> {
+        self.build_with(stream.device_id(), |artifact| {
+            // Safety: the caller vouched for every requested source.
+            unsafe { stream.load_artifact(artifact) }
+        })
+    }
+
+    fn build_with(
+        &self,
+        device: usize,
+        mut load: impl FnMut(&Artifact) -> Result<crate::Kernel>,
+    ) -> Result<()> {
+        let _build = self
+            .build
+            .lock()
+            .map_err(|_| Error::Message("kernel build poisoned".into()))?;
         let waiting = {
             let mut state = self.locked()?;
-            state.claim(stream)?;
-            std::mem::take(&mut state.waiting)
+            state.claim_device(device)?;
+            let waiting = std::mem::take(&mut state.waiting);
+            state
+                .active
+                .extend(waiting.iter().map(|(key, ..)| key.clone()));
+            waiting
         };
         if waiting.is_empty() {
             return Ok(());
@@ -829,8 +1082,7 @@ impl Cache {
         for (request, outcome) in waiting.into_iter().zip(built) {
             let loaded = outcome.and_then(|artifact| {
                 self.reported(&artifact);
-                // Safety: the caller vouched for the source when requesting it.
-                unsafe { stream.load_artifact(&artifact) }
+                load(&artifact)
             });
             match loaded {
                 Ok(kernel) => {
@@ -842,10 +1094,11 @@ impl Cache {
                 }
             }
         }
-        if !unbuilt.is_empty() {
+        {
             let mut state = self.locked()?;
             unbuilt.append(&mut state.waiting);
             state.waiting = unbuilt;
+            state.active.clear();
         }
         match failure {
             Some(error) => Err(error),
@@ -857,7 +1110,10 @@ impl Cache {
 impl Loaded {
     /// Bind this cache to a device on first use, and hold it there.
     fn claim(&mut self, stream: &crate::Stream) -> Result<()> {
-        let device = stream.device_id();
+        self.claim_device(stream.device_id())
+    }
+
+    fn claim_device(&mut self, device: usize) -> Result<()> {
         match self.device {
             Some(owner) if owner != device => Err(Error::Message(
                 "a kernel cache serves one device: an executable loaded on another is not \
