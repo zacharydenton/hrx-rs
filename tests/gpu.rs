@@ -528,12 +528,41 @@ fn a_kernel_cache_loads_once_and_builds_a_batch_together() -> hrx::Result<()> {
     let two = kernels.request(source, &spec("2"))?;
     let four = kernels.request(source, &spec("4"))?;
     assert_eq!(kernels.len(), 1, "requesting builds nothing");
-    assert!(two.get().is_err(), "and yields nothing until built");
+    assert!(two.built().is_none(), "and yields nothing until built");
     // Safety: as above.
     unsafe { kernels.build(&stream) }?;
-    assert_eq!(two.get()?.symbol(), "krea2_euler");
-    assert_eq!(four.get()?.symbol(), "krea2_euler");
+    assert_eq!(two.built().expect("built").symbol(), "krea2_euler");
+    assert_eq!(four.built().expect("built").symbol(), "krea2_euler");
     assert_eq!(kernels.len(), 3);
+
+    // A handle builds its own batch when nobody else has: no explicit build,
+    // and the one request outstanding is enough to satisfy it.
+    let eight = kernels.request(source, &spec("8"))?;
+    assert!(eight.built().is_none());
+    // Safety: as above.
+    let resolved = unsafe { eight.resolve(&stream) }?;
+    assert_eq!(resolved.symbol(), "krea2_euler");
+    assert_eq!(kernels.len(), 4);
+
+    // A specialization that cannot build fails without stranding the batch, and
+    // stays outstanding so the next attempt says the same thing again.
+    let bad = kernels.request(source, &spec("0"))?;
+    let good = kernels.request(source, &spec("16"))?;
+    // Safety: as above.
+    assert!(
+        unsafe { kernels.build(&stream) }.is_err(),
+        "grid zero is invalid"
+    );
+    assert!(
+        good.built().is_some(),
+        "a bad neighbour does not strand a good one"
+    );
+    assert!(bad.built().is_none());
+    // Safety: as above.
+    assert!(
+        unsafe { kernels.build(&stream) }.is_err(),
+        "and it is still wanted"
+    );
 
     // A second cache over the same compiler still gets its own kernels, and the
     // compiler itself is the same one, not a second resolve of the library.
