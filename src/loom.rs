@@ -597,9 +597,12 @@ mod tests {
 /// that compile to the same artifact share one executable.
 ///
 /// Kernels are device-scoped, so a cache serves one device and refuses another.
-pub struct Kernels {
+#[derive(Clone)]
+pub struct Kernels(Arc<Cache>);
+
+struct Cache {
     compiler: Compiler,
-    state: Arc<Mutex<Loaded>>,
+    state: Mutex<Loaded>,
     report: Option<Reporter>,
 }
 
@@ -615,36 +618,60 @@ struct Loaded {
     waiting: Vec<(String, String, Specialization)>,
 }
 
-/// A kernel that has been asked for but not yet built. [`Kernels::build`]
-/// compiles every outstanding request in one batch.
+/// A kernel that has been asked for but not yet built.
+///
+/// Compiling is what a cold cache costs and requests are independent, so
+/// [`Kernels::request`] records one and returns this rather than stopping to
+/// build it. The outstanding set is then built together, on as many threads as
+/// the compiler allows, by [`Kernels::build`] or by the first
+/// [`Pending::resolve`] that needs any one of them.
+#[derive(Clone)]
 pub struct Pending {
     key: String,
-    state: Arc<Mutex<Loaded>>,
+    cache: Arc<Cache>,
 }
 
 impl Pending {
-    /// The kernel, once [`Kernels::build`] has run. An error until then.
-    pub fn get(&self) -> Result<crate::Kernel> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| Error::Message("kernel cache poisoned".into()))?;
-        state
-            .ready
-            .get(&self.key)
-            .cloned()
-            .ok_or_else(|| Error::Message("kernel not built yet: call Kernels::build".into()))
+    /// The kernel, if its batch has already been built.
+    ///
+    /// For callers with no stream to build one on — recording into a graph,
+    /// which cannot load an executable. Everywhere else wants
+    /// [`Pending::resolve`].
+    pub fn built(&self) -> Option<crate::Kernel> {
+        self.cache.locked().ok()?.ready.get(&self.key).cloned()
+    }
+
+    /// The kernel, building everything outstanding if this is the first call
+    /// that needs it.
+    ///
+    /// # Safety
+    /// As [`Kernels::get`], for every source passed to [`Kernels::request`].
+    pub unsafe fn resolve(&self, stream: &crate::Stream) -> Result<crate::Kernel> {
+        if let Some(kernel) = self.built() {
+            return Ok(kernel);
+        }
+        // A batch reports the first kernel in it that would not build, which is
+        // not necessarily this one, so ask again before passing that failure on
+        // as though it were ours.
+        // Safety: the caller vouched for every requested source.
+        let outcome = unsafe { self.cache.build(stream) };
+        match self.built() {
+            Some(kernel) => Ok(kernel),
+            None => Err(outcome
+                .err()
+                .unwrap_or_else(|| Error::Message("kernel was never requested".into()))),
+        }
     }
 }
 
 impl Kernels {
     /// An empty cache over a compiler. Clone it to share one cache.
     pub fn new(compiler: Compiler) -> Self {
-        Self {
+        Self(Arc::new(Cache {
             compiler,
-            state: Arc::new(Mutex::new(Loaded::default())),
+            state: Mutex::new(Loaded::default()),
             report: None,
-        }
+        }))
     }
 
     /// Call `report` with each artifact as it is built, once, before it loads.
@@ -653,25 +680,26 @@ impl Kernels {
     /// about them: warnings, and the backend remarks that are the only warning
     /// a kernel is spilling registers. Cache hits report nothing, having built
     /// nothing.
-    pub fn reporting(mut self, report: impl Fn(&Artifact) + Send + Sync + 'static) -> Self {
-        self.report = Some(Arc::new(report));
-        self
-    }
-
-    fn reported(&self, artifact: &Artifact) {
-        if let Some(report) = &self.report {
-            report(artifact);
-        }
+    pub fn reporting(self, report: impl Fn(&Artifact) + Send + Sync + 'static) -> Self {
+        let cache = Arc::try_unwrap(self.0).unwrap_or_else(|shared| Cache {
+            compiler: shared.compiler.clone(),
+            state: Mutex::new(Loaded::default()),
+            report: shared.report.clone(),
+        });
+        Self(Arc::new(Cache {
+            report: Some(Arc::new(report)),
+            ..cache
+        }))
     }
 
     /// The compiler these were built with.
     pub fn compiler(&self) -> &Compiler {
-        &self.compiler
+        &self.0.compiler
     }
 
     /// How many kernels are loaded.
     pub fn len(&self) -> usize {
-        self.state.lock().map_or(0, |state| state.ready.len())
+        self.0.locked().map_or(0, |state| state.ready.len())
     }
 
     /// Whether any kernel is loaded.
@@ -691,30 +719,30 @@ impl Kernels {
         source: &str,
         spec: &Specialization,
     ) -> Result<crate::Kernel> {
-        let module = self.compiler.module(source);
+        let module = self.0.compiler.module(source);
         let key = module.key(spec)?;
         {
-            let mut state = self.locked()?;
+            let mut state = self.0.locked()?;
             state.claim(stream)?;
             if let Some(kernel) = state.ready.get(&key) {
                 return Ok(kernel.clone());
             }
         }
         let artifact = module.compile(spec)?;
-        self.reported(&artifact);
+        self.0.reported(&artifact);
         // Safety: the caller vouched for the source this artifact came from.
         let kernel = unsafe { stream.load_artifact(&artifact) }?;
-        self.locked()?.ready.insert(key, kernel.clone());
+        self.0.locked()?.ready.insert(key, kernel.clone());
         Ok(kernel)
     }
 
     /// Ask for a kernel without building it. Nothing is compiled until
-    /// [`Kernels::build`], which does every outstanding request at once across
-    /// the compiler's workspaces — so a consumer can name its whole set first
-    /// and pay for it in one batch.
+    /// [`Kernels::build`] or the first [`Pending::resolve`], and then every
+    /// outstanding request is built at once across the compiler's workspaces —
+    /// so a consumer can name its whole set first and pay for it in one batch.
     pub fn request(&self, source: &str, spec: &Specialization) -> Result<Pending> {
-        let key = self.compiler.module(source).key(spec)?;
-        let mut state = self.locked()?;
+        let key = self.0.compiler.module(source).key(spec)?;
+        let mut state = self.0.locked()?;
         let known = state.ready.contains_key(&key)
             || state.waiting.iter().any(|(waiting, ..)| *waiting == key);
         if !known {
@@ -725,17 +753,41 @@ impl Kernels {
         drop(state);
         Ok(Pending {
             key,
-            state: self.state.clone(),
+            cache: self.0.clone(),
         })
     }
 
-    /// Build every outstanding request. Requests that fail are reported, and
-    /// the first failure is returned; the rest are loaded either way, so one
-    /// bad specialization does not strand the others.
+    /// Build every outstanding request, in one batch.
     ///
     /// # Safety
     /// As [`Kernels::get`], for every source passed to [`Kernels::request`].
     pub unsafe fn build(&self, stream: &crate::Stream) -> Result<()> {
+        // Safety: the caller vouched for every requested source.
+        unsafe { self.0.build(stream) }
+    }
+}
+
+impl Cache {
+    fn locked(&self) -> Result<std::sync::MutexGuard<'_, Loaded>> {
+        self.state
+            .lock()
+            .map_err(|_| Error::Message("kernel cache poisoned".into()))
+    }
+
+    fn reported(&self, artifact: &Artifact) {
+        if let Some(report) = &self.report {
+            report(artifact);
+        }
+    }
+
+    /// Compile off the device, then load in order.
+    ///
+    /// A specialization that will not build is that one's failure and no one
+    /// else's, so the batch carries on and the rest is loaded. The failure goes
+    /// back on the queue still wanted: dropping it would leave the handles that
+    /// asked for it waiting on nothing, with no way to say why, while returning
+    /// it means the next attempt reports the same failure again.
+    unsafe fn build(&self, stream: &crate::Stream) -> Result<()> {
         let waiting = {
             let mut state = self.locked()?;
             state.claim(stream)?;
@@ -752,32 +804,35 @@ impl Kernels {
             .iter()
             .zip(waiting.iter().map(|(_, _, spec)| spec))
             .collect();
+        let built = self.compiler.compile_all(&requests);
+
         let mut failure = None;
-        for ((key, _, _), built) in waiting.iter().zip(self.compiler.compile_all(&requests)) {
-            match built {
+        let mut unbuilt = Vec::new();
+        for (request, outcome) in waiting.into_iter().zip(built) {
+            let loaded = outcome.and_then(|artifact| {
+                self.reported(&artifact);
                 // Safety: the caller vouched for the source when requesting it.
-                Ok(artifact) => {
-                    self.reported(&artifact);
-                    match unsafe { stream.load_artifact(&artifact) } {
-                        Ok(kernel) => {
-                            self.locked()?.ready.insert(key.clone(), kernel);
-                        }
-                        Err(error) => failure = failure.or(Some(error)),
-                    }
+                unsafe { stream.load_artifact(&artifact) }
+            });
+            match loaded {
+                Ok(kernel) => {
+                    self.locked()?.ready.insert(request.0.clone(), kernel);
                 }
-                Err(error) => failure = failure.or(Some(error)),
+                Err(error) => {
+                    unbuilt.push(request);
+                    failure = failure.or(Some(error));
+                }
             }
+        }
+        if !unbuilt.is_empty() {
+            let mut state = self.locked()?;
+            unbuilt.append(&mut state.waiting);
+            state.waiting = unbuilt;
         }
         match failure {
             Some(error) => Err(error),
             None => Ok(()),
         }
-    }
-
-    fn locked(&self) -> Result<std::sync::MutexGuard<'_, Loaded>> {
-        self.state
-            .lock()
-            .map_err(|_| Error::Message("kernel cache poisoned".into()))
     }
 }
 
@@ -796,16 +851,6 @@ impl Loaded {
                 self.device = Some(device);
                 Ok(())
             }
-        }
-    }
-}
-
-impl Clone for Kernels {
-    fn clone(&self) -> Self {
-        Self {
-            compiler: self.compiler.clone(),
-            state: self.state.clone(),
-            report: self.report.clone(),
         }
     }
 }
