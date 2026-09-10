@@ -625,10 +625,23 @@ struct Loaded {
 /// build it. The outstanding set is then built together, on as many threads as
 /// the compiler allows, by [`Kernels::build`] or by the first
 /// [`Pending::resolve`] that needs any one of them.
-#[derive(Clone)]
 pub struct Pending {
     key: String,
     cache: Arc<Cache>,
+    /// This handle's own copy, so a built kernel can be borrowed for as long as
+    /// the handle lives. A graph records `&'g Kernel`, and the cache's own copy
+    /// is behind a lock with no lifetime to lend.
+    cell: std::sync::OnceLock<crate::Kernel>,
+}
+
+impl Clone for Pending {
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key.clone(),
+            cache: self.cache.clone(),
+            cell: self.cell.clone(),
+        }
+    }
 }
 
 impl Pending {
@@ -637,8 +650,12 @@ impl Pending {
     /// For callers with no stream to build one on — recording into a graph,
     /// which cannot load an executable. Everywhere else wants
     /// [`Pending::resolve`].
-    pub fn built(&self) -> Option<crate::Kernel> {
-        self.cache.locked().ok()?.ready.get(&self.key).cloned()
+    pub fn built(&self) -> Option<&crate::Kernel> {
+        if self.cell.get().is_none() {
+            let found = self.cache.locked().ok()?.ready.get(&self.key).cloned()?;
+            let _ = self.cell.set(found);
+        }
+        self.cell.get()
     }
 
     /// The kernel, building everything outstanding if this is the first call
@@ -646,9 +663,9 @@ impl Pending {
     ///
     /// # Safety
     /// As [`Kernels::get`], for every source passed to [`Kernels::request`].
-    pub unsafe fn resolve(&self, stream: &crate::Stream) -> Result<crate::Kernel> {
-        if let Some(kernel) = self.built() {
-            return Ok(kernel);
+    pub unsafe fn resolve(&self, stream: &crate::Stream) -> Result<&crate::Kernel> {
+        if self.built().is_some() {
+            return Ok(self.cell.get().expect("just built"));
         }
         // A batch reports the first kernel in it that would not build, which is
         // not necessarily this one, so ask again before passing that failure on
@@ -656,7 +673,7 @@ impl Pending {
         // Safety: the caller vouched for every requested source.
         let outcome = unsafe { self.cache.build(stream) };
         match self.built() {
-            Some(kernel) => Ok(kernel),
+            Some(_) => Ok(self.cell.get().expect("just built")),
             None => Err(outcome
                 .err()
                 .unwrap_or_else(|| Error::Message("kernel was never requested".into()))),
@@ -754,6 +771,7 @@ impl Kernels {
         Ok(Pending {
             key,
             cache: self.0.clone(),
+            cell: std::sync::OnceLock::new(),
         })
     }
 
