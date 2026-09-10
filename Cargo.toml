@@ -25,6 +25,11 @@ default = ["download", "loom"]
 download = ["dep:ureq"]
 loom = []
 runner = ["loom"]
+# Cross-device probe: links the XDNA2 NPU stack alongside the GPU runtime.
+# Off by default -- it needs XRT and a local dinov3-xdna2 checkout.
+npu-probe = ["dep:dvxrt"]
+# The shared-memory NPU API.
+npu = ["dep:dvxrt"]
 
 [dependencies]
 thiserror = "2"
@@ -37,6 +42,27 @@ tempfile = "3"
 tar = "0.4"
 flate2 = "1"
 ureq = { version = "3", optional = true }
+dvxrt = { path = "../dinov3-xdna2/crates/xrt", optional = true }
+
+[[example]]
+name = "unified_probe"
+required-features = ["npu-probe"]
+
+[[example]]
+name = "dmabuf_probe"
+required-features = ["npu-probe"]
+
+[[example]]
+name = "shared_roundtrip"
+required-features = ["npu"]
+
+[[example]]
+name = "shared_bench"
+required-features = ["npu"]
+
+[[example]]
+name = "mall_probe"
+required-features = ["npu"]
 
 [[bin]]
 name = "hrx"

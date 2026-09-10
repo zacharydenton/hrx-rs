@@ -177,6 +177,11 @@ native_api! {
     params: BufferParams,
     size: usize,
     buffer: *mut Buffer,) -> Status;
+    fn hrx_allocator_import_buffer(allocator: Allocator,
+    params: BufferParams,
+    host_ptr: *mut c_void,
+    size: usize,
+    buffer: *mut Buffer,) -> Status;
     fn hrx_buffer_get_device_ptr(buffer: Buffer, pointer: *mut *mut c_void) -> Status;
     fn hrx_device_get_property(device: Device,
     property: c_int,

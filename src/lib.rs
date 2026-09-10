@@ -11,6 +11,9 @@ pub use runtime::*;
 pub use target::{TARGET_FAMILY, TARGET_KEY, Target};
 #[cfg(feature = "loom")]
 pub mod loom;
+#[cfg(feature = "npu")]
+pub mod npu;
+
 
 /// The README's example is compiled with the crate, so an API change that would
 /// invalidate it fails the build instead of reaching a reader.
