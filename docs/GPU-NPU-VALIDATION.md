@@ -120,14 +120,14 @@ Both GPU and NPU runtime bundles are built and pinned for Ubuntu 26.04 LTS,
 the selected current-LTS baseline. This is a support policy, not a claim that
 Ubuntu 24.04 cannot build the sources. Bundled GPU/Loom libraries require glibc
 2.43; stock Ubuntu 24.04 is outside the supported baseline. The runtime manifests,
-source inventories and staged archive hashes describe the same 26.04 builds.
+source inventories and published archive hashes describe the same 26.04 builds.
 
-Both native binary archives and their corresponding source archives are staged
-for `native-20260910-gpu-npu`, awaiting publication. These exact assets must be
-published before uncached automatic provisioning and native CI can succeed.
-Local archive installation has been verified, including installation from the
-Cargo package. The published crates.io 0.2.0 release predates NPU support; a new
-crate release and anonymous installation check remain release steps.
+Both native binary archives and their corresponding source archives are published
+in `native-20260910-gpu-npu`. The archive hashes match the crate manifests and
+source inventories. Local archive installation has been verified, including
+installation from the Cargo package. Anonymous preparation from the public URLs
+into an empty cache, offline diagnostics, GPU→NPU→GPU arithmetic and cross-context
+execution also pass without runtime-directory overrides.
 
 Native compiler installation remains explicit: the library verifies and invokes
 an installed, inventoried IRON/Peano or Chess environment. Chess was not tested on

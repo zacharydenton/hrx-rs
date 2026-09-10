@@ -1,8 +1,8 @@
 # hrx-rs
 
-Rust GPU execution and in-process Loom compilation, built on
+Rust GPU and NPU execution with in-process Loom compilation, built on
 [HRX](https://github.com/ROCm/hrx-system). Includes owned buffers, ordered streams,
-events and graph replay.
+events and coordinated GPU/NPU graph replay.
 
 Requires Rust 1.88 or later. GPU execution supports Linux x86_64 with an AMD kernel
 driver, the system C/C++ runtimes and `libatomic`, and access to `/dev/kfd` and
@@ -23,8 +23,7 @@ IRON/AIE compilation; neither feature needs native tools during Cargo builds.
 
 See [the GPU/NPU guide](docs/GPU-NPU.md) for the trust boundary, host mapping guards,
 shared native runtime setup, compiler pinning, and runnable hardware validation.
-The public GPU bundle currently predates the shared-memory native extension;
-the guide describes how to build and select the matching interop runtime.
+The published GPU and NPU bundles include the matching shared-memory runtime.
 
 The [SCRFD + DINOv3 throughput benchmark](scripts/vision-bench/README.md) compares
 GPU-only and mixed GPU/NPU image processing with standalone model backends.
@@ -35,7 +34,7 @@ using those runtimes; they do not measure the Rust scheduler.
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.2" }
+hrx = { package = "hrx-rs", version = "0.3", features = ["npu"] }
 ```
 
 ```rust,no_run
@@ -86,26 +85,23 @@ too.
 ## CLI and native setup
 
 ```sh
-cargo install hrx-rs --version 0.2.0 --features runner
+cargo install hrx-rs --version 0.3.0 --locked --features runner,npu
 hrx prepare
-hrx info
+hrx doctor
 ```
 
-`hrx prepare` downloads and verifies the native archive pinned in
-[bundle.json](bundle.json). GPU and compiler APIs also provision it on first use.
+`hrx prepare` downloads and verifies the GPU and NPU archives pinned in
+[bundle.json](bundle.json) and [npu-bundle.json](npu-bundle.json).
+GPU, compiler and NPU APIs also provision their runtime on first use.
 For a matching local archive, run `hrx prepare /path/to/bundle.tar.gz`.
 Once prepared, `HRX_OFFLINE=1` disables network provisioning.
 
-For GPU + NPU support, install the source checkout with
-`cargo install --path . --features runner,npu`, then run `hrx prepare` and
-`hrx doctor`. This provisions both user-space runtimes, including XRT; no separate
+This provisions both user-space runtimes, including XRT; no separate
 XRT, Python or Ryzen AI SDK installation is needed for precompiled NPU programs.
 Linux GPU/NPU drivers, firmware and device permissions remain host prerequisites.
 The bundled runtimes target Ubuntu 26.04 LTS: hosts need glibc 2.43 or newer
 and compatible C/C++ runtime libraries. Stock Ubuntu 24.04 is not supported by
 these bundles. The current LTS is the selected distribution baseline.
-The new native assets are staged, awaiting publication; use matching local archives
-until then. The published 0.2.0 crate does not include NPU support.
 See [the installation guide](docs/GPU-NPU.md#native-setup).
 
 With NPU support enabled, supplying only a local GPU archive still lets `prepare`

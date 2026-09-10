@@ -75,18 +75,17 @@ cover the coordinated API, not calls through the low-level GPU or raw XRT APIs.
 ## Native setup
 
 Cargo builds and rustdoc need no XRT installation, Python, ROCm SDK or C++ compiler.
-From a source checkout:
+Install the CLI with GPU and NPU support:
 
 ```bash
-cargo install --path . --features runner,npu
+cargo install hrx-rs --version 0.3.0 --locked --features runner,npu
 hrx prepare
 hrx doctor
 ```
 
-After the corresponding crate and native releases are published, use
-`cargo install hrx-rs --features runner,npu`. The published 0.2.0 crate predates
-NPU support. The native release assets pinned by this checkout are staged locally
-and must be published before automatic downloads can succeed.
+For a source checkout, use `cargo install --path . --features runner,npu`.
+The matched native runtimes and corresponding sources are published in
+[the native release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260910-gpu-npu).
 
 `hrx prepare` downloads and verifies both manifests: `bundle.json` contains GPU
 interop ABI 1 and Loom, and `npu-bundle.json` contains the NPU shim, matching XRT
@@ -190,10 +189,9 @@ Add `--strict` only when a hard threshold is wanted.
 
 The coordinated `Graph::gpu` path requires the allocation-address query in interop
 ABI 1 even for `GpuLocal` buffers: checking view offsets alone does not prove base
-pointer alignment. The GPU bundle pinned by this checkout includes this query. Its release assets
-must be published before an uncached automatic download can succeed. The
+pointer alignment. The published GPU bundle pinned by this crate includes this query. The
 low-level `hrx::gpu` API and coordinated GPU fill/copy operations do not gain this
-requirement. This is a native packaging limitation, not an NPU device requirement.
+requirement. No NPU device is required for coordinated GPU-only graphs.
 
 NPU host-only and imported buffers may be passed between resident program contexts
 on the same device when their memory banks match the argument. The graph validates
