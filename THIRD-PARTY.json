@@ -395,8 +395,8 @@
     "libhrx.so": {
       "project": "HRX / Loom",
       "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
-      "origin": "Fresh Release build of the pinned source plus the seven patches in patches/loom",
-      "sha256": "8d39a4360d137b65271447af5059773fbecce31a4a508bd8ac13b7ebcdbeec8f",
+      "origin": "Fresh Release build of the pinned source plus the eight patches in patches/loom",
+      "sha256": "ef70ba69b3ef53bc7202f74e0f475841fdfcae02aba50b262fa6a759b8de61f7",
       "needed": [
         "libm.so.6",
         "libc.so.6"
@@ -451,8 +451,8 @@
     "libhrx.so.0": {
       "project": "HRX / Loom",
       "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
-      "origin": "Fresh Release build of the pinned source plus the seven patches in patches/loom",
-      "sha256": "8d39a4360d137b65271447af5059773fbecce31a4a508bd8ac13b7ebcdbeec8f",
+      "origin": "Fresh Release build of the pinned source plus the eight patches in patches/loom",
+      "sha256": "ef70ba69b3ef53bc7202f74e0f475841fdfcae02aba50b262fa6a759b8de61f7",
       "needed": [
         "libm.so.6",
         "libc.so.6"
@@ -507,8 +507,8 @@
     "libloomc.so": {
       "project": "HRX / Loom",
       "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
-      "origin": "Fresh Release build of the pinned source plus the seven patches in patches/loom",
-      "sha256": "e66da21cc469071391a54055044bf5202a6c3d36eca4556f22d067f4e44b3fc3",
+      "origin": "Fresh Release build of the pinned source plus the eight patches in patches/loom",
+      "sha256": "95692e2365f9ca7592d4d7b9339799e9a2cff987f210e244289cbe386e3b86a3",
       "needed": [
         "libm.so.6",
         "libstdc++.so.6",
@@ -672,8 +672,8 @@
     }
   },
   "corresponding_source": {
-    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260909-reviewed/hrx-native-sources.tar.gz",
-    "sha256": "9114155f1f591b580f09a08117e240e73d082169a30a1fe47ebdbde7e59fdaac"
+    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260910-gpu-npu/hrx-native-sources.tar.gz",
+    "sha256": "9f3f8084368396eaf7b42673a9f241777aa478466ba06abe9650e0599576d3a6"
   },
   "system_dependencies_not_shipped": [
     "ld-linux-x86-64.so.2",

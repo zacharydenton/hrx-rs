@@ -1,0 +1,10 @@
+HRX NPU shim and raw Rust bindings derive from dinov3-xdna2's xrt-shim and
+crates/xrt, copyright its contributors, licensed Apache-2.0. The maintained
+sources are native/npu/shim.cpp, native/npu/shim.h and src/npu/raw.rs.
+
+native/npu/fixtures/passthrough.py is copied from Xilinx/mlir-aie commit 0d49a88,
+programming_examples/basic/passthrough_dmas/passthrough_dmas.py.
+Copyright 2024-2026 Advanced Micro Devices, Inc. or its affiliates.
+Licensed Apache-2.0 WITH LLVM-exception; its original notices remain in the file.
+
+The optional AMD Chess compiler is user-installed and is not redistributed.

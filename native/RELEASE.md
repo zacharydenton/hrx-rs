@@ -13,7 +13,7 @@ our downloaded bytes. The accompanying `sysdeps_dev` artifact records libelf
 
 The runtime contains 13 shared-library files. Ten are copied, without changing
 their bytes, from AMD's dependency archive. Three are a fresh build of HRX/Loom
-from `ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d` with the seven patches under
+from `ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d` with the eight patches under
 `patches/loom`. `libhrx.so` and `libhrx.so.0` contain identical bytes.
 
 The old Arch fmt, glog, gflags, and rocprofiler-register binaries are removed.
@@ -37,27 +37,30 @@ sources, license texts, AMD build recipes, and symbol/SONAME patch scripts are
 provided as a separate release asset beside the binary archive.
 
 This records source and artifact provenance, not bit-for-bit reproduction of
-AMD's CI environment. System glibc, libstdc++, libgcc, libatomic and the kernel driver are
+AMD's CI environment. The fresh HRX/Loom libraries target Ubuntu 26.04 (glibc 2.43). System glibc,
+libstdc++, libgcc, libatomic and the kernel driver are
 provided by the host and are not redistributed in the bundle.
 
 ## Rebuild HRX and stage a release
 
 Run from the hrx-rs repository. Use Python 3.12+, tar with zstd support, patch,
-Ninja, and ROCm Clang at `/opt/rocm/llvm/bin`. The tested compiler version is
-recorded in the generated `provenance.json`.
+and Podman. The build runs Clang 21 in the pinned Ubuntu 26.04 image; it requires
+no host ROCm SDK. Compiler and OS package versions are recorded in the generated
+provenance and source archive.
 
 ```sh
 python3 scripts/fetch-native-inputs.py --work artifacts/new-release
 bash scripts/rebuild-hrx.sh artifacts/new-release
 python3 scripts/stage-native-release.py --work artifacts/new-release \
-  --release-tag native-20260909-reviewed
+  --release-tag native-20260910-gpu-npu
 cargo run --release --features runner --bin hrx -- pack \
   artifacts/new-release/stage artifacts/new-release/packed \
-  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260909-reviewed/hrx-linux-x86_64-gfx1151.tar.gz \
-  'HRX ecaaf7376f7d + seven patches; TheRock 26672984641' gfx1151
+  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260910-gpu-npu/hrx-linux-x86_64-gfx1151.tar.gz \
+  'HRX ecaaf7376f7d + eight patches; TheRock 26672984641' gfx1151
 ```
 
-The scripts preserve downloaded source archives. Use a fresh work directory for
+The scripts preserve downloaded source archives. The container builder uses
+checked-in GPU device binaries; Loom kernel compilation is included. Use a fresh work directory for
 a rebuild; staging refuses a nonempty destination. Both the binary archive and
 `hrx-native-sources.tar.gz` must be uploaded to the release named in the command.
 The inventory and NOTICE record the source archive URL and SHA-256.
@@ -65,7 +68,7 @@ The inventory and NOTICE record the source archive URL and SHA-256.
 ## Corresponding source and library replacement
 
 The source release contains pristine upstream archives under `upstream/`, all
-seven HRX patches, this document, license texts, the input manifest, and release
+eight HRX patches, this document, license texts, the input manifest, and release
 scripts. The scripts, manifest, and patches preserve the repository layout. Copy
 `upstream/` archives into the fetch script's work cache to reuse them; it verifies
 existing files before use. The AMD binary artifacts must be fetched separately

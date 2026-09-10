@@ -588,7 +588,7 @@ mod tests {
 ///
 /// The compiler already caches *compilation* on disk. This caches the loaded
 /// executable, which is what a dispatch loop needs: turning a cached artifact
-/// into a [`Kernel`] is a native load every time, and a model that dispatches
+/// into a [`crate::gpu::Kernel`] is a native load every time, and a model that dispatches
 /// the same kernel per block would pay it per block. Every consumer of this
 /// crate wrote this cache, so it lives here instead.
 ///

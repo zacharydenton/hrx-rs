@@ -261,7 +261,58 @@ impl Buffer {
         self.binding().slice(offset, length)
     }
 
+    /// The device address backing this buffer.
+    ///
+    /// Needed to hand the allocation to another driver -- exporting it as a dma-buf for the
+    /// NPU, say -- rather than copying its contents out.
+    pub fn device_ptr(&self) -> Result<*mut std::ffi::c_void> {
+        let mut pointer = std::ptr::null_mut();
+        unsafe {
+            check(
+                sys::hrx_buffer_get_device_ptr(self.raw, &mut pointer),
+                "hrx_buffer_get_device_ptr",
+            )?;
+        }
+        Ok(pointer)
+    }
+
     /// The whole allocation.
+    pub(crate) fn allocation_address(&self) -> Result<u64> {
+        let address = sys::interop()?.allocation_address;
+        let mut value = 0;
+        unsafe {
+            check(
+                address(self.raw, &mut value),
+                "querying GPU allocation address",
+            )?;
+        }
+        Ok(value)
+    }
+
+    #[cfg(feature = "npu")]
+    pub(crate) fn export_dmabuf(&self) -> Result<(std::os::fd::OwnedFd, u64)> {
+        use std::os::fd::FromRawFd;
+        let export = sys::interop()?.export_dmabuf;
+        let mut descriptor = -1;
+        let mut offset = 0;
+        unsafe {
+            check(
+                export(self.raw, &mut descriptor, &mut offset),
+                "exporting GPU allocation",
+            )?;
+        }
+        if descriptor < 0 {
+            return Err(Error::Message(
+                "native export returned invalid descriptor".into(),
+            ));
+        }
+        Ok((
+            unsafe { std::os::fd::OwnedFd::from_raw_fd(descriptor) },
+            offset,
+        ))
+    }
+
+    /// Borrow the whole allocation as a device binding.
     pub fn binding(&self) -> View<'_> {
         View::new(
             sys::BufferRef {
@@ -469,6 +520,16 @@ pub struct Device {
     target: Target,
 }
 impl Device {
+    /// Whether this native library exposes shared-allocation interop ABI 1.
+    /// This checks the native API, not whether a particular NPU driver can import.
+    pub fn supports_shared_interop(&self) -> Result<bool> {
+        match sys::interop() {
+            Ok(_) => Ok(true),
+            Err(Error::Unsupported(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Validate a device index without creating a native stream.
     pub fn open(index: i32) -> Result<Self> {
         let (_, target) = open_device(index)?;
@@ -588,6 +649,52 @@ impl Stream {
             _device: self.inner.clone(),
         })
     }
+    /// Import host memory the caller owns as a device-visible buffer, without copying.
+    ///
+    /// On an APU the GPU and the NPU address the same physical pages, so importing one
+    /// host allocation into both runtimes is the basis of zero-copy handoff between them:
+    /// the same pages can simultaneously back an XRT BO driving the NPU.
+    ///
+    /// # Safety
+    ///
+    /// `pointer` must be page-aligned, cover at least `bytes`, and stay allocated and
+    /// unmoved for the whole life of the returned buffer -- the buffer borrows the memory
+    /// and never frees it. The host must not read or write those bytes while device work
+    /// touching them is in flight.
+    pub unsafe fn import_host(
+        &self,
+        pointer: *mut std::ffi::c_void,
+        bytes: usize,
+    ) -> Result<Buffer> {
+        let mut buffer = std::ptr::null_mut();
+        unsafe {
+            check(
+                sys::hrx_allocator_import_buffer(
+                    sys::hrx_device_allocator(self.inner.device),
+                    sys::BufferParams {
+                        // Host-resident pages the device reads in place, rather than a
+                        // device-local allocation the runtime would have to copy into.
+                        memory_type: sys::MEMORY_TYPE_HOST_LOCAL
+                            | sys::MEMORY_TYPE_HOST_COHERENT
+                            | sys::MEMORY_TYPE_DEVICE_VISIBLE,
+                        access: sys::MEMORY_ACCESS_ALL,
+                        usage: sys::BUFFER_USAGE_DEFAULT,
+                        queue_affinity: u64::MAX,
+                    },
+                    pointer,
+                    bytes,
+                    &mut buffer,
+                ),
+                "hrx_allocator_import_buffer",
+            )?;
+        }
+        Ok(Buffer {
+            raw: buffer,
+            bytes,
+            _device: self.inner.clone(),
+        })
+    }
+
     /// Submit and wait for all work, then reclaim completed upload staging.
     pub fn synchronize(&mut self) -> Result<()> {
         self.synchronize_native()?;
@@ -747,6 +854,15 @@ impl Stream {
             )
         }
     }
+    /// Allocate a host-local, device-visible buffer.
+    ///
+    /// Unlike [`Stream::allocate`], the runtime hands out a device pointer for these, so
+    /// the allocation can be exported to another driver -- which is what lets one buffer
+    /// serve both the GPU and the NPU. Device-local memory is faster for GPU-only work.
+    pub fn allocate_shared(&self, bytes: usize) -> Result<Buffer> {
+        self.allocate_host(bytes)
+    }
+
     fn allocate_host(&self, bytes: usize) -> Result<Buffer> {
         let mut raw = std::ptr::null_mut();
         unsafe {
@@ -1070,6 +1186,14 @@ impl Constants {
         self.bytes[self.len..self.len + bytes.as_ref().len()].copy_from_slice(bytes.as_ref());
         self.len += bytes.as_ref().len();
         Ok(())
+    }
+    /// Construct an explicitly contracted scalar block from packed bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut result = Self::new();
+        checked_span(0, bytes.len(), result.bytes.len())?;
+        result.bytes[..bytes.len()].copy_from_slice(bytes);
+        result.len = bytes.len();
+        Ok(result)
     }
     /// The packed constant bytes in declaration order.
     pub fn as_bytes(&self) -> &[u8] {

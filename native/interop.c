@@ -1,0 +1,53 @@
+// Copyright 2026 HRX contributors
+// SPDX-License-Identifier: Apache-2.0
+// Appended to libhrx's buffer.c by the native build patch.
+#include <dlfcn.h>
+#include <stdint.h>
+#include <stdio.h>
+
+HRX_API uint32_t hrx_interop_abi_version(void) { return 1; }
+
+// Exports only owned, device-local allocations. The descriptor retains the
+// backing pages, but callers must also retain the hrx buffer through all uses.
+HRX_API hrx_status_t hrx_buffer_export_dmabuf(
+    hrx_buffer_t buffer, int* fd, uint64_t* offset) {
+  if (!buffer || !fd || !offset) {
+    return hrx_make_status(HRX_STATUS_INVALID_ARGUMENT, "NULL export argument");
+  }
+  iree_hal_external_buffer_t external = {0};
+  HRX_RETURN_IF_IREE_ERROR(iree_hal_allocator_export_buffer(
+      buffer->device->allocator.hal_allocator, buffer->hal_buffer,
+      IREE_HAL_EXTERNAL_BUFFER_TYPE_DEVICE_ALLOCATION,
+      IREE_HAL_EXTERNAL_BUFFER_FLAG_NONE, &external));
+  // Resolve the SONAME already loaded by HRX. Never initialize another HSA copy.
+  void* library = dlopen("libhsa-runtime64.so.1", RTLD_NOW | RTLD_NOLOAD);
+  if (!library) {
+    return hrx_make_status(HRX_STATUS_UNAVAILABLE, "HRX HSA provider is not resident");
+  }
+  typedef uint32_t (*export_fn_t)(const void*, size_t, int*, uint64_t*);
+  export_fn_t export_fn = (export_fn_t)dlsym(library, "hsa_amd_portable_export_dmabuf");
+  if (!export_fn) {
+    dlclose(library);
+    return hrx_make_status(HRX_STATUS_UNAVAILABLE, "HSA dma-buf export unavailable");
+  }
+  uint32_t status = export_fn((const void*)(uintptr_t)external.handle.device_allocation.ptr,
+                             buffer->size, fd, offset);
+  dlclose(library);
+  if (status) {
+    char message[96];
+    snprintf(message, sizeof(message), "HSA dma-buf export failed: %u", status);
+    return hrx_make_status(HRX_STATUS_UNAVAILABLE, message);
+  }
+  return hrx_ok_status();
+}
+
+HRX_API hrx_status_t hrx_buffer_allocation_address(hrx_buffer_t buffer, uint64_t* address) {
+  if (!buffer || !address) return hrx_make_status(HRX_STATUS_INVALID_ARGUMENT, "NULL allocation address argument");
+  iree_hal_external_buffer_t external = {0};
+  HRX_RETURN_IF_IREE_ERROR(iree_hal_allocator_export_buffer(
+      buffer->device->allocator.hal_allocator, buffer->hal_buffer,
+      IREE_HAL_EXTERNAL_BUFFER_TYPE_DEVICE_ALLOCATION,
+      IREE_HAL_EXTERNAL_BUFFER_FLAG_NONE, &external));
+  *address = external.handle.device_allocation.ptr;
+  return hrx_ok_status();
+}

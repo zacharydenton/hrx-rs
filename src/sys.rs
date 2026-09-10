@@ -177,6 +177,11 @@ native_api! {
     params: BufferParams,
     size: usize,
     buffer: *mut Buffer,) -> Status;
+    fn hrx_allocator_import_buffer(allocator: Allocator,
+    params: BufferParams,
+    host_ptr: *mut c_void,
+    size: usize,
+    buffer: *mut Buffer,) -> Status;
     fn hrx_buffer_get_device_ptr(buffer: Buffer, pointer: *mut *mut c_void) -> Status;
     fn hrx_device_get_property(device: Device,
     property: c_int,
@@ -213,6 +218,7 @@ native_api! {
     fn hrx_graph_exec_release(exec: GraphExec) -> ();
     fn hrx_graph_exec_launch(exec: GraphExec, stream: Stream) -> Status;
 }
+static DIRECTORY: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 static API: std::sync::OnceLock<Api> = std::sync::OnceLock::new();
 pub(crate) fn load() -> crate::Result<()> {
     static INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -267,6 +273,7 @@ pub(crate) fn load() -> crate::Result<()> {
         lock.file().set_len(0)?;
         lock.file().rewind()?;
         lock.file().write_all(identity.as_bytes())?;
+        let _ = DIRECTORY.set(directory.clone());
         API.set(api)
             .map_err(|_| crate::Error::Message("runtime loader raced".into()))?;
     }
@@ -367,6 +374,48 @@ pub struct GraphFill {
     pub dst: BufferRef,
     pub pattern: u32,
     pub pattern_size: usize,
+}
+
+/// Optional functions and their owning library have the same process lifetime.
+pub(crate) struct InteropApi {
+    _library: libloading::Library,
+    pub allocation_address: unsafe extern "C" fn(Buffer, *mut u64) -> Status,
+    pub export_dmabuf: unsafe extern "C" fn(Buffer, *mut i32, *mut u64) -> Status,
+}
+static INTEROP: std::sync::OnceLock<Result<InteropApi, std::sync::Arc<crate::Error>>> =
+    std::sync::OnceLock::new();
+
+pub(crate) fn interop() -> crate::Result<&'static InteropApi> {
+    load()?;
+    match INTEROP.get_or_init(|| resolve_interop().map_err(std::sync::Arc::new)) {
+        Ok(api) => Ok(api),
+        Err(error) => match error.as_ref() {
+            crate::Error::Unsupported(message) => Err(crate::Error::Unsupported(message.clone())),
+            _ => Err(crate::Error::Execution {
+                source: error.clone(),
+            }),
+        },
+    }
+}
+fn resolve_interop() -> crate::Result<InteropApi> {
+    let directory = DIRECTORY.get().expect("loaded runtime directory");
+    let library = unsafe { libloading::Library::new(directory.join("libhrx.so")) }?;
+    let abi = unsafe { library.get::<unsafe extern "C" fn() -> u32>(b"hrx_interop_abi_version\0") }
+        .map_err(|_| {
+            crate::Error::Unsupported(
+                "native bundle lacks shared-buffer ABI 1; rebuild with patches/loom/0008".into(),
+            )
+        })?;
+    if unsafe { abi() } != 1 {
+        return Err(crate::Error::Unsupported(
+            "incompatible shared-buffer ABI".into(),
+        ));
+    }
+    Ok(InteropApi {
+        allocation_address: *unsafe { library.get(b"hrx_buffer_allocation_address\0") }?,
+        export_dmabuf: *unsafe { library.get(b"hrx_buffer_export_dmabuf\0") }?,
+        _library: library,
+    })
 }
 
 #[cfg(test)]
