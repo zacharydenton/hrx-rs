@@ -23,8 +23,9 @@ def main():
             config = snapshot / "candidate.toml"
             # JSON strings are valid TOML basic strings; this is data, not shell text.
             import json
-            config.write_text('[patch."https://github.com/zacharydenton/hrx-rs"]\n'
-                              'hrx-rs = { path = ' + json.dumps(str(runtime)) + ' }\n')
+            dependency = 'hrx-rs = { path = ' + json.dumps(str(runtime)) + ' }\n'
+            config.write_text('[patch.crates-io]\n' + dependency +
+                              '[patch."https://github.com/zacharydenton/hrx-rs"]\n' + dependency)
             for command in [["cargo", "test", "--all-features"],
                             ["cargo", "clippy", "--all-features", "--all-targets"]]:
                 subprocess.run(command + ["--config", str(config)] +

@@ -85,7 +85,7 @@ too.
 ## CLI and native setup
 
 ```sh
-cargo install hrx-rs --version 0.3.0 --locked --features runner,npu
+cargo install hrx-rs --version 0.4.0 --locked --features runner,npu
 hrx prepare
 hrx doctor
 ```

@@ -78,7 +78,7 @@ Cargo builds and rustdoc need no XRT installation, Python, ROCm SDK or C++ compi
 Install the CLI with GPU and NPU support:
 
 ```bash
-cargo install hrx-rs --version 0.3.0 --locked --features runner,npu
+cargo install hrx-rs --version 0.4.0 --locked --features runner,npu
 hrx prepare
 hrx doctor
 ```

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-09-10
 
 - Preserve compiler limits, reporter state and concurrent batch retries alongside
   the keyed kernel cache. Keyed pending requests support warm lookup without source
@@ -9,7 +9,13 @@
   adoption, and scoped Stream handoffs with completion and quarantine handling.
 - Infer graph dependencies from interval frontiers and compact access summaries,
   avoiding dense dependency lists when scratch allocations are reused.
+- Preserve the installed Chess environment and wrapper precedence when pinning
+  a compiler toolchain.
+- Serialize direct kernel publication with pending batches to avoid duplicate loads.
 - Test published GPU/NPU bundles separately from local native development builds.
+
+Migration: exhaustive matches on `MemoryPlacement` must handle the new
+`HostVisible` variant. This variant supports host/GPU transfers without an NPU.
 
 ## 0.3.0 — 2026-09-10
 
