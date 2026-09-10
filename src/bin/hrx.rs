@@ -152,6 +152,9 @@ fn dispatch(args: &[String]) -> Result<()> {
             } else {
                 hrx::bundle::resolve()?
             };
+            // Report the usable GPU directory even if NPU provisioning fails.
+            println!("{}", path.display());
+            std::io::Write::flush(&mut std::io::stdout())?;
             #[cfg(feature = "npu")]
             {
                 let npu = if let Some(archive) = args.get(2) {
@@ -171,8 +174,6 @@ fn dispatch(args: &[String]) -> Result<()> {
                     "NPU archive requires the npu feature".into(),
                 ));
             }
-            // Keep stdout usable by scripts expecting the GPU directory.
-            println!("{}", path.display());
         }
         Some("gc") => {
             let days: u64 = match args.get(1) {

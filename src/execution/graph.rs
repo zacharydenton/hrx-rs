@@ -126,7 +126,7 @@ impl Graph {
             .collect();
         self.push(Description::Gpu(kernel.clone(), bindings.to_vec()), uses)
     }
-    /// Invoke a trusted NPU specialization with checked device and group compatibility.
+    /// Invoke a trusted NPU specialization with checked device and memory-bank compatibility.
     /// Host-only and imported BOs may originate in a different program context on
     /// the same device and memory bank. Their owning contexts remain retained.
     #[cfg(feature = "npu")]
@@ -189,7 +189,7 @@ impl Graph {
                     })
                     .collect::<Result<Vec<_>>>()?;
                 // HostOnly/imported BOs are device-global. Graph::npu checked
-                // their device and argument group; sub-BOs retain that mapping.
+                // their device and argument memory bank; sub-BOs retain that mapping.
                 // PreparedRun retains both the dispatch and allocation contexts.
                 let run = unsafe {
                     crate::npu::raw::PreparedRun::new(

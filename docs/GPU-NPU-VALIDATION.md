@@ -6,15 +6,17 @@ qualification across driver versions, devices, or arbitrary kernel contracts.
 
 | Check | Result |
 | --- | --- |
-| CPU tests with all features, offline | 49 passed, including doctests |
-| Miri ownership and synchronization | 10 passed; deliberate quarantine leak excluded |
-| Native GPU/compiler/heterogeneous tests | 23 passed |
+| CPU tests with all features, offline | 54 passed, including doctests |
+| Miri ownership and synchronization | 13 passed; deliberate quarantine leak excluded |
+| Native GPU/compiler/heterogeneous tests | 24 passed |
 | Prepared arithmetic GPU→NPU→GPU replay | Every element checked across 16 alternating inputs, using both blocking waits and Future polling; zero Rust heap allocations during replay |
 | Feature combinations | All 64 checked, including all targets |
 | MSRV | Rust 1.88, all features and targets |
 | Clippy and rustdoc | Warnings denied |
 | Cargo packaging | Packaged source builds without sibling checkouts or XRT headers |
 | Independent NPU component | Hashed archive installed into an empty cache and executed the arithmetic pipeline offline |
+| Ubuntu 26.04 without system XRT | Preparation, offline reuse, doctor, Loom compilation and both heterogeneous tests passed; loader traces confirm bundled XRT libraries |
+| Partial provisioning failure | GPU cache remains verified and its path is printed; unavailable or offline NPU provisioning returns failure |
 
 The NPU passthrough fixture is compiled through the public Rust compiler API
 with a pinned installed Peano/IRON toolchain. It exercises real NPU DMA. The
@@ -36,16 +38,19 @@ counts. Per the intended performance policy, 5% is guidance: normal runs report
 measurements without failing on a small deviation. `--strict` opts into enforcement.
 The fixture is a GPU fill followed by NPU DMA, using shared allocations.
 
-Final blocking-wait scheduler results (the caller can execute its own ready
-regions through the same scheduler):
+Blocking-wait scheduler results with the final Ubuntu 26.04 bundles (the caller
+can execute its own ready regions through the same scheduler):
 
 | Process | Direct p50, µs | Coordinated p50, µs | Ratio |
 | --- | ---: | ---: | ---: |
-| 1 | 190.735 | 192.795 | 1.011 |
-| 2 | 188.985 | 191.805 | 1.015 |
-| 3 | 187.755 | 189.075 | 1.007 |
-| 4 | 187.855 | 190.244 | 1.013 |
-| 5 | 190.385 | 193.285 | 1.015 |
+| 1 | 244.283 | 248.813 | 1.019 |
+| 2 | 243.394 | 245.933 | 1.010 |
+| 3 | 245.114 | 243.804 | 0.995 |
+| 4 | 270.483 | 272.683 | 1.008 |
+| 5 | 291.133 | 296.662 | 1.019 |
+
+The median ratio is 1.010 (+1.0%). These measurements do not establish a speedup
+from changing the build distribution.
 
 Earlier scheduler versions exceeded the target in repeated measurements. The
 final version wakes one worker for a serial chain, wakes its peer for independent
@@ -111,13 +116,18 @@ The source package, component archive and detailed local logs are retained in
 
 ## Distribution and remaining qualification
 
-The published default GPU bundle still predates interop ABI 1. Shared execution
-currently requires the documented matching runtime override plus the separate
-NPU shim; Cargo builds remain independent of either native runtime. The native
-patch, its digest, the shim sources, component staging tool and offline installer
-are included. A release must rebuild and publish the matching GPU bundle, assign
-the new release version, and verify anonymous installation before claiming an
-out-of-the-box shared runtime.
+Both GPU and NPU runtime bundles are built and pinned for Ubuntu 26.04 LTS,
+the selected current-LTS baseline. This is a support policy, not a claim that
+Ubuntu 24.04 cannot build the sources. Bundled GPU/Loom libraries require glibc
+2.43; stock Ubuntu 24.04 is outside the supported baseline. The runtime manifests,
+source inventories and staged archive hashes describe the same 26.04 builds.
+
+Both native binary archives and their corresponding source archives are staged
+for `native-20260910-gpu-npu`, awaiting publication. These exact assets must be
+published before uncached automatic provisioning and native CI can succeed.
+Local archive installation has been verified, including installation from the
+Cargo package. The published crates.io 0.2.0 release predates NPU support; a new
+crate release and anonymous installation check remain release steps.
 
 Native compiler installation remains explicit: the library verifies and invokes
 an installed, inventoried IRON/Peano or Chess environment. Chess was not tested on
@@ -126,3 +136,26 @@ resource quarantine tests; destructive device-reset testing and a wider native
 failure-injection matrix remain release qualification work. Shared cache
 maintenance is allocation-wide and cross-submission dependencies reserve whole
 graphs, as documented in the API guide.
+
+## Ownership and context coverage
+
+Host writes flush before GPU or NPU consumption. Mapping reserves a host lease
+under the scheduler lock, releases that lock before cache maintenance, and rolls
+back the lease on failure. Fault-injection tests cover rollback; Miri covers
+ownership and synchronization. The cached interop API retains its native library
+for the lifetime of its function pointers, including cached resolution failures.
+
+XRT group IDs encode a memory bank in bits 0–15 and a context slot in bits 16–23.
+Bindings compare device ordinal and bank while allocations retain the full group
+ID. The hardware test drops the cached program before loading a second context,
+while its buffers retain their owning context. Both NPU-local and shared buffers
+execute through that second context. This qualifies distinct contexts using the
+same xclbin, not every pair of different xclbins.
+
+## Application throughput
+
+The independent SCRFD + DINOv3 harness has nine passing CPU tests covering
+preprocessing, pipeline slot reuse, pipe framing and checkpoint provenance.
+Its Lena run observed +2.5% median mixed-pipeline throughput, with overlapping
+ranges, unequal queue depths and one repeated image. This does not establish a
+reliable general speedup. See [results and limitations](../scripts/vision-bench/RESULTS.md).

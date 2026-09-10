@@ -198,3 +198,54 @@ fn separate_processes_provision_the_same_cache() {
         String::from_utf8_lossy(&result.stderr)
     );
 }
+
+#[cfg(all(feature = "runner", feature = "npu"))]
+#[test]
+fn prepare_reports_gpu_directory_when_npu_provisioning_fails() {
+    for offline in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let gpu = fixture(dir.path());
+        let npu = hrx::npu::provision::Manifest {
+            schema: 1,
+            component: "npu-runtime".into(),
+            revision: "test".into(),
+            url: format!("file://{}", dir.path().join("missing-npu.tar.gz").display()),
+            archive_sha256: digest(b"unavailable archive"),
+            files: BTreeMap::from([("libhrx_npu.so.1".into(), digest(b"test shim"))]),
+        };
+        let gpu_manifest = dir.path().join("gpu.json");
+        let npu_manifest = dir.path().join("npu.json");
+        fs::write(&gpu_manifest, serde_json::to_vec(&gpu).unwrap()).unwrap();
+        fs::write(&npu_manifest, serde_json::to_vec(&npu).unwrap()).unwrap();
+        let xdg = dir.path().join("xdg-cache");
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_hrx"));
+        command
+            .arg("prepare")
+            .arg(dir.path().join("bundle.tar.gz"))
+            .env("XDG_CACHE_HOME", &xdg)
+            .env("HRX_BUNDLE_MANIFEST", &gpu_manifest)
+            .env("HRX_NPU_BUNDLE_MANIFEST", &npu_manifest)
+            .env_remove("HRX_RUNTIME_DIR")
+            .env_remove("HRX_NPU_RUNTIME_DIR")
+            .env_remove("HRX_OFFLINE");
+        if offline {
+            command.env("HRX_OFFLINE", "1");
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        assert!(!output.stderr.is_empty());
+        let destination = xdg.join("hrx/runtime").join(&gpu.archive_sha256);
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!("{}\n", destination.display()),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        gpu.verify(&destination).unwrap();
+        assert!(
+            !xdg.join("hrx/npu-runtime")
+                .join(&npu.archive_sha256)
+                .exists()
+        );
+    }
+}

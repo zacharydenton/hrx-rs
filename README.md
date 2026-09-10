@@ -96,15 +96,23 @@ hrx info
 For a matching local archive, run `hrx prepare /path/to/bundle.tar.gz`.
 Once prepared, `HRX_OFFLINE=1` disables network provisioning.
 
-For GPU + NPU support from this PR, install the checkout with
+For GPU + NPU support, install the source checkout with
 `cargo install --path . --features runner,npu`, then run `hrx prepare` and
 `hrx doctor`. This provisions both user-space runtimes, including XRT; no separate
 XRT, Python or Ryzen AI SDK installation is needed for precompiled NPU programs.
 Linux GPU/NPU drivers, firmware and device permissions remain host prerequisites.
+The bundled runtimes target Ubuntu 26.04 LTS: hosts need glibc 2.43 or newer
+and compatible C/C++ runtime libraries. Stock Ubuntu 24.04 is not supported by
+these bundles. The current LTS is the selected distribution baseline.
 The new native assets are staged, awaiting publication; use matching local archives
 until then. The published 0.2.0 crate does not include NPU support.
 See [the installation guide](docs/GPU-NPU.md#native-setup).
 
+With NPU support enabled, supplying only a local GPU archive still lets `prepare`
+download the NPU runtime. For an offline installation, use
+`HRX_OFFLINE=1 hrx prepare /path/to/gpu.tar.gz /path/to/npu.tar.gz`.
+`prepare` prints the verified GPU directory to stdout before preparing the NPU;
+an NPU provisioning failure still produces a nonzero exit status.
 
 | Setting | Purpose |
 | --- | --- |

@@ -75,7 +75,7 @@ cover the coordinated API, not calls through the low-level GPU or raw XRT APIs.
 ## Native setup
 
 Cargo builds and rustdoc need no XRT installation, Python, ROCm SDK or C++ compiler.
-With this PR checked out:
+From a source checkout:
 
 ```bash
 cargo install --path . --features runner,npu
@@ -85,7 +85,7 @@ hrx doctor
 
 After the corresponding crate and native releases are published, use
 `cargo install hrx-rs --features runner,npu`. The published 0.2.0 crate predates
-NPU support. The native release assets pinned by this branch are staged locally
+NPU support. The native release assets pinned by this checkout are staged locally
 and must be published before automatic downloads can succeed.
 
 `hrx prepare` downloads and verifies both manifests: `bundle.json` contains GPU
@@ -104,9 +104,14 @@ The GPU/Loom libraries are also built against Ubuntu 26.04.
 For an offline install, provide the two matching archives:
 
 ```bash
-hrx prepare /path/to/gpu.tar.gz /path/to/npu.tar.gz
+HRX_OFFLINE=1 hrx prepare /path/to/gpu.tar.gz /path/to/npu.tar.gz
 HRX_OFFLINE=1 hrx doctor
 ```
+
+Passing only the GPU archive still resolves the NPU runtime from its cache or
+download URL. Set `HRX_OFFLINE=1` to forbid downloads. The GPU directory is printed
+to stdout as soon as it is ready; a subsequent NPU failure reports its error on
+stderr and returns a nonzero exit status, leaving the verified GPU cache usable.
 
 `hrx prepare-npu` prepares only the NPU runtime; its optional `MANIFEST [ARCHIVE]`
 arguments support custom components. `HRX_NPU_BUNDLE_MANIFEST` selects a mirror or
@@ -185,7 +190,7 @@ Add `--strict` only when a hard threshold is wanted.
 
 The coordinated `Graph::gpu` path requires the allocation-address query in interop
 ABI 1 even for `GpuLocal` buffers: checking view offsets alone does not prove base
-pointer alignment. The GPU bundle pinned by this branch includes this query. Its release assets
+pointer alignment. The GPU bundle pinned by this checkout includes this query. Its release assets
 must be published before an uncached automatic download can succeed. The
 low-level `hrx::gpu` API and coordinated GPU fill/copy operations do not gain this
 requirement. This is a native packaging limitation, not an NPU device requirement.
