@@ -37,14 +37,14 @@ sources, license texts, AMD build recipes, and symbol/SONAME patch scripts are
 provided as a separate release asset beside the binary archive.
 
 This records source and artifact provenance, not bit-for-bit reproduction of
-AMD's CI environment. The fresh HRX/Loom libraries target Ubuntu 24.04 (glibc 2.39). System glibc,
+AMD's CI environment. The fresh HRX/Loom libraries target Ubuntu 26.04 (glibc 2.43). System glibc,
 libstdc++, libgcc, libatomic and the kernel driver are
 provided by the host and are not redistributed in the bundle.
 
 ## Rebuild HRX and stage a release
 
 Run from the hrx-rs repository. Use Python 3.12+, tar with zstd support, patch,
-and Podman. The build runs Clang 18 in the pinned Ubuntu 24.04 image; it requires
+and Podman. The build runs Clang 21 in the pinned Ubuntu 26.04 image; it requires
 no host ROCm SDK. Compiler and OS package versions are recorded in the generated
 provenance and source archive.
 

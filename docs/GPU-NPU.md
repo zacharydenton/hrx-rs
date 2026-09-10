@@ -98,8 +98,8 @@ an optional, separately configured toolchain as described below.
 The host still supplies Linux x86_64, its normal C/C++ runtime libraries,
 `amdgpu`/KFD, the `amdxdna` kernel driver, NPU firmware and device permissions.
 These are system prerequisites; Cargo cannot supply kernel drivers or firmware.
-The NPU binaries are built against Ubuntu 24.04 (glibc 2.39 and GCC 13 runtime).
-The GPU/Loom libraries are also built against Ubuntu 24.04.
+The NPU binaries are built against Ubuntu 26.04 (glibc 2.43 and GCC 15 runtime).
+The GPU/Loom libraries are also built against Ubuntu 26.04.
 
 For an offline install, provide the two matching archives:
 
