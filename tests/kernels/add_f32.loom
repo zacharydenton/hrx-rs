@@ -1,0 +1,26 @@
+amdgpu.target<gfx11-generic> @target {subgroup_size = 32}
+config.decl @add.grid : %value: index where [range(%value, 1, 1073741824)]
+kernel.def target(@target) export("add_f32") @add_f32(%count: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %grid = config.get @add.grid : index
+  kernel.launch.config workgroups(%grid, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%count: index, %delta: f32, %sample: buffer) {
+  %threads = index.constant 256 : index
+  %zero = index.constant 0 : offset
+  %n = index.assume %count [range(%count, 1, 1073741824)] : index
+  %lane = kernel.workitem.id<x> : index
+  %group = kernel.workgroup.id<x> : index
+  %base = index.mul %group, %threads : index
+  %index = index.add %base, %lane : index
+  %memory = buffer.assume.memory_space<global> %sample : buffer
+  %view = buffer.view %memory[%zero] : buffer -> view<[%n]xf32>
+  %inside = index.cmp ult, %index, %n : index
+  scf.if %inside {
+    %i = index.assume %index [range(%index, 0, 1073741824), lt(%index, %n)] : index
+    %old = view.load %view[%i] : view<[%n]xf32> -> f32
+    %new = scalar.addf %old, %delta : f32
+    view.store %new, %view[%i] : f32, view<[%n]xf32>
+  }
+  kernel.return
+}

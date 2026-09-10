@@ -2,7 +2,7 @@
 # Check every subset, including runner without an explicit loom feature.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-features=(download loom runner)
+features=(download loom runner npu npu-probe npu-compile)
 for ((mask=0; mask<(1 << ${#features[@]}); mask++)); do
   selected=()
   for ((bit=0; bit<${#features[@]}; bit++)); do

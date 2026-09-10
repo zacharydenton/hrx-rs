@@ -179,7 +179,7 @@ def main():
                   'Apache-2.0 WITH LLVM-exception AND MIT AND NCSA',
                   ['LICENSE-HRX.txt', 'LICENSE-CORE-MATH.txt', 'LICENSE-HSA-headers.txt',
                    'LICENSE-SPIRV-Headers.txt', 'LICENSE-Vulkan-Headers.txt', 'LICENSE-AMDGPU-ISA.txt'],
-                  ['hrx-system', 'hsa_runtime_headers', 'spirv_headers', 'vulkan_headers', 'amdgpu_isa_xml'], 'Fresh Release build of the pinned source plus the seven patches in patches/loom')
+                  ['hrx-system', 'hsa_runtime_headers', 'spirv_headers', 'vulkan_headers', 'amdgpu_isa_xml'], 'Fresh Release build of the pinned source plus the eight patches in patches/loom')
     components['librocprofiler-register.so.0']['statically_linked'] = {
         'fmt': {'version': '11.1.4', 'revision': inputs['downloads']['fmt']['revision'], 'license': 'MIT'},
         'glog': {'version': '0.7.1', 'revision': inputs['downloads']['glog']['revision'], 'license': 'BSD-3-Clause'},
@@ -214,6 +214,8 @@ def main():
     members['RELEASE.md'] = REPO / 'native/RELEASE.md'
     members['scripts/stage-native-release.py'] = Path(__file__).resolve()
     members['scripts/rebuild-hrx.sh'] = REPO / 'scripts/rebuild-hrx.sh'
+    members['scripts/build-gpu-runtime-container.sh'] = REPO / 'scripts/build-gpu-runtime-container.sh'
+    members['build-packages.txt'] = build / 'build-packages.txt'
     members['scripts/fetch-native-inputs.py'] = REPO / 'scripts/fetch-native-inputs.py'
     members['native/RELEASE.md'] = REPO / 'native/RELEASE.md'
     members['patches/loom/base-revision'] = REPO / 'patches/loom/base-revision'
@@ -240,7 +242,7 @@ def main():
     provenance = {'schema': 1, 'hrx': inputs['hrx'], 'amd_build': inputs['therock'],
                   'upstream_artifacts': {key: spec for key, spec in inputs['downloads'].items() if key.endswith('.zst')},
                   'build_recipe': 'scripts/rebuild-hrx.sh', 'corresponding_source': source_record,
-                  'compiler': subprocess.check_output(['/opt/rocm/llvm/bin/clang', '--version'], text=True).strip(),
+                  'compiler': (build / 'compiler-version.txt').read_text().strip(),
                   'cmake_cache_sha256': digest(build / 'CMakeCache.txt'),
                   'built_components': ['libhrx.so', 'libhrx.so.0', 'libloomc.so'],
                   'binary_sha256': {name: entry['sha256'] for name, entry in components.items()}}
@@ -256,7 +258,7 @@ def main():
                'CORE-MATH adaptation. Zstandard includes xxHash by Yann Collet / Meta.\n'
                'Compiler tables use AMD GPU ISA XML (MIT); compiler/runtime builds also\n'
                'use HSA, SPIR-V and Vulkan headers. Their source licenses are included.\n\n'
-               'HRX/Loom are modified by the seven patches distributed with the source.\n'
+               'HRX/Loom are modified by the eight patches distributed with the source.\n'
                'AMD modifies sysdeps library names and symbol versions; its complete build\n'
                'recipes and patch scripts are in the accompanying TheRock source archive.\n'
                'No further changes are made to the AMD library bytes.\n\n'

@@ -50,7 +50,7 @@ CORE-MATH adaptation. Zstandard includes xxHash by Yann Collet / Meta.
 Compiler tables use AMD GPU ISA XML (MIT); compiler/runtime builds also
 use HSA, SPIR-V and Vulkan headers. Their source licenses are included.
 
-HRX/Loom are modified by the seven patches distributed with the source.
+HRX/Loom are modified by the eight patches distributed with the source.
 AMD modifies sysdeps library names and symbol versions; its complete build
 recipes and patch scripts are in the accompanying TheRock source archive.
 No further changes are made to the AMD library bytes.
@@ -58,8 +58,8 @@ No further changes are made to the AMD library bytes.
 libelf is distributed under LGPL-3.0-or-later; libnuma under LGPL-2.1-only.
 Corresponding source, modification/build scripts, and all license texts are
 available alongside the binary archive at no charge:
-https://github.com/zacharydenton/hrx-rs/releases/download/native-20260909-reviewed/hrx-native-sources.tar.gz
-SHA-256: 9114155f1f591b580f09a08117e240e73d082169a30a1fe47ebdbde7e59fdaac
+https://github.com/zacharydenton/hrx-rs/releases/download/native-20260910-gpu-npu/hrx-native-sources.tar.gz
+SHA-256: 9f3f8084368396eaf7b42673a9f241777aa478466ba06abe9650e0599576d3a6
 
 You may modify or replace these shared libraries. For a local replacement,
 copy the runtime directory, replace the library while preserving its ABI,
