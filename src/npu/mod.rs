@@ -1,236 +1,151 @@
-//! Run NPU work on memory the GPU can also reach.
+//! XDNA2 programs and fixed instruction specializations.
 //!
-//! On Strix Halo both engines sit on the same LPDDR5X, but each driver pins pages into its
-//! own IOMMU domain. Exactly one bridge between them works: a GPU-agent HSA pool allocation
-//! exported as a dma-buf and imported by the NPU's driver. [`Shared`] is that allocation --
-//! allocated once, exported once, addressed by both engines for its whole life, so export
-//! is a per-buffer setup cost rather than a per-handoff one.
-//!
-//! The pages are shared; the caches are not. [`Shared`] tracks which engine last touched the
-//! memory and performs exactly the cache maintenance a transition needs -- and no more, so a
-//! run of NPU dispatches costs one flush, not one per dispatch.
-//!
-//! ```no_run
-//! # fn main() -> Result<(), hrx::Error> {
-//! let npu = hrx::npu::Npu::open("model.xclbin")?;
-//! let mut activations = npu.alloc(32 << 20, npu.group_id(3)?)?;
-//!
-//! activations.host()?.fill(0);          // host owns it
-//! let bo = activations.npu();           // flushed for the NPU, which now owns it
-//! # let _ = bo;
-//! let result = activations.host()?;     // invalidated back for the host
-//! # let _ = result;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## What is not here yet
-//!
-//! GPU *kernels* cannot bind a [`Shared`] directly. libhrx will not return a device pointer
-//! for device-local buffers and has no export entry point, so a buffer cannot be both an
-//! `hrx::Buffer` and dma-buf exportable. Until that gap closes, move data with
-//! [`Shared::copy_from`] / [`Shared::copy_to`], which stay on the device rather than
-//! bouncing through host staging. When libhrx grows either capability, those calls collapse
-//! to nothing and the rest of this API is unchanged.
+//! Programs are explicitly trusted native code. Buffers and execution are managed
+//! through [`crate::execution`]; the [`raw`] API requires external synchronization.
 
-mod hsa;
+#[cfg(feature = "npu-compile")]
+pub mod compiler;
+pub mod provision;
+pub mod raw;
+use crate::{Error, Result, execution::KernelContract};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use crate::{Buffer, Error, Result};
-use std::ffi::c_void;
-use std::path::Path;
-
-use hsa::Hsa;
-
-fn failed(message: String) -> Error {
-    Error::Message(message)
+pub(crate) fn load_shim() -> Result<libloading::Library> {
+    let directory = if let Some(path) = std::env::var_os("HRX_NPU_RUNTIME_DIR") {
+        PathBuf::from(path)
+    } else if let Some(path) = std::env::var_os("HRX_NPU_BUNDLE_MANIFEST") {
+        provision::Manifest::load(path)?.prepare(std::env::var_os("HRX_OFFLINE").is_some())?
+    } else {
+        crate::bundle::resolve()?
+    };
+    if directory.join("component.json").is_file() {
+        provision::Manifest::load(directory.join("component.json"))?.verify(&directory)?;
+    }
+    let path = directory.join("libhrx_npu.so.1");
+    let library = unsafe { libloading::Library::new(&path) }.map_err(|e| {
+        Error::from(e).context(format!(
+            "loading {}; build scripts/build-npu-shim.sh or prepare an NPU runtime",
+            path.display()
+        ))
+    })?;
+    let abi = unsafe { library.get::<unsafe extern "C" fn() -> u32>(b"hrx_npu_abi_version\0") }?;
+    if unsafe { abi() } != 1 {
+        return Err(Error::Unsupported("NPU shim ABI must be 1".into()));
+    }
+    Ok(library)
 }
-
-/// An NPU device plus the HSA plumbing needed to allocate memory it can import.
-pub struct Npu {
-    context: dvxrt::Context,
-    hsa: Hsa,
+/// An immutable, resident NPU device image. Cloning reuses the native context.
+#[derive(Clone)]
+pub struct NpuProgram {
+    pub(crate) inner: Arc<ProgramInner>,
 }
-
-impl Npu {
-    /// Open the NPU against an xclbin and locate the GPU pool shared memory comes from.
-    pub fn open(xclbin: impl AsRef<Path>) -> Result<Self> {
-        let xclbin = xclbin.as_ref();
-        let path = xclbin
+pub(crate) struct ProgramInner {
+    pub context: raw::Context,
+    pub device: i32,
+    pub identity: String,
+}
+impl NpuProgram {
+    /// Load an xclbin on an explicitly selected NPU.
+    /// # Safety
+    /// The image is trusted native code for this device; loading it can start
+    /// tile programs. It must not perform unbound DMA or access host memory
+    /// except through subsequent correctly contracted invocations.
+    pub unsafe fn load(device: i32, path: impl AsRef<Path>) -> Result<Self> {
+        let path = std::fs::canonicalize(path)?;
+        let identity = crate::bundle::file_digest(&path)?;
+        type Programs = std::collections::BTreeMap<(i32, String), std::sync::Weak<ProgramInner>>;
+        static PROGRAMS: std::sync::OnceLock<std::sync::Mutex<Programs>> =
+            std::sync::OnceLock::new();
+        let mut programs = PROGRAMS
+            .get_or_init(Default::default)
+            .lock()
+            .map_err(|_| Error::Message("NPU program registry poisoned".into()))?;
+        if let Some(inner) = programs
+            .get(&(device, identity.clone()))
+            .and_then(std::sync::Weak::upgrade)
+        {
+            return Ok(Self { inner });
+        }
+        programs.retain(|_, program| program.strong_count() != 0);
+        let path_str = path
             .to_str()
-            .ok_or_else(|| failed(format!("xclbin path is not UTF-8: {}", xclbin.display())))?;
-        let context = dvxrt::Context::new(0, path).map_err(failed)?;
-        let hsa = Hsa::open().map_err(failed)?;
-        Ok(Npu { context, hsa })
-    }
-
-    /// The memory group for a kernel argument index, needed when allocating for that binding.
-    pub fn group_id(&self, argument: i32) -> Result<i32> {
-        self.context.group_id(argument).map_err(failed)
-    }
-
-    /// Allocate `bytes` reachable by both engines, bound to kernel argument group `group`.
-    pub fn alloc(&self, bytes: usize, group: i32) -> Result<Shared<'_>> {
-        if bytes == 0 {
-            return Err(failed("cannot allocate a zero-length shared buffer".into()));
+            .ok_or_else(|| Error::Message("xclbin path is not UTF-8".into()))?;
+        let context = unsafe { raw::Context::new(device, path_str) }.map_err(Error::Message)?;
+        if crate::bundle::file_digest(&path)? != identity {
+            return Err(Error::Message("xclbin changed while loading".into()));
         }
-        let pointer = self.hsa.allocate(bytes).map_err(failed)?;
-        // From here on every exit path must release the allocation.
-        let descriptor = match self.hsa.export_dmabuf(pointer, bytes) {
-            Ok(descriptor) => descriptor,
-            Err(error) => {
-                self.hsa.free(pointer);
-                return Err(failed(error));
-            }
-        };
-        let bo = match unsafe { self.context.import_dmabuf(descriptor, bytes) } {
-            Ok(bo) => bo,
-            Err(error) => {
-                unsafe { libc::close(descriptor) };
-                self.hsa.free(pointer);
-                return Err(failed(error));
-            }
-        };
-        let _ = group; // The import carries the mapping; the group is validated by dispatch.
-        Ok(Shared {
-            npu: self,
-            pointer,
-            bytes,
-            descriptor,
-            bo,
-            owner: Owner::Host,
+        let inner = Arc::new(ProgramInner {
+            context,
+            device,
+            identity: identity.clone(),
+        });
+        programs.insert((device, identity), Arc::downgrade(&inner));
+        Ok(Self { inner })
+    }
+    /// Content identity of the resident xclbin.
+    pub fn identity(&self) -> &str {
+        &self.inner.identity
+    }
+    /// Bind a fixed instruction specialization to this image and contract.
+    /// # Safety
+    /// Instructions must match this exact image and target. All accesses must
+    /// remain within the contract, with the declared read/write modes, for every
+    /// accepted binding. Argument aliasing is rejected by the safe graph API.
+    pub unsafe fn kernel(
+        &self,
+        instructions: &[u8],
+        contract: KernelContract,
+    ) -> Result<NpuKernel> {
+        contract.validate()?;
+        if !contract.constants.is_empty()
+            || instructions.is_empty()
+            || !instructions.len().is_multiple_of(4)
+            || instructions.len() / 4 > u32::MAX as usize
+        {
+            return Err(Error::Message(
+                "MLIR_AIE requires a nonempty u32 instruction stream and no extra scalar arguments"
+                    .into(),
+            ));
+        }
+        let context = &self.inner.context;
+        let insts = context
+            .alloc_bo(
+                instructions.len(),
+                raw::BoKind::Cacheable,
+                context.group_id(1).map_err(Error::Message)?,
+            )
+            .map_err(Error::Message)?;
+        insts.write(instructions).map_err(Error::Message)?;
+        let groups = (0..contract.bindings.len())
+            .map(|i| context.group_id((i + 3) as i32).map_err(Error::Message))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(NpuKernel {
+            inner: Arc::new(KernelInner {
+                program: self.clone(),
+                instructions: insts,
+                contract,
+                groups,
+            }),
         })
     }
-
-    /// The underlying XRT context, for dispatching kernels against [`Shared::npu`] buffers.
-    pub fn context(&self) -> &dvxrt::Context {
-        &self.context
+}
+/// A reusable fixed NPU instruction specialization and its trusted contract.
+#[derive(Clone)]
+pub struct NpuKernel {
+    pub(crate) inner: Arc<KernelInner>,
+}
+pub(crate) struct KernelInner {
+    pub program: NpuProgram,
+    pub instructions: raw::Bo,
+    pub contract: KernelContract,
+    pub groups: Vec<i32>,
+}
+impl NpuKernel {
+    /// The contract checked for every graph binding.
+    pub fn contract(&self) -> &KernelContract {
+        &self.inner.contract
     }
 }
-
-/// Which engine last wrote the memory, and therefore whose cache is authoritative.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Owner {
-    Host,
-    Gpu,
-    Npu,
-}
-
-/// One allocation both the GPU and the NPU address, with no copy between them.
-///
-/// Each accessor moves ownership to the engine that is about to read or write, doing the
-/// cache maintenance that transition requires. Re-entering the current owner is free.
-pub struct Shared<'a> {
-    npu: &'a Npu,
-    pointer: *mut c_void,
-    bytes: usize,
-    descriptor: i32,
-    bo: dvxrt::Bo,
-    owner: Owner,
-}
-
-impl Shared<'_> {
-    /// The size of the shared allocation in bytes.
-    pub fn len(&self) -> usize {
-        self.bytes
-    }
-
-    /// Whether the allocation is zero-length. Always false: `alloc` rejects zero.
-    pub fn is_empty(&self) -> bool {
-        self.bytes == 0
-    }
-
-    /// Hand the buffer to the NPU, flushing host or GPU writes first.
-    ///
-    /// The returned BO is the kernel argument. Successive calls without an intervening
-    /// [`Shared::host`] cost nothing, so a chain of dispatches flushes once.
-    pub fn npu(&mut self) -> &dvxrt::Bo {
-        if self.owner != Owner::Npu {
-            // Errors here would mean the NPU reads stale bytes rather than none, so they
-            // must not be silent -- but sync has no failure mode a caller could act on.
-            if let Err(error) = self.bo.sync(true, self.bytes) {
-                debug_assert!(false, "flush to the NPU failed: {error}");
-            }
-            self.owner = Owner::Npu;
-        }
-        &self.bo
-    }
-
-    /// Take the buffer back for the host, invalidating NPU writes first.
-    pub fn host(&mut self) -> Result<&mut [u8]> {
-        if self.owner == Owner::Npu {
-            self.bo.sync(false, self.bytes).map_err(failed)?;
-        }
-        self.owner = Owner::Host;
-        // The allocation is live for the whole borrow and no engine owns it here.
-        Ok(unsafe { std::slice::from_raw_parts_mut(self.pointer.cast::<u8>(), self.bytes) })
-    }
-
-    /// Fill the buffer with a repeating 32-bit pattern, on the GPU.
-    pub fn fill(&mut self, value: u32) -> Result<()> {
-        if self.bytes % 4 != 0 {
-            return Err(failed("fill needs a length that is a multiple of 4".into()));
-        }
-        self.transfer_ready()?;
-        self.npu.hsa.fill(self.pointer, value, self.bytes / 4).map_err(failed)?;
-        self.owner = Owner::Gpu;
-        Ok(())
-    }
-
-    /// Copy a GPU buffer into this one, device-side.
-    ///
-    /// `source` must be an [`crate::Stream::allocate_shared`] buffer: those are the only
-    /// ones libhrx will name with a device pointer.
-    pub fn copy_from(&mut self, source: &Buffer) -> Result<()> {
-        let pointer = self.checked_peer(source)?;
-        self.transfer_ready()?;
-        self.npu.hsa.copy(self.pointer, pointer, self.bytes).map_err(failed)?;
-        self.owner = Owner::Gpu;
-        Ok(())
-    }
-
-    /// Copy this buffer into a GPU buffer, device-side.
-    pub fn copy_to(&mut self, destination: &Buffer) -> Result<()> {
-        let pointer = self.checked_peer(destination)?;
-        // The GPU is about to read, so NPU writes must be visible first.
-        if self.owner == Owner::Npu {
-            self.bo.sync(false, self.bytes).map_err(failed)?;
-            self.owner = Owner::Gpu;
-        }
-        self.npu.hsa.copy(pointer, self.pointer, self.bytes).map_err(failed)
-    }
-
-    /// Validate a peer GPU buffer and get the device pointer to copy against.
-    fn checked_peer(&self, peer: &Buffer) -> Result<*mut c_void> {
-        if peer.bytes() < self.bytes {
-            return Err(failed(format!(
-                "gpu buffer is {} bytes but the shared buffer is {}",
-                peer.bytes(),
-                self.bytes
-            )));
-        }
-        peer.device_ptr().map_err(|error| {
-            failed(format!(
-                "{error}; shared transfers need a Stream::allocate_shared buffer"
-            ))
-        })
-    }
-
-    /// Make NPU writes visible before the GPU reads or overwrites the allocation.
-    fn transfer_ready(&mut self) -> Result<()> {
-        if self.owner == Owner::Npu {
-            self.bo.sync(false, self.bytes).map_err(failed)?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for Shared<'_> {
-    fn drop(&mut self) {
-        // The BO holds the import; drop it before the descriptor and the pages it names.
-        unsafe { libc::close(self.descriptor) };
-        self.npu.hsa.free(self.pointer);
-    }
-}
-
-// The allocation is owned exclusively by this handle; every accessor takes &mut self.
-unsafe impl Send for Shared<'_> {}

@@ -30,7 +30,11 @@ fn measure(
 fn main() -> Result<()> {
     let mut stream = Stream::open()?;
     let mut metrics = BTreeMap::new();
-    let samples = 9;
+    let samples = std::env::var("HRX_BENCH_SAMPLES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(9);
     let (ns, _) = measure(&mut stream, samples, 50_000, |stream| {
         for _ in 0..50_000 {
             let buffer = stream.scratch(1024 * 1024)?;

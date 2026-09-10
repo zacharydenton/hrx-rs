@@ -12,6 +12,8 @@
 //!
 //! Usage: unified_probe <xclbin> [--mib N]
 
+use hrx::npu::raw as dvxrt;
+
 use hrx::{Result, Stream};
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 
@@ -43,7 +45,9 @@ fn export_dmabuf(
         return Err(format!("hsa_amd_portable_export_dmabuf returned {status}"));
     }
     if offset != 0 {
-        return Err(format!("dma-buf carries a nonzero offset ({offset}); unsupported here"));
+        return Err(format!(
+            "dma-buf carries a nonzero offset ({offset}); unsupported here"
+        ));
     }
     Ok((fd, bytes))
 }
@@ -59,23 +63,29 @@ fn hsa_library() -> std::result::Result<libloading::Library, String> {
                 .map_err(|e| format!("{}: {e}", candidate.display()));
         }
     }
-    Err(format!("no libhsa-runtime64.so.1 under {}", pattern.display()))
+    Err(format!(
+        "no libhsa-runtime64.so.1 under {}",
+        pattern.display()
+    ))
 }
 
 fn dirs_cache() -> Option<std::path::PathBuf> {
     std::env::var_os("XDG_CACHE_HOME")
         .map(std::path::PathBuf::from)
         .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache")))
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache"))
+        })
 }
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (xclbin, mib) = match args.as_slice() {
         [xclbin] => (xclbin.clone(), 4usize),
-        [xclbin, flag, value] if flag == "--mib" => {
-            (xclbin.clone(), value.parse().expect("--mib expects an integer"))
-        }
+        [xclbin, flag, value] if flag == "--mib" => (
+            xclbin.clone(),
+            value.parse().expect("--mib expects an integer"),
+        ),
         _ => {
             eprintln!("usage: unified_probe <xclbin> [--mib N]");
             std::process::exit(2);
@@ -89,7 +99,7 @@ fn main() -> Result<()> {
     let result = (|| -> Result<()> {
         println!("host allocation: {mib} MiB at {host:p}");
 
-        let context = match dvxrt::Context::new(0, &xclbin) {
+        let context = match unsafe { dvxrt::Context::new(0, &xclbin) } {
             Ok(context) => context,
             Err(error) => {
                 println!("npu context: UNAVAILABLE ({error})");
@@ -131,7 +141,11 @@ fn main() -> Result<()> {
             let wrong = seen.iter().filter(|&&b| b != GPU_PATTERN).count();
             println!(
                 "gpu write -> npu read: {}",
-                if wrong == 0 { "YES".into() } else { format!("NO ({wrong} bytes differ)") }
+                if wrong == 0 {
+                    "YES".into()
+                } else {
+                    format!("NO ({wrong} bytes differ)")
+                }
             );
         }
 
@@ -167,7 +181,9 @@ fn main() -> Result<()> {
                                     }
                                 );
                             }
-                            Err(error) => println!("  read through the imported BO failed: {error}"),
+                            Err(error) => {
+                                println!("  read through the imported BO failed: {error}")
+                            }
                         }
                     }
                     Err(error) => println!("npu import of the GPU dma-buf: NO ({error})"),
@@ -178,7 +194,8 @@ fn main() -> Result<()> {
 
         // 4. And the reverse: the NPU's BO writes, the GPU reads.
         if let Ok(buffer) = &imported {
-            bo.write(&vec![NPU_PATTERN; bytes]).expect("write through the NPU BO");
+            bo.write(&vec![NPU_PATTERN; bytes])
+                .expect("write through the NPU BO");
             let mirror = stream.allocate(bytes)?;
             stream.copy(mirror.binding(), buffer.binding())?;
             let mut check = [0u8; 64];

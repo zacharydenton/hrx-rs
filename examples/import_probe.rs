@@ -62,7 +62,10 @@ fn main() -> Result<()> {
         let mut check = [0u8; 64];
         stream.read_blocking(mirror.binding().slice(0, check.len())?, &mut check)?;
         let coherent = check.iter().all(|&b| b == 0x3c);
-        println!("host write visible to device: {}", if coherent { "YES" } else { "NO" });
+        println!(
+            "host write visible to device: {}",
+            if coherent { "YES" } else { "NO" }
+        );
         Ok(())
     })();
     unsafe { dealloc(host, layout) };

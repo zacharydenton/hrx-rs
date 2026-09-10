@@ -10,7 +10,8 @@
       "0004-preserve-fragment-read-order.patch": "7608c0d3d86ce64b72a08f5310fb6657a1473e1e20428b14958a5091db6e06b5",
       "0005-materialize-encoding-config.patch": "a74b0ae2cd73be6bbd219b8f27d324944df088eeb582e411baa47ebabbd6ead2",
       "0006-bind-dependent-inline-types.patch": "c196c0e284c2d8ba6946c00b9816a43208ab6ef55dc1601fab30efc3b4f8d56c",
-      "0007-gfx11-vmem-source-reuse.patch": "032a77cd4786b71e916f9e1d7ce69faed1d8e8b22c7f111bfa1ca47b2d814556"
+      "0007-gfx11-vmem-source-reuse.patch": "032a77cd4786b71e916f9e1d7ce69faed1d8e8b22c7f111bfa1ca47b2d814556",
+      "0008-export-owned-gpu-dmabuf.patch": "25b08620399d2b2d3bfca5cc856e687b6ff3f37f7be9baaf902e1425650df7d2"
     }
   },
   "therock": {

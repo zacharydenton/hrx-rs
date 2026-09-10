@@ -218,6 +218,7 @@ native_api! {
     fn hrx_graph_exec_release(exec: GraphExec) -> ();
     fn hrx_graph_exec_launch(exec: GraphExec, stream: Stream) -> Status;
 }
+static DIRECTORY: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 static API: std::sync::OnceLock<Api> = std::sync::OnceLock::new();
 pub(crate) fn load() -> crate::Result<()> {
     static INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -272,6 +273,7 @@ pub(crate) fn load() -> crate::Result<()> {
         lock.file().set_len(0)?;
         lock.file().rewind()?;
         lock.file().write_all(identity.as_bytes())?;
+        let _ = DIRECTORY.set(directory.clone());
         API.set(api)
             .map_err(|_| crate::Error::Message("runtime loader raced".into()))?;
     }
@@ -372,6 +374,25 @@ pub struct GraphFill {
     pub dst: BufferRef,
     pub pattern: u32,
     pub pattern_size: usize,
+}
+
+/// Resolve an optional interop extension from the exact selected HRX library.
+pub(crate) unsafe fn interop_symbol<T: Copy>(name: &[u8]) -> crate::Result<T> {
+    load()?;
+    let directory = DIRECTORY.get().expect("loaded runtime directory");
+    let library = unsafe { libloading::Library::new(directory.join("libhrx.so")) }?;
+    let abi = unsafe { library.get::<unsafe extern "C" fn() -> u32>(b"hrx_interop_abi_version\0") }
+        .map_err(|_| {
+            crate::Error::Unsupported(
+                "native bundle lacks shared-buffer ABI 1; rebuild with patches/loom/0008".into(),
+            )
+        })?;
+    if unsafe { abi() } != 1 {
+        return Err(crate::Error::Unsupported(
+            "incompatible shared-buffer ABI".into(),
+        ));
+    }
+    Ok(*unsafe { library.get::<T>(name) }?)
 }
 
 #[cfg(test)]

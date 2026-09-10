@@ -11,6 +11,8 @@
 //!
 //! Usage: mall_probe <dir-with-nN.xclbin/nN.bin> [--seconds F]
 
+use hrx::npu::raw as dvxrt;
+
 use std::time::{Duration, Instant};
 
 /// MLIR_AIE kernel argument indices.
@@ -28,7 +30,7 @@ fn measure(dir: &std::path::Path, n: usize, seconds: f64) -> Result<(f64, f64), 
     let insts_bytes = std::fs::read(&insts_path).map_err(|e| format!("{insts_path:?}: {e}"))?;
     let bytes = n * 4;
 
-    let context = dvxrt::Context::new(0, xclbin.to_str().ok_or("non-UTF-8 path")?)?;
+    let context = unsafe { dvxrt::Context::new(0, xclbin.to_str().ok_or("non-UTF-8 path")?) }?;
     let insts = context.alloc_bo(
         insts_bytes.len(),
         dvxrt::BoKind::Cacheable,
@@ -88,7 +90,15 @@ fn main() -> Result<(), String> {
     let dir = std::path::PathBuf::from(dir);
 
     // Working set is input + output, so the MALL boundary falls at n = 4 Mi elements.
-    let sizes = [262_144usize, 1_048_576, 2_097_152, 4_194_304, 8_388_608, 16_777_216, 33_554_432];
+    let sizes = [
+        262_144usize,
+        1_048_576,
+        2_097_152,
+        4_194_304,
+        8_388_608,
+        16_777_216,
+        33_554_432,
+    ];
     println!(
         "{:>12} {:>12} {:>10} {:>12} {:>10}",
         "elements", "working set", "vs MALL", "GB/s", "disp/s"
@@ -97,7 +107,11 @@ fn main() -> Result<(), String> {
     for n in sizes {
         let working_set = 2 * n * 4;
         let mib = working_set / (1024 * 1024);
-        let position = if working_set <= 32 * 1024 * 1024 { "fits" } else { "exceeds" };
+        let position = if working_set <= 32 * 1024 * 1024 {
+            "fits"
+        } else {
+            "exceeds"
+        };
         match measure(&dir, n, seconds) {
             Ok((gb_s, dispatches)) => println!(
                 "{n:>12} {:>9} MiB {position:>10} {gb_s:>12.1} {dispatches:>10.1}",

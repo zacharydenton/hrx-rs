@@ -16,6 +16,70 @@ fn main() -> std::process::ExitCode {
 }
 fn dispatch(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
+        Some("doctor") => {
+            for path in ["/dev/kfd", "/dev/dri/renderD128", "/dev/accel/accel0"] {
+                let accessible = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(path);
+                println!(
+                    "{path}: {}",
+                    match accessible {
+                        Ok(_) => "accessible".into(),
+                        Err(error) => error.to_string(),
+                    }
+                );
+            }
+            let manifest = hrx::bundle::default_manifest()?;
+            let cached = hrx::bundle::cache_root()?
+                .join("runtime")
+                .join(&manifest.archive_sha256);
+            if std::env::var_os("HRX_RUNTIME_DIR").is_some() || manifest.verify(&cached).is_ok() {
+                match hrx::gpu::Device::open(0) {
+                    Ok(device) => println!(
+                        "GPU target: {}; shared interop ABI 1: {}",
+                        device.target().as_str(),
+                        device.supports_shared_interop()?
+                    ),
+                    Err(error) => println!("GPU initialization: {error}"),
+                }
+            } else {
+                println!("GPU runtime: not prepared (doctor does not download)");
+            }
+            println!("gpu bundle: {}", hrx::bundle::default_manifest()?.revision);
+            println!(
+                "GPU override: {}",
+                std::env::var("HRX_RUNTIME_DIR").unwrap_or_else(|_| "none".into())
+            );
+            #[cfg(feature = "npu")]
+            println!(
+                "NPU override: {}",
+                std::env::var("HRX_NPU_RUNTIME_DIR").unwrap_or_else(|_| "none".into())
+            );
+            println!(
+                "NPU kernel compilation uses an explicit toolchain manifest; doctor does not install drivers or compilers."
+            );
+        }
+        #[cfg(feature = "npu")]
+        Some("prepare-npu") if args.len() == 2 || args.len() == 3 => {
+            let manifest = hrx::npu::provision::Manifest::load(&args[1])?;
+            let directory = if let Some(archive) = args.get(2) {
+                manifest.install(
+                    std::path::Path::new(archive),
+                    &hrx::bundle::cache_root()?.join(&manifest.component),
+                )?
+            } else {
+                manifest.prepare(std::env::var_os("HRX_OFFLINE").is_some())?
+            };
+            println!("{}", directory.display());
+        }
+        #[cfg(feature = "npu-compile")]
+        Some("compile-npu") if args.len() == 3 => {
+            use hrx::npu::compiler::{Compiler, CompilerOptions, Project, Toolchain};
+            let project: Project = serde_json::from_slice(&std::fs::read(&args[2])?)?;
+            let compiler = Compiler::new(Toolchain::load(&args[1])?, CompilerOptions::new()?)?;
+            println!("{}", compiler.compile(&project)?.path().display());
+        }
         Some("pack") if args.len() == 5 || args.len() == 6 => {
             pack::pack(
                 std::path::Path::new(&args[1]),
