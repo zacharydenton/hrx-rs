@@ -41,10 +41,11 @@ Transfers, fills, copies and dispatch bindings use `View`. Borrow a whole buffer
 with `buffer.binding()` and a subregion with `view.slice(offset, length)?`.
 `upload` queues a transfer through owned staging; `upload_blocking` waits for it.
 Events coordinate streams. `Stream::graph` records work as a dependency graph:
-each operation states what it comes after, `&[]` records work that may start
-immediately, and `join` collects branches. The runtime topologically sorts the
-result and runs independent nodes on up to eight workstreams, so declaring only
-real edges is what lets it overlap. Loading kernels,
+each operation names its predecessors, and `&[]` starts an independent branch.
+Pass branch endings directly to their consumer. `join` collects dependencies
+in an empty node, which adds a native partition and queue barrier. The runtime
+can schedule independent nodes on up to eight workstreams; the graph's shape
+and GPU resource use determine whether execution overlaps. Loading kernels,
 dispatching them, and sharing buffers across streams are unsafe: callers must
 validate code, arguments, memory access, and synchronization.
 

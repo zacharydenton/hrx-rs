@@ -2,6 +2,12 @@
 
 ## 0.2.0 — 2026-09-09
 
+- Graph drop waits for its last replay's immutable completion point, without
+  flushing unrelated stream work. A failed launch prevents further replay and
+  retains the native graph when completion cannot be established.
+- Correct the independent graph benchmark to use disjoint allocations and
+  interleave its two schedules. Document the native cost of explicit joins.
+
 - Compiled kernels use one machine-wide cache. `Module::compile` and
   `Compiler::compile_all` no longer take a cache path: artifacts are
   content-addressed, so a per-caller location could only duplicate identical
@@ -35,8 +41,8 @@
   becomes `GraphExec`, and `fill`/`copy`/`dispatch` take a leading `after: &[Node]`
   and return a `Node`. `join` records a dependency-only node for fan-in. Nothing
   is implicit: the old builder chained every operation to the previous one, which
-  is not what the runtime requires and costs about 0.95 us per needless edge --
-  64 tiny fill nodes replay in ~151 us chained and ~88 us independent on gfx1151.
+  is not what the runtime requires. Dependency costs depend on the barriers
+  and partitions they produce; an independent-node benchmark is not a per-edge price.
   A dependency can only name an already-recorded node, so a graph is acyclic by
   construction and instantiation stays on the runtime's linear fast path;
   duplicate entries in one list are collapsed rather than rejected. Resolving a

@@ -134,15 +134,7 @@ fn main() -> Result<()> {
             )?
         });
     }
-    let mut chained = builder.finish()?;
-    let (enqueue, ns) = measure(&mut stream, samples, 256 * 32, |stream| {
-        for _ in 0..256 {
-            stream.launch(&mut chained)?;
-        }
-        Ok(())
-    })?;
-    metrics.insert("graph_enqueue_ns_per_replay", enqueue * 32.0);
-    metrics.insert("graph_complete_ns_per_kernel", ns);
+    let chained = builder.finish()?;
 
     // The same disjoint workloads, this time allowing concurrent scheduling.
     let mut builder = stream.graph()?;
@@ -158,13 +150,33 @@ fn main() -> Result<()> {
             )?;
         }
     }
-    let mut independent = builder.finish()?;
-    let (_, ns_free) = measure(&mut stream, samples, 256 * 32, |stream| {
-        for _ in 0..256 {
-            stream.launch(&mut independent)?;
+    let independent = builder.finish()?;
+    let mut graphs = [chained, independent];
+    let mut enqueue = [Vec::new(), Vec::new()];
+    let mut complete = [Vec::new(), Vec::new()];
+    for round in 0..samples + 3 {
+        for arm in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+            stream.synchronize()?;
+            let start = Instant::now();
+            for _ in 0..256 {
+                stream.launch(&mut graphs[arm])?;
+            }
+            let submitted = start.elapsed();
+            stream.synchronize()?;
+            let elapsed = start.elapsed();
+            if round >= 3 {
+                enqueue[arm].push(submitted.as_secs_f64() * 1e9 / 256.0);
+                complete[arm].push(elapsed.as_secs_f64() * 1e9 / (256.0 * 32.0));
+            }
         }
-        Ok(())
-    })?;
+    }
+    for values in enqueue.iter_mut().chain(complete.iter_mut()) {
+        values.sort_by(f64::total_cmp);
+    }
+    let ns = complete[0][samples / 2];
+    let ns_free = complete[1][samples / 2];
+    metrics.insert("graph_enqueue_ns_per_replay", enqueue[0][samples / 2]);
+    metrics.insert("graph_complete_ns_per_kernel", ns);
     metrics.insert("graph_independent_ns_per_kernel", ns_free);
     metrics.insert("graph_scheduling_difference_ns_per_kernel", ns - ns_free);
     for (sample, _) in &graph_buffers {

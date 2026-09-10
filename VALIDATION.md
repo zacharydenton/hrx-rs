@@ -111,31 +111,40 @@ samples contain 2,000 allocate/drop pairs.
 The measured medians differ by less than 2%. Graph replay reduces host recording
 work to roughly 25 ns per kernel here.
 
-## Graph dependency cost, 2026-09-09
+## Paired graph schedules, 2026-09-10
 
-Declared edges are not free, which is why the graph API makes every dependency
-explicit rather than chaining. Recording the same 32 Euler dispatches as a
-declared chain and as independent nodes, on the bundle and host above:
+The corrected benchmark uses 32 disjoint input/output pairs in both recordings.
+One recording chains the kernels and the other declares them independent. Each
+sample replays 32 kernels 256 times and waits for completion. After three warmup
+pairs it takes nine pairs, alternating chained/independent and
+independent/chained order. Every output is checked.
 
-| Recording | Per kernel through completion |
+One run on the gfx1151 host above measured:
+
+| Recording | Wall time through completion, per kernel |
 | --- | ---: |
-| Chained (each node after the previous) | 2.197 µs |
-| Independent (no declared dependencies) | 1.664 µs |
-| Difference | 0.533 µs per edge |
+| Chained | 4.373 µs |
+| Independent | 1.926 µs |
 
-`examples/stream_bench.rs` reports these as `graph_complete_ns_per_kernel`,
-`graph_independent_ns_per_kernel` and `graph_edge_cost_ns`. A latency-bound
-variant in `runtime::dag_probe` isolates the cost further: 64 tiny fill nodes
-replay in ~151 µs chained and ~88 µs independent, about 0.95 µs per edge. The
-Euler figure is smaller because a 2.2 µs kernel hides part of the scheduling
-cost. The runtime engages additional workstreams only once a schedulable run
-reaches 16 nodes, so larger graphs benefit more.
+The difference includes scheduling, barriers and possible overlap; it is not a
+fixed cost per edge and does not predict model speedups. The reported metric is
+`graph_scheduling_difference_ns_per_kernel`. These are CPU wall-clock timings,
+not GPU timestamps; unrelated system load can affect them.
 
-The independent recording is a scheduling measurement only: a zero timestep makes
-the Euler result order-independent, so it is not a claim that these dispatches may
-be reordered in general. These are wall-clock measurements, including
-native runtime costs, not GPU timestamps or model benchmarks. The upload result
-includes the host staging copy on this integrated GPU; it is not PCIe bandwidth.
+The previous Euler independence figures are withdrawn. Those nodes shared an
+in/out allocation: a zero timestep did not make concurrent writes safe. The
+separate 64-fill probe uses disjoint allocations, but its timing difference also
+cannot be extrapolated into a universal edge price.
+
+An empty `join` ends a native recordable partition and adds a queue barrier.
+Passing producer nodes directly to a single consumer avoids that extra operation.
+Additional native workstreams are considered only after the first 16 recordable
+nodes within a partition. A graph's shape and this scheduling policy both matter;
+node count alone does not establish concurrent execution. The pinned public API
+has no partition, workstream or inserted-barrier counters.
+
+The upload measurement includes the host staging copy on this integrated GPU;
+it is not PCIe bandwidth.
 
 To run after preparing the bundle:
 
