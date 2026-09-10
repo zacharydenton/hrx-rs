@@ -552,6 +552,68 @@ fn a_kernel_cache_loads_once_and_builds_a_batch_together() -> hrx::Result<()> {
 
 #[test]
 #[ignore = "requires gfx1151"]
+fn keyed_kernel_hits_skip_the_factory_and_allocate_nothing() -> hrx::Result<()> {
+    let stream = Stream::open()?;
+    let source = include_str!("kernels/euler.loom");
+    let spec = || {
+        let mut spec = hrx::loom::Specialization::new("krea2_euler");
+        spec.config.insert("krea2.euler.grid_x".into(), "1".into());
+        spec.config.insert("krea2.euler.grid_y".into(), "1".into());
+        spec
+    };
+    let reports = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = reports.clone();
+    let kernels = hrx::loom::Kernels::new(hrx::loom::Compiler::shared(
+        None,
+        hrx::loom::CompilerOptions {
+            target: stream.target().clone(),
+            ..Default::default()
+        },
+    )?)
+    .reporting(move |_| {
+        count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    });
+    let keyed = kernels.clone().keyed();
+    // Failed factories must leave the key available for a retry.
+    let error = unsafe {
+        keyed.get_or_insert_with(&stream, 1u32, |_| {
+            Err(hrx::Error::Message("temporary request failure".into()))
+        })
+    };
+    assert!(error.is_err());
+    // Safety: trusted test source. Each key consistently selects this spec.
+    unsafe { keyed.get_or_insert_with(&stream, 1, |_| Ok((source, spec()))) }?;
+    let allocations = counting::count(|| {
+        for _ in 0..100 {
+            let kernel = unsafe {
+                keyed.get_or_insert_with(&stream, 1, |_| panic!("factory called on a hit"))
+            }
+            .unwrap();
+            assert_eq!(kernel.symbol(), "krea2_euler");
+        }
+    });
+    assert_eq!(allocations, 0, "a warm key lookup must not allocate");
+    // Two caller keys for one artifact still load and report only once.
+    unsafe { keyed.get_or_insert_with(&stream, 2, |_| Ok((source, spec()))) }?;
+    assert_eq!(kernels.len(), 1);
+    assert_eq!(reports.load(std::sync::atomic::Ordering::Relaxed), 1);
+    // A compilation failure also leaves no alias that could turn into a hit.
+    for _ in 0..2 {
+        assert!(
+            unsafe {
+                keyed.get_or_insert_with(&stream, 3, |_| {
+                    Ok((source, hrx::loom::Specialization::new("missing_export")))
+                })
+            }
+            .is_err()
+        );
+    }
+    assert_eq!(kernels.len(), 1);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires gfx1151"]
 fn streams_are_identifiable_for_per_stream_state() -> hrx::Result<()> {
     let device = hrx::Device::open(0)?;
     let first = device.stream()?;
