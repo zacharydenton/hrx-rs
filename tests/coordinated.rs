@@ -104,3 +104,30 @@ fn keyed_pending_hits_preserve_batch_building() -> hrx::Result<()> {
     assert_eq!(cache.kernels().len(), 1);
     Ok(())
 }
+
+#[cfg(feature = "loom")]
+#[test]
+#[ignore = "requires the GPU runtime and Loom compiler"]
+fn direct_requests_publish_once_to_the_pending_batch() -> hrx::Result<()> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let stream = Stream::open()?;
+    let reports = Arc::new(AtomicUsize::new(0));
+    let reported = reports.clone();
+    let cache = hrx::loom::Kernels::new(hrx::loom::Compiler::resolve(None)?).reporting(move |_| {
+        reported.fetch_add(1, Ordering::Relaxed);
+    });
+    let mut spec = hrx::loom::Specialization::new("krea2_euler");
+    spec.config.insert("krea2.euler.grid_x".into(), "1".into());
+    spec.config.insert("krea2.euler.grid_y".into(), "1".into());
+    let source = include_str!("kernels/euler.loom");
+    let pending = cache.request(source, &spec)?;
+    unsafe { cache.get(&stream, source, &spec) }?;
+    unsafe { cache.build(&stream) }?;
+    assert!(pending.built().is_some());
+    assert_eq!(reports.load(Ordering::Relaxed), 1);
+    assert_eq!(cache.len(), 1);
+    Ok(())
+}
