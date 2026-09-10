@@ -489,6 +489,20 @@ fn a_graph_released_mid_replay_does_not_fault_later_work() -> hrx::Result<()> {
     Ok(())
 }
 
+/// Distinct streams are distinguishable, and a clone of a handle is not a
+/// distinct stream. Pools that reuse allocations need this: reuse is ordered by
+/// the queue, so a block may only go back to the stream it came from.
+#[test]
+#[ignore = "requires gfx1151"]
+fn streams_are_identifiable_for_per_stream_state() -> hrx::Result<()> {
+    let device = hrx::Device::open(0)?;
+    let first = device.stream()?;
+    let second = device.stream()?;
+    assert_ne!(first.id(), second.id());
+    assert_eq!(first.id(), first.id());
+    Ok(())
+}
+
 #[test]
 #[ignore = "requires gfx1151"]
 fn graphs_fork_join_and_reject_foreign_nodes() -> hrx::Result<()> {

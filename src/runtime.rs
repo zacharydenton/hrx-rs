@@ -545,6 +545,18 @@ impl Stream {
     pub fn open() -> Result<Self> {
         Device::open(0)?.stream()
     }
+    /// Identifies this stream, for callers that keep per-stream state.
+    ///
+    /// Buffers are device-scoped, so nothing here rejects one used on a sibling
+    /// stream — correct, because events can order that. What events cannot fix
+    /// is *reuse*: a pool handing a buffer out again relies on the queue that
+    /// used it last running in order, which holds within a stream and not
+    /// across them. A caller pooling allocations needs to say which stream a
+    /// block came from, and this is how. Unique among live streams; a value may
+    /// repeat once its stream is dropped.
+    pub fn id(&self) -> usize {
+        std::sync::Arc::as_ptr(&self.inner) as usize
+    }
     /// Allocate storage owned by this stream; zero bytes is rounded to one.
     pub fn allocate(&self, bytes: usize) -> Result<Buffer> {
         let mut buffer = std::ptr::null_mut();
