@@ -22,4 +22,12 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - run: bash scripts/check-feature-matrix.sh
+      - run: cargo package --allow-dirty --no-verify
       - run: cargo package --list --allow-dirty
+
+  ownership:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly --profile minimal --component miri
+      - run: cargo +nightly miri test --lib --no-default-features execution:: -- --test-threads=1

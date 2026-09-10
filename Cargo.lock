@@ -90,13 +90,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dvxrt"
-version = "0.1.0"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -175,7 +168,6 @@ dependencies = [
 name = "hrx-rs"
 version = "0.2.0"
 dependencies = [
- "dvxrt",
  "flate2",
  "libc",
  "libloading",

@@ -76,7 +76,10 @@ fn parse() -> std::result::Result<Options, String> {
         }
         index += 2;
     }
-    if options.mib == 0 || options.batch == 0 || !(options.seconds > 0.0) {
+    if options.mib == 0
+        || options.batch == 0
+        || (!options.seconds.is_finite() || options.seconds <= 0.0)
+    {
         return Err("seconds, mib and batch must all be positive".into());
     }
     Ok(options)

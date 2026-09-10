@@ -3,13 +3,13 @@ name = "hrx-rs"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
-license = "MIT"
-description = "Owned GPU execution and Loom compilation for HRX"
+license = "MIT AND Apache-2.0 AND (Apache-2.0 WITH LLVM-exception)"
+description = "Owned GPU and NPU execution with Loom and IRON compilation"
 repository = "https://github.com/zacharydenton/hrx-rs"
 readme = "README.md"
-keywords = ["gpu", "amdgpu", "compute", "loom"]
+keywords = ["gpu", "npu", "amdgpu", "compute", "loom"]
 categories = ["hardware-support", "science"]
-include = ["/src/**", "/tests/**", "/examples/**", "/native/**", "/patches/**", "/scripts/**", "/Cargo.toml", "/Cargo.lock", "/bundle.json", "/README.md", "/CHANGELOG.md", "/LICENSE", "/NOTICE", "/THIRD-PARTY.md", "/THIRD-PARTY.json", "/VALIDATION.md"]
+include = ["/src/**", "/docs/**", "/tests/**", "/examples/**", "/native/**", "/patches/**", "/scripts/**", "/Cargo.toml", "/Cargo.lock", "/bundle.json", "/README.md", "/CHANGELOG.md", "/LICENSE", "/NOTICE", "/THIRD-PARTY.md", "/THIRD-PARTY.json", "/VALIDATION.md"]
 
 # docs.rs has no GPU and no native bundle. Nothing here initializes either at
 # build time, so documenting every feature is safe.
@@ -25,11 +25,12 @@ default = ["download", "loom"]
 download = ["dep:ureq"]
 loom = []
 runner = ["loom"]
-# Cross-device probe: links the XDNA2 NPU stack alongside the GPU runtime.
-# Off by default -- it needs XRT and a local dinov3-xdna2 checkout.
-npu-probe = ["dep:dvxrt"]
+# Low-level cross-device probes; XRT is loaded only at runtime.
+npu-probe = ["npu"]
 # The shared-memory NPU API.
-npu = ["dep:dvxrt"]
+npu = []
+# Compile IRON/AIE projects in a pinned external toolchain.
+npu-compile = ["npu"]
 
 [dependencies]
 thiserror = "2"
@@ -42,7 +43,6 @@ tempfile = "3"
 tar = "0.4"
 flate2 = "1"
 ureq = { version = "3", optional = true }
-dvxrt = { path = "../dinov3-xdna2/crates/xrt", optional = true }
 
 [[example]]
 name = "unified_probe"
@@ -87,3 +87,15 @@ required-features = ["loom"]
 [[test]]
 name = "embedding"
 required-features = ["loom"]
+
+[[example]]
+name = "compile_npu"
+required-features = ["npu-compile"]
+
+[[test]]
+name = "heterogeneous"
+required-features = ["npu", "loom"]
+
+[[example]]
+name = "gemm_pipeline"
+required-features = ["npu", "loom"]

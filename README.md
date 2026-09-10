@@ -13,6 +13,19 @@ The package is `hrx-rs`; Rust imports and the primary CLI use `hrx`.
 Native licenses, source provenance, and rebuild instructions are documented in
 [THIRD-PARTY.md](THIRD-PARTY.md).
 
+## GPU + NPU pipelines
+
+The coordinated API is `hrx::execution`: owned shared buffers, checked kernel
+contracts, inferred dependencies, reusable GPU/NPU graphs, and completion handles
+that support blocking waits and Rust `Future`. `hrx::gpu` exposes the existing
+low-level GPU API. Enable `npu` for XDNA2 execution and `npu-compile` for integrated
+IRON/AIE compilation; neither feature needs native tools during Cargo builds.
+
+See [the GPU/NPU guide](docs/GPU-NPU.md) for the trust boundary, host mapping guards,
+shared native runtime setup, compiler pinning, and runnable hardware validation.
+The public GPU bundle currently predates the shared-memory native extension;
+the guide describes how to build and select the matching interop runtime.
+
 ## Use from Rust
 
 ```toml

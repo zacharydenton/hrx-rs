@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Add `execution::Runtime`, explicit GPU/NPU/shared storage, checked kernel
+  contracts, guarded host mappings, inferred hazards, and bounded prepared graphs.
+  Completion supports blocking waits and executor-neutral futures.
+- Replace the old NPU shared-memory wrapper with retained dma-buf imports and
+  a separately provisioned ABI shim. Remove the sibling Cargo dependency.
+- Add pinned IRON/AIE subprocess compilation, verified specialization caching,
+  native diagnostics, hardware examples, Miri checks and NPU CI qualification.
+- Shared execution requires the new native interop ABI; the published default
+  GPU bundle has not yet been replaced. See `docs/GPU-NPU.md`.
+
 ## 0.2.0 — 2026-09-09
 
 - Graph drop waits for its last replay's immutable completion point, without

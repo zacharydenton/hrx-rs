@@ -11,6 +11,8 @@
 //!
 //! Usage: dmabuf_probe <xclbin> [--mib N]
 
+use hrx::npu::raw as dvxrt;
+
 use std::ffi::c_void;
 
 const ARG_A: i32 = 3;
@@ -71,9 +73,10 @@ fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (xclbin, mib) = match args.as_slice() {
         [xclbin] => (xclbin.clone(), 4usize),
-        [xclbin, flag, value] if flag == "--mib" => {
-            (xclbin.clone(), value.parse().map_err(|_| "--mib expects an integer")?)
-        }
+        [xclbin, flag, value] if flag == "--mib" => (
+            xclbin.clone(),
+            value.parse().map_err(|_| "--mib expects an integer")?,
+        ),
         _ => return Err("usage: dmabuf_probe <xclbin> [--mib N]".into()),
     };
     let bytes = mib * 1024 * 1024;
@@ -94,9 +97,8 @@ fn main() -> Result<(), String> {
                 *mut c_void,
             ) -> Status,
         > = hsa.symbol(b"hsa_iterate_agents\0")?;
-        let agent_info: libloading::Symbol<
-            unsafe extern "C" fn(u64, u32, *mut c_void) -> Status,
-        > = hsa.symbol(b"hsa_agent_get_info\0")?;
+        let agent_info: libloading::Symbol<unsafe extern "C" fn(u64, u32, *mut c_void) -> Status> =
+            hsa.symbol(b"hsa_agent_get_info\0")?;
 
         // The callback needs the symbol; pass it through the user-data pointer.
         struct AgentScan<'a> {
@@ -116,7 +118,10 @@ fn main() -> Result<(), String> {
             HSA_STATUS_SUCCESS
         }
         let info_fn = |agent, key, out| agent_info(agent, key, out);
-        let mut scan = AgentScan { info: &info_fn, found: Found::default() };
+        let mut scan = AgentScan {
+            info: &info_fn,
+            found: Found::default(),
+        };
         iterate_agents(on_agent, (&raw mut scan).cast());
         if scan.found.agent == 0 {
             return Err("no GPU agent found".into());
@@ -131,9 +136,8 @@ fn main() -> Result<(), String> {
                 *mut c_void,
             ) -> Status,
         > = hsa.symbol(b"hsa_amd_agent_iterate_memory_pools\0")?;
-        let pool_info: libloading::Symbol<
-            unsafe extern "C" fn(u64, u32, *mut c_void) -> Status,
-        > = hsa.symbol(b"hsa_amd_memory_pool_get_info\0")?;
+        let pool_info: libloading::Symbol<unsafe extern "C" fn(u64, u32, *mut c_void) -> Status> =
+            hsa.symbol(b"hsa_amd_memory_pool_get_info\0")?;
 
         struct PoolScan<'a> {
             info: &'a dyn Fn(u64, u32, *mut c_void) -> Status,
@@ -157,7 +161,10 @@ fn main() -> Result<(), String> {
             HSA_STATUS_SUCCESS
         }
         let pool_fn = |pool, key, out| pool_info(pool, key, out);
-        let mut pools = PoolScan { info: &pool_fn, found: Found::default() };
+        let mut pools = PoolScan {
+            info: &pool_fn,
+            found: Found::default(),
+        };
         iterate_pools(scan.found.agent, on_pool, (&raw mut pools).cast());
         if pools.found.pool == 0 {
             return Err("no allocatable global memory pool on the GPU agent".into());
@@ -211,8 +218,7 @@ fn main() -> Result<(), String> {
                                         Ok(bo) => {
                                             let mut seen = vec![0u8; 4096];
                                             bo.read(&mut seen).ok();
-                                            let wrong =
-                                                seen.iter().filter(|&&b| b != 0x11).count();
+                                            let wrong = seen.iter().filter(|&&b| b != 0x11).count();
                                             println!(
                                                 "  npu reads the hrx buffer: {}",
                                                 if wrong == 0 {
@@ -280,7 +286,9 @@ fn main() -> Result<(), String> {
                                     );
                                 }
                             }
-                            Err(error) => println!("  read through the imported BO failed: {error}"),
+                            Err(error) => {
+                                println!("  read through the imported BO failed: {error}")
+                            }
                         }
                     }
                     Err(error) => println!("npu import of the GPU dma-buf: NO ({error})"),

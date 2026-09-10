@@ -8,12 +8,19 @@ mod runtime;
 mod sys;
 mod target;
 pub use runtime::*;
+/// Coordinated GPU/NPU execution with inferred memory dependencies.
+pub mod execution;
+pub use execution::{Completion, Runtime};
+/// Low-level GPU execution. Kernel dispatch and external memory access require
+/// the caller to establish their safety and synchronization contracts.
+pub mod gpu {
+    pub use crate::runtime::*;
+}
 pub use target::{TARGET_FAMILY, TARGET_KEY, Target};
 #[cfg(feature = "loom")]
 pub mod loom;
 #[cfg(feature = "npu")]
 pub mod npu;
-
 
 /// The README's example is compiled with the crate, so an API change that would
 /// invalidate it fails the build instead of reaching a reader.
@@ -25,6 +32,38 @@ pub struct Readme;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// A mapped allocation or exhausted prepared run capacity prevents submission.
+    #[error("resource busy: {0}")]
+    Busy(String),
+    /// Hardware or the selected native runtime cannot provide a requested capability.
+    #[error("unsupported capability: {0}")]
+    Unsupported(String),
+    /// A device failure left memory contents or completion uncertain.
+    #[error("device execution failed: {0}")]
+    DeviceLost(String),
+    /// A native backend failure with its original status code.
+    #[error("{backend} {operation} failed ({code}): {message}")]
+    Backend {
+        /// Native backend name.
+        backend: &'static str,
+        /// Operation that failed.
+        operation: &'static str,
+        /// Native status or command state.
+        code: i32,
+        /// Native diagnostic text. A boxed slice keeps the success-path Result
+        /// layout within the pre-existing native error size.
+        message: Box<str>,
+    },
+    /// A retained asynchronous failure, shared by completion observers.
+    #[error("{source}")]
+    Execution {
+        /// Original structured failure, including backend and node context.
+        #[source]
+        source: std::sync::Arc<Error>,
+    },
+    /// Work was cancelled before completion.
+    #[error("execution cancelled")]
+    Cancelled,
     /// Invalid input or a contextual diagnostic.
     #[error("{0}")]
     Message(String),

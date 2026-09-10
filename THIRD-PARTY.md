@@ -1,6 +1,8 @@
 # Native distribution
 
-The Rust crate is MIT licensed. The native libraries retain their upstream
+The original Rust crate code is MIT licensed. The maintained NPU raw bindings
+and shim derive from Apache-2.0 code; the NPU fixture uses Apache-2.0 WITH
+LLVM-exception. See [the NPU notice](native/npu/NOTICE) and its adjacent license text. The native libraries retain their upstream
 licenses, listed in [THIRD-PARTY.json](THIRD-PARTY.json). [NOTICE](NOTICE) and
 [native/licenses](native/licenses) preserve the license texts and attributions;
 both are also included in the native archive.
@@ -47,3 +49,11 @@ The [reviewed release](https://github.com/zacharydenton/hrx-rs/releases/tag/nati
 is public. On 2026-09-09, the default first-use download installed into an empty
 cache without authentication and initialized gfx1151 offline. Both uploaded
 archive digests match the local files; the source URL returns HTTP 200.
+
+## Unpublished GPU/NPU extension
+
+The working-tree extension adds interop ABI 1 and a separately built XRT shim.
+It is not contained in the reviewed GPU bundle described above. Its source
+patch is pinned in `native/release-inputs.json`; the NPU staging script creates
+a separate hashed component manifest. System XRT remains dynamically linked
+and is not included in that archive. Chess is never redistributed.

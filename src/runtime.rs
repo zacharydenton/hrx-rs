@@ -277,6 +277,44 @@ impl Buffer {
     }
 
     /// The whole allocation.
+    pub(crate) fn allocation_address(&self) -> Result<u64> {
+        type Address = unsafe extern "C" fn(sys::Buffer, *mut u64) -> sys::Status;
+        let address: Address = unsafe { sys::interop_symbol(b"hrx_buffer_allocation_address\0") }?;
+        let mut value = 0;
+        unsafe {
+            check(
+                address(self.raw, &mut value),
+                "querying GPU allocation address",
+            )?;
+        }
+        Ok(value)
+    }
+
+    #[cfg(feature = "npu")]
+    pub(crate) fn export_dmabuf(&self) -> Result<(std::os::fd::OwnedFd, u64)> {
+        use std::os::fd::FromRawFd;
+        type Export = unsafe extern "C" fn(sys::Buffer, *mut i32, *mut u64) -> sys::Status;
+        let export: Export = unsafe { sys::interop_symbol(b"hrx_buffer_export_dmabuf\0") }?;
+        let mut descriptor = -1;
+        let mut offset = 0;
+        unsafe {
+            check(
+                export(self.raw, &mut descriptor, &mut offset),
+                "exporting GPU allocation",
+            )?;
+        }
+        if descriptor < 0 {
+            return Err(Error::Message(
+                "native export returned invalid descriptor".into(),
+            ));
+        }
+        Ok((
+            unsafe { std::os::fd::OwnedFd::from_raw_fd(descriptor) },
+            offset,
+        ))
+    }
+
+    /// Borrow the whole allocation as a device binding.
     pub fn binding(&self) -> View<'_> {
         View::new(
             sys::BufferRef {
@@ -484,6 +522,17 @@ pub struct Device {
     target: Target,
 }
 impl Device {
+    /// Whether this native library exposes shared-allocation interop ABI 1.
+    /// This checks the native API, not whether a particular NPU driver can import.
+    pub fn supports_shared_interop(&self) -> Result<bool> {
+        type Abi = unsafe extern "C" fn() -> u32;
+        match unsafe { sys::interop_symbol::<Abi>(b"hrx_interop_abi_version\0") } {
+            Ok(abi) => Ok(unsafe { abi() } == 1),
+            Err(Error::Unsupported(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Validate a device index without creating a native stream.
     pub fn open(index: i32) -> Result<Self> {
         let (_, target) = open_device(index)?;
@@ -615,7 +664,11 @@ impl Stream {
     /// unmoved for the whole life of the returned buffer -- the buffer borrows the memory
     /// and never frees it. The host must not read or write those bytes while device work
     /// touching them is in flight.
-    pub unsafe fn import_host(&self, pointer: *mut std::ffi::c_void, bytes: usize) -> Result<Buffer> {
+    pub unsafe fn import_host(
+        &self,
+        pointer: *mut std::ffi::c_void,
+        bytes: usize,
+    ) -> Result<Buffer> {
         let mut buffer = std::ptr::null_mut();
         unsafe {
             check(
@@ -1136,6 +1189,14 @@ impl Constants {
         self.bytes[self.len..self.len + bytes.as_ref().len()].copy_from_slice(bytes.as_ref());
         self.len += bytes.as_ref().len();
         Ok(())
+    }
+    /// Construct an explicitly contracted scalar block from packed bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut result = Self::new();
+        checked_span(0, bytes.len(), result.bytes.len())?;
+        result.bytes[..bytes.len()].copy_from_slice(bytes);
+        result.len = bytes.len();
+        Ok(result)
     }
     /// The packed constant bytes in declaration order.
     pub fn as_bytes(&self) -> &[u8] {
