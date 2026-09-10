@@ -261,6 +261,21 @@ impl Buffer {
         self.binding().slice(offset, length)
     }
 
+    /// The device address backing this buffer.
+    ///
+    /// Needed to hand the allocation to another driver -- exporting it as a dma-buf for the
+    /// NPU, say -- rather than copying its contents out.
+    pub fn device_ptr(&self) -> Result<*mut std::ffi::c_void> {
+        let mut pointer = std::ptr::null_mut();
+        unsafe {
+            check(
+                sys::hrx_buffer_get_device_ptr(self.raw, &mut pointer),
+                "hrx_buffer_get_device_ptr",
+            )?;
+        }
+        Ok(pointer)
+    }
+
     /// The whole allocation.
     pub fn binding(&self) -> View<'_> {
         View::new(
@@ -588,6 +603,48 @@ impl Stream {
             _device: self.inner.clone(),
         })
     }
+    /// Import host memory the caller owns as a device-visible buffer, without copying.
+    ///
+    /// On an APU the GPU and the NPU address the same physical pages, so importing one
+    /// host allocation into both runtimes is the basis of zero-copy handoff between them:
+    /// the same pages can simultaneously back an XRT BO driving the NPU.
+    ///
+    /// # Safety
+    ///
+    /// `pointer` must be page-aligned, cover at least `bytes`, and stay allocated and
+    /// unmoved for the whole life of the returned buffer -- the buffer borrows the memory
+    /// and never frees it. The host must not read or write those bytes while device work
+    /// touching them is in flight.
+    pub unsafe fn import_host(&self, pointer: *mut std::ffi::c_void, bytes: usize) -> Result<Buffer> {
+        let mut buffer = std::ptr::null_mut();
+        unsafe {
+            check(
+                sys::hrx_allocator_import_buffer(
+                    sys::hrx_device_allocator(self.inner.device),
+                    sys::BufferParams {
+                        // Host-resident pages the device reads in place, rather than a
+                        // device-local allocation the runtime would have to copy into.
+                        memory_type: sys::MEMORY_TYPE_HOST_LOCAL
+                            | sys::MEMORY_TYPE_HOST_COHERENT
+                            | sys::MEMORY_TYPE_DEVICE_VISIBLE,
+                        access: sys::MEMORY_ACCESS_ALL,
+                        usage: sys::BUFFER_USAGE_DEFAULT,
+                        queue_affinity: u64::MAX,
+                    },
+                    pointer,
+                    bytes,
+                    &mut buffer,
+                ),
+                "hrx_allocator_import_buffer",
+            )?;
+        }
+        Ok(Buffer {
+            raw: buffer,
+            bytes,
+            _device: self.inner.clone(),
+        })
+    }
+
     /// Submit and wait for all work, then reclaim completed upload staging.
     pub fn synchronize(&mut self) -> Result<()> {
         self.synchronize_native()?;
@@ -747,6 +804,15 @@ impl Stream {
             )
         }
     }
+    /// Allocate a host-local, device-visible buffer.
+    ///
+    /// Unlike [`Stream::allocate`], the runtime hands out a device pointer for these, so
+    /// the allocation can be exported to another driver -- which is what lets one buffer
+    /// serve both the GPU and the NPU. Device-local memory is faster for GPU-only work.
+    pub fn allocate_shared(&self, bytes: usize) -> Result<Buffer> {
+        self.allocate_host(bytes)
+    }
+
     fn allocate_host(&self, bytes: usize) -> Result<Buffer> {
         let mut raw = std::ptr::null_mut();
         unsafe {
