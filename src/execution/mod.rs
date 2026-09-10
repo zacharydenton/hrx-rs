@@ -356,6 +356,7 @@ impl Runtime {
         contract: KernelContract,
     ) -> Result<GpuKernel> {
         contract.validate()?;
+        crate::runtime::validate_export_launch(raw.info(), grid, block)?;
         let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
         if raw.device_id() != stream.device_id() {
             return Err(Error::Message("kernel belongs to another device".into()));
