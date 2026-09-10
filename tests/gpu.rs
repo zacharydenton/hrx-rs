@@ -492,6 +492,64 @@ fn a_graph_released_mid_replay_does_not_fault_later_work() -> hrx::Result<()> {
 /// Distinct streams are distinguishable, and a clone of a handle is not a
 /// distinct stream. Pools that reuse allocations need this: reuse is ordered by
 /// the queue, so a block may only go back to the stream it came from.
+/// The cache every consumer of this crate wrote for itself: a loaded kernel per
+/// artifact, built eagerly or in one deferred batch.
+#[test]
+#[ignore = "requires gfx1151 and Loom compiler"]
+fn a_kernel_cache_loads_once_and_builds_a_batch_together() -> hrx::Result<()> {
+    let source = include_str!("kernels/euler.loom");
+    let spec = |grid: &str| {
+        let mut request = hrx::loom::Specialization::new("krea2_euler");
+        request
+            .config
+            .insert("krea2.euler.grid_x".into(), grid.into());
+        request
+            .config
+            .insert("krea2.euler.grid_y".into(), "1".into());
+        request
+    };
+    let mut stream = Stream::open()?;
+    let kernels = hrx::loom::Kernels::new(hrx::loom::Compiler::shared(
+        None,
+        hrx::loom::CompilerOptions {
+            target: stream.target().clone(),
+            ..Default::default()
+        },
+    )?);
+    assert!(kernels.is_empty());
+
+    // Safety: a checked-in Loom source compiled by this crate's own compiler.
+    let first = unsafe { kernels.get(&stream, source, &spec("1")) }?;
+    let again = unsafe { kernels.get(&stream, source, &spec("1")) }?;
+    assert_eq!(first.symbol(), again.symbol());
+    assert_eq!(kernels.len(), 1, "the same specialization loads once");
+
+    // Deferred: named now, compiled together on build.
+    let two = kernels.request(source, &spec("2"))?;
+    let four = kernels.request(source, &spec("4"))?;
+    assert_eq!(kernels.len(), 1, "requesting builds nothing");
+    assert!(two.get().is_err(), "and yields nothing until built");
+    // Safety: as above.
+    unsafe { kernels.build(&stream) }?;
+    assert_eq!(two.get()?.symbol(), "krea2_euler");
+    assert_eq!(four.get()?.symbol(), "krea2_euler");
+    assert_eq!(kernels.len(), 3);
+
+    // A second cache over the same compiler still gets its own kernels, and the
+    // compiler itself is the same one, not a second resolve of the library.
+    let shared = hrx::loom::Compiler::shared(
+        None,
+        hrx::loom::CompilerOptions {
+            target: stream.target().clone(),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(shared.identity(), kernels.compiler().identity());
+
+    stream.synchronize()?;
+    Ok(())
+}
+
 #[test]
 #[ignore = "requires gfx1151"]
 fn streams_are_identifiable_for_per_stream_state() -> hrx::Result<()> {

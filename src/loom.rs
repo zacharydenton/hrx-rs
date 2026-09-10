@@ -116,16 +116,45 @@ impl Compiler {
     pub fn resolve(library: Option<&Path>) -> Result<Self> {
         Self::with_options(library, CompilerOptions::default())
     }
-    /// Resolve a compiler with a bounded number of exclusive workspaces.
-    pub fn with_options(library: Option<&Path>, options: CompilerOptions) -> Result<Self> {
-        let path = match library
+    /// The compiler for this library and target, resolved once per process.
+    ///
+    /// Resolving is not cheap: it canonicalizes the library path and digests
+    /// the whole shared object, twice. A consumer that asks for a compiler per
+    /// kernel pays that per kernel, so every consumer memoized it themselves.
+    ///
+    /// The cache is keyed by the resolved path and target, so `HRX_LOOM_LIBRARY`
+    /// is honoured on each call rather than frozen at the first.
+    pub fn shared(library: Option<&Path>, options: CompilerOptions) -> Result<Self> {
+        static RESOLVED: Mutex<Option<HashMap<(PathBuf, String), Compiler>>> = Mutex::new(None);
+        let path = Self::resolved_library(library)?;
+        let key = (path, options.target.as_str().to_owned());
+        let mut cache = RESOLVED
+            .lock()
+            .map_err(|_| Error::Message("compiler cache poisoned".into()))?;
+        let cache = cache.get_or_insert_with(HashMap::new);
+        if let Some(compiler) = cache.get(&key) {
+            return Ok(compiler.clone());
+        }
+        let compiler = Self::with_options(library, options)?;
+        cache.insert(key, compiler.clone());
+        Ok(compiler)
+    }
+
+    /// The library a given override, `HRX_LOOM_LIBRARY` or the bundle selects.
+    fn resolved_library(library: Option<&Path>) -> Result<PathBuf> {
+        match library
             .map(Path::to_path_buf)
             .or_else(|| std::env::var_os("HRX_LOOM_LIBRARY").map(PathBuf::from))
         {
             Some(p) => fs::canonicalize(&p)
-                .map_err(|e| Error::from(e).context(format!("compiler library {}", p.display())))?,
-            None => fs::canonicalize(bundle::resolve()?.join("libloomc.so"))?,
-        };
+                .map_err(|e| Error::from(e).context(format!("compiler library {}", p.display()))),
+            None => Ok(fs::canonicalize(bundle::resolve()?.join("libloomc.so"))?),
+        }
+    }
+
+    /// Resolve a compiler with a bounded number of exclusive workspaces.
+    pub fn with_options(library: Option<&Path>, options: CompilerOptions) -> Result<Self> {
+        let path = Self::resolved_library(library)?;
         let identity = bundle::file_digest(&path)?;
         let native =
             native::Prepared::open(&path, &identity, options.workers.get(), &options.target)?;
@@ -552,5 +581,212 @@ mod tests {
         spec.config.insert("krea2.euler.grid_y".into(), "1".into());
         assert!(!first.compile(&spec)?.bytes().is_empty());
         Ok(())
+    }
+}
+
+/// Loaded kernels, keyed by the artifact their specialization compiles to.
+///
+/// The compiler already caches *compilation* on disk. This caches the loaded
+/// executable, which is what a dispatch loop needs: turning a cached artifact
+/// into a [`Kernel`] is a native load every time, and a model that dispatches
+/// the same kernel per block would pay it per block. Every consumer of this
+/// crate wrote this cache, so it lives here instead.
+///
+/// The key is the artifact's own identity — the same digest the disk cache uses
+/// — rather than whatever the caller derived a request from, so two requests
+/// that compile to the same artifact share one executable.
+///
+/// Kernels are device-scoped, so a cache serves one device and refuses another.
+pub struct Kernels {
+    compiler: Compiler,
+    state: Arc<Mutex<Loaded>>,
+}
+
+#[derive(Default)]
+struct Loaded {
+    /// Set by the first request; kernels from one device are useless on another.
+    device: Option<usize>,
+    ready: HashMap<String, crate::Kernel>,
+    /// Requested but not yet built, in request order.
+    waiting: Vec<(String, String, Specialization)>,
+}
+
+/// A kernel that has been asked for but not yet built. [`Kernels::build`]
+/// compiles every outstanding request in one batch.
+pub struct Pending {
+    key: String,
+    state: Arc<Mutex<Loaded>>,
+}
+
+impl Pending {
+    /// The kernel, once [`Kernels::build`] has run. An error until then.
+    pub fn get(&self) -> Result<crate::Kernel> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Message("kernel cache poisoned".into()))?;
+        state
+            .ready
+            .get(&self.key)
+            .cloned()
+            .ok_or_else(|| Error::Message("kernel not built yet: call Kernels::build".into()))
+    }
+}
+
+impl Kernels {
+    /// An empty cache over a compiler. Clone it to share one cache.
+    pub fn new(compiler: Compiler) -> Self {
+        Self {
+            compiler,
+            state: Arc::new(Mutex::new(Loaded::default())),
+        }
+    }
+
+    /// The compiler these were built with.
+    pub fn compiler(&self) -> &Compiler {
+        &self.compiler
+    }
+
+    /// How many kernels are loaded.
+    pub fn len(&self) -> usize {
+        self.state.lock().map_or(0, |state| state.ready.len())
+    }
+
+    /// Whether any kernel is loaded.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Compile `spec` from `source` if needed and load it, or return the
+    /// loaded kernel. Outstanding [`Kernels::request`]s are left alone.
+    ///
+    /// # Safety
+    /// `source` must be trusted Loom: its compiled output is loaded as native
+    /// code, as for [`crate::Stream::load_artifact`].
+    pub unsafe fn get(
+        &self,
+        stream: &crate::Stream,
+        source: &str,
+        spec: &Specialization,
+    ) -> Result<crate::Kernel> {
+        let module = self.compiler.module(source);
+        let key = module.key(spec)?;
+        {
+            let mut state = self.locked()?;
+            state.claim(stream)?;
+            if let Some(kernel) = state.ready.get(&key) {
+                return Ok(kernel.clone());
+            }
+        }
+        let artifact = module.compile(spec)?;
+        // Safety: the caller vouched for the source this artifact came from.
+        let kernel = unsafe { stream.load_artifact(&artifact) }?;
+        self.locked()?.ready.insert(key, kernel.clone());
+        Ok(kernel)
+    }
+
+    /// Ask for a kernel without building it. Nothing is compiled until
+    /// [`Kernels::build`], which does every outstanding request at once across
+    /// the compiler's workspaces — so a consumer can name its whole set first
+    /// and pay for it in one batch.
+    pub fn request(&self, source: &str, spec: &Specialization) -> Result<Pending> {
+        let key = self.compiler.module(source).key(spec)?;
+        let mut state = self.locked()?;
+        let known = state.ready.contains_key(&key)
+            || state.waiting.iter().any(|(waiting, ..)| *waiting == key);
+        if !known {
+            state
+                .waiting
+                .push((key.clone(), source.to_owned(), spec.clone()));
+        }
+        drop(state);
+        Ok(Pending {
+            key,
+            state: self.state.clone(),
+        })
+    }
+
+    /// Build every outstanding request. Requests that fail are reported, and
+    /// the first failure is returned; the rest are loaded either way, so one
+    /// bad specialization does not strand the others.
+    ///
+    /// # Safety
+    /// As [`Kernels::get`], for every source passed to [`Kernels::request`].
+    pub unsafe fn build(&self, stream: &crate::Stream) -> Result<()> {
+        let waiting = {
+            let mut state = self.locked()?;
+            state.claim(stream)?;
+            std::mem::take(&mut state.waiting)
+        };
+        if waiting.is_empty() {
+            return Ok(());
+        }
+        let modules: Vec<Module> = waiting
+            .iter()
+            .map(|(_, source, _)| self.compiler.module(source))
+            .collect();
+        let requests: Vec<(&Module, &Specialization)> = modules
+            .iter()
+            .zip(waiting.iter().map(|(_, _, spec)| spec))
+            .collect();
+        let mut failure = None;
+        for ((key, _, _), built) in waiting.iter().zip(self.compiler.compile_all(&requests)) {
+            match built {
+                // Safety: the caller vouched for the source when requesting it.
+                Ok(artifact) => match unsafe { stream.load_artifact(&artifact) } {
+                    Ok(kernel) => {
+                        self.locked()?.ready.insert(key.clone(), kernel);
+                    }
+                    Err(error) => failure = failure.or(Some(error)),
+                },
+                Err(error) => failure = failure.or(Some(error)),
+            }
+        }
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    fn locked(&self) -> Result<std::sync::MutexGuard<'_, Loaded>> {
+        self.state
+            .lock()
+            .map_err(|_| Error::Message("kernel cache poisoned".into()))
+    }
+}
+
+impl Loaded {
+    /// Bind this cache to a device on first use, and hold it there.
+    fn claim(&mut self, stream: &crate::Stream) -> Result<()> {
+        let device = stream.device_id();
+        match self.device {
+            Some(owner) if owner != device => Err(Error::Message(
+                "a kernel cache serves one device: an executable loaded on another is not \
+                 dispatchable here"
+                    .into(),
+            )),
+            Some(_) => Ok(()),
+            None => {
+                self.device = Some(device);
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Clone for Kernels {
+    fn clone(&self) -> Self {
+        Self {
+            compiler: self.compiler.clone(),
+            state: self.state.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for Kernels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Kernels")
+            .field("loaded", &self.len())
+            .finish_non_exhaustive()
     }
 }

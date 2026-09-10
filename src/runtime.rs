@@ -545,6 +545,12 @@ impl Stream {
     pub fn open() -> Result<Self> {
         Device::open(0)?.stream()
     }
+    /// Identifies the device this stream runs on, for callers that keep
+    /// per-device state. Kernels are device-scoped, so a cache of loaded
+    /// executables is only valid for the device that loaded them.
+    pub fn device_id(&self) -> usize {
+        self.inner.device as usize
+    }
     /// Identifies this stream, for callers that keep per-stream state.
     ///
     /// Buffers are device-scoped, so nothing here rejects one used on a sibling
