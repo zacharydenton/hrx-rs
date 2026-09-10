@@ -11,7 +11,7 @@ use std::{
     },
     time::Duration,
 };
-fn buffer(runtime: &Runtime) -> Buffer {
+pub(super) fn buffer(runtime: &Runtime) -> Buffer {
     // Storage owns the only handle and supplies the same leases as native memory.
     #[allow(clippy::arc_with_non_send_sync)]
     let memory = Arc::new(std::cell::UnsafeCell::new([0u8; 256]));
@@ -36,6 +36,72 @@ fn buffer(runtime: &Runtime) -> Buffer {
             _test_memory: Some(memory),
         }),
     }
+}
+
+#[test]
+fn interval_frontiers_preserve_reference_order_and_compact_repeated_writes() {
+    use std::collections::BTreeSet;
+    let runtime = Runtime::new().unwrap();
+    let mut root = buffer(&runtime);
+    Arc::get_mut(&mut root.storage).unwrap().shared = false;
+    let mut random = 1234567u64;
+    for _ in 0..64 {
+        let mut frontier = dependencies::Frontier::default();
+        let mut history: Vec<Vec<Use>> = Vec::new();
+        let mut ancestors: Vec<BTreeSet<usize>> = Vec::new();
+        for node in 0..64 {
+            let mut uses = Vec::new();
+            for _ in 0..2 {
+                random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
+                let start = ((random >> 32) as usize % 16) * 8;
+                let length = ((random >> 40) as usize % 16 + 1) * 8;
+                let access =
+                    [Access::Read, Access::Write, Access::ReadWrite][(random >> 48) as usize % 3];
+                uses.push(Use {
+                    view: root.slice(start..start + length).unwrap(),
+                    access,
+                });
+            }
+            let mut reach = BTreeSet::new();
+            for previous in frontier.dependencies(node, &uses) {
+                assert!(previous < node);
+                reach.insert(previous);
+                reach.extend(&ancestors[previous]);
+            }
+            for (previous, old) in history.iter().enumerate() {
+                if old.iter().any(|a| uses.iter().any(|b| a.conflicts(b))) {
+                    assert!(
+                        reach.contains(&previous),
+                        "lost conflict {previous} -> {node}"
+                    );
+                }
+            }
+            let summary = dependencies::summarize(uses.clone());
+            for old in &history {
+                assert_eq!(
+                    dependencies::conflicts(&dependencies::summarize(old.clone()), &summary),
+                    old.iter().any(|a| uses.iter().any(|b| a.conflicts(b)))
+                );
+            }
+            ancestors.push(reach);
+            history.push(uses);
+        }
+    }
+    let mut frontier = dependencies::Frontier::default();
+    let uses = vec![Use {
+        view: root.view(),
+        access: Access::Write,
+    }];
+    for node in 0..2048 {
+        assert_eq!(
+            frontier.dependencies(node, &uses),
+            if node == 0 { vec![] } else { vec![node - 1] }
+        );
+    }
+    assert_eq!(
+        dependencies::summarize((0..2048).flat_map(|_| uses.clone())).len(),
+        1
+    );
 }
 fn mock(
     runtime: &Runtime,
@@ -397,7 +463,16 @@ fn host_sync_releases_scheduler_lock_and_rolls_back_failed_leases() {
     let buffer = buffer(&runtime);
     for write in [false, true] {
         let result = buffer.acquire_with(write, false, || {
-            assert!(runtime.inner.core.state.try_lock().is_ok());
+            // A worker may briefly acquire the mutex while starting. Distinguish
+            // that race from this callback retaining its own scheduler lock.
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            while runtime.inner.core.state.try_lock().is_err() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "mapping retained scheduler lock"
+                );
+                std::thread::yield_now();
+            }
             let graph = mock(&runtime, Engine::Gpu, &buffer, Access::Write, || Ok(()));
             assert!(matches!(graph.submit(), Err(Error::Busy(_))));
             Err(Error::Message("injected sync failure".into()))

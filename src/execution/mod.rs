@@ -6,7 +6,9 @@
 mod buffer;
 mod completion;
 mod contract;
+mod dependencies;
 mod graph;
+mod handoff;
 mod scheduler;
 mod statistics;
 use crate::{Error, Result};
@@ -18,6 +20,15 @@ pub use graph::{ExecutableGraph, GpuKernel, Graph, Node};
 use scheduler::Core;
 pub use statistics::Statistics;
 use std::sync::{Arc, Mutex};
+
+/// A buffer region and the access performed during an external GPU handoff.
+#[derive(Clone)]
+pub struct GpuAccess {
+    /// Region retained and reserved until the supplied stream completes.
+    pub view: BufferView,
+    /// Reads and writes performed by the callback.
+    pub access: Access,
+}
 
 pub(super) struct RuntimeOwner {
     core: Arc<Core>,
@@ -159,6 +170,39 @@ impl Runtime {
     }
     /// Allocate initialized storage. Shared memory is exported and imported once.
     pub fn allocate(&self, bytes: usize, placement: MemoryPlacement) -> Result<Buffer> {
+        self.allocate_inner(bytes, placement, None)
+    }
+
+    /// Transfer an initialized allocation into this runtime, optionally importing
+    /// it into an NPU program once. Only GpuLocal and Shared placement are accepted.
+    ///
+    /// # Safety
+    /// All bytes must be initialized and prior uses complete. No old pointer,
+    /// recorded graph or other external alias may access the allocation after
+    /// adoption, except through this runtime's scoped GPU handoff.
+    pub unsafe fn adopt_gpu_buffer(
+        &self,
+        buffer: crate::gpu::Buffer,
+        placement: MemoryPlacement,
+    ) -> Result<Buffer> {
+        let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
+        if buffer.device_id() != stream.device_id() {
+            return Err(Error::Message("buffer belongs to another device".into()));
+        }
+        if matches!(placement, MemoryPlacement::HostVisible) || matches_npu_local(&placement) {
+            return Err(Error::Unsupported(
+                "adoption requires GpuLocal or Shared placement".into(),
+            ));
+        }
+        self.allocate_inner(buffer.bytes(), placement, Some(buffer))
+    }
+
+    fn allocate_inner(
+        &self,
+        bytes: usize,
+        placement: MemoryPlacement,
+        mut adopted: Option<crate::gpu::Buffer>,
+    ) -> Result<Buffer> {
         if bytes == 0 || bytes > isize::MAX as usize {
             return Err(Error::Message(
                 "allocation size must be in 1..=isize::MAX".into(),
@@ -187,11 +231,27 @@ impl Runtime {
         match &placement {
             MemoryPlacement::GpuLocal => {
                 let mut stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
-                let buffer = stream.allocate(bytes)?;
-                stream.fill(buffer.binding(), 0)?;
-                stream.synchronize()?;
+                let buffer = if let Some(buffer) = adopted.take() {
+                    buffer
+                } else {
+                    let buffer = stream.allocate(bytes)?;
+                    stream.fill(buffer.binding(), 0)?;
+                    stream.synchronize()?;
+                    buffer
+                };
                 storage.gpu = Some(buffer);
                 storage.visibility.get_mut().unwrap().wrote(Engine::Gpu);
+            }
+            MemoryPlacement::HostVisible => {
+                let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
+                let buffer = stream.allocate_shared(bytes)?;
+                let pointer = buffer.device_ptr()?.cast::<u8>();
+                // Coherent host-local allocation, with no aliases or device uses.
+                unsafe {
+                    std::ptr::write_bytes(pointer, 0, bytes);
+                }
+                storage.pointer = pointer;
+                storage.gpu = Some(buffer);
             }
             #[cfg(feature = "npu")]
             MemoryPlacement::Shared(program) | MemoryPlacement::NpuLocal(program) => {
@@ -200,9 +260,14 @@ impl Runtime {
                 let bo = if matches!(placement, MemoryPlacement::Shared(_)) {
                     use std::os::fd::AsRawFd;
                     let mut stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
-                    let gpu = stream.allocate(bytes)?;
-                    stream.fill(gpu.binding(), 0)?;
-                    stream.synchronize()?;
+                    let gpu = if let Some(buffer) = adopted.take() {
+                        buffer
+                    } else {
+                        let buffer = stream.allocate(bytes)?;
+                        stream.fill(buffer.binding(), 0)?;
+                        stream.synchronize()?;
+                        buffer
+                    };
                     let (fd, offset) = gpu.export_dmabuf()?;
                     let offset = usize::try_from(offset).map_err(|_| {
                         Error::Unsupported("dma-buf offset exceeds address space".into())
@@ -222,8 +287,14 @@ impl Runtime {
                 };
                 let pointer = bo.map().map_err(Error::Message)?;
                 // No aliases or device submissions exist during initialization.
-                unsafe {
-                    std::ptr::write_bytes(pointer, 0, bytes);
+                // Shared GPU allocations are already initialized, including
+                // adopted data. Only freshly allocated NPU-local bytes need zeroing.
+                if !storage.shared {
+                    unsafe {
+                        std::ptr::write_bytes(pointer, 0, bytes);
+                    }
+                } else {
+                    storage.visibility.get_mut().unwrap().wrote(Engine::Gpu);
                 }
                 storage.pointer = pointer;
                 storage.bo = Some(bo);
@@ -268,9 +339,27 @@ impl Runtime {
         block: [u32; 3],
         contract: KernelContract,
     ) -> Result<GpuKernel> {
-        contract.validate()?;
         let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
         let raw = unsafe { stream.load(path.as_ref(), symbol) }?;
+        unsafe { self.adopt_gpu_kernel(raw, grid, block, contract) }
+    }
+
+    /// Retain a loaded executable without loading or copying its code again.
+    /// # Safety
+    /// The kernel must obey the declared memory contract for this launch and
+    /// every accepted binding, as for [`Self::load_gpu_kernel`].
+    pub unsafe fn adopt_gpu_kernel(
+        &self,
+        raw: crate::gpu::Kernel,
+        grid: [u32; 3],
+        block: [u32; 3],
+        contract: KernelContract,
+    ) -> Result<GpuKernel> {
+        contract.validate()?;
+        let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
+        if raw.device_id() != stream.device_id() {
+            return Err(Error::Message("kernel belongs to another device".into()));
+        }
         if raw.info().binding_count as usize != contract.bindings.len()
             || raw.info().constant_byte_length as usize != contract.constants.len()
         {
@@ -285,6 +374,18 @@ impl Runtime {
             block,
             runtime: self.inner.clone(),
         })
+    }
+}
+
+fn matches_npu_local(placement: &MemoryPlacement) -> bool {
+    #[cfg(feature = "npu")]
+    {
+        matches!(placement, MemoryPlacement::NpuLocal(_))
+    }
+    #[cfg(not(feature = "npu"))]
+    {
+        let _ = placement;
+        false
     }
 }
 

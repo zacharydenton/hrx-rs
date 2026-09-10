@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Preserve compiler limits, reporter state and concurrent batch retries alongside
+  the keyed kernel cache. Keyed pending requests support warm lookup without source
+  hashing while retaining batch compilation.
+- Add coherent host-visible coordinated storage, consuming GPU buffer/kernel
+  adoption, and scoped Stream handoffs with completion and quarantine handling.
+- Infer graph dependencies from interval frontiers and compact access summaries,
+  avoiding dense dependency lists when scratch allocations are reused.
+- Test published GPU/NPU bundles separately from local native development builds.
+
 ## 0.3.0 — 2026-09-10
 
 - Add `execution::Runtime`, explicit GPU/NPU/shared storage, checked kernel

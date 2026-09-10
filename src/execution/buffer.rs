@@ -11,6 +11,9 @@ use std::{
 pub enum MemoryPlacement {
     /// GPU pool memory for GPU-only work.
     GpuLocal,
+    /// Coherent host-local memory mapped for guarded CPU access and GPU copies.
+    /// Does not require an NPU or its runtime.
+    HostVisible,
     /// NPU host-only memory, bound to the program's host memory group.
     #[cfg(feature = "npu")]
     NpuLocal(crate::npu::NpuProgram),
@@ -20,8 +23,9 @@ pub enum MemoryPlacement {
 }
 #[derive(Default)]
 pub(super) struct HostState {
-    readers: usize,
-    writer: bool,
+    pub readers: usize,
+    pub writer: bool,
+    pub external: bool,
     pub poison: Option<String>,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -153,7 +157,7 @@ impl Buffer {
                 if let Some(error) = &host.poison {
                     return Err(Error::DeviceLost(error.clone()));
                 }
-                if host.writer || (write && host.readers != 0) {
+                if host.external || host.writer || (write && host.readers != 0) {
                     return Err(Error::Busy("conflicting host mapping".into()));
                 }
             }
@@ -247,7 +251,7 @@ impl Storage {
         if let Some(error) = &host.poison {
             return Err(Error::DeviceLost(error.clone()));
         }
-        if host.writer || (access.writes() && host.readers != 0) {
+        if host.external || host.writer || (access.writes() && host.readers != 0) {
             return Err(Error::Busy(
                 "device binding conflicts with a live host mapping".into(),
             ));

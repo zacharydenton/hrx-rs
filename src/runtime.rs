@@ -251,6 +251,9 @@ impl<'a> View<'a> {
 }
 
 impl Buffer {
+    pub(crate) fn device_id(&self) -> usize {
+        self._device.device as usize
+    }
     /// The actual allocation size, including rounding of empty allocations.
     pub fn bytes(&self) -> usize {
         self.bytes
@@ -381,6 +384,9 @@ unsafe impl Send for Kernel {}
 unsafe impl Sync for Kernel {}
 
 impl Kernel {
+    pub(crate) fn device_id(&self) -> usize {
+        self.executable.device.device as usize
+    }
     /// Native export metadata, including argument counts and workgroup dimensions.
     pub fn info(&self) -> &ExportInfo {
         &self.info
