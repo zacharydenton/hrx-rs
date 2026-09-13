@@ -1,5 +1,5 @@
 use super::{
-    Access, BufferView, Engine,
+    Access, BufferView,
     graph::{NodeState, Prepared},
 };
 use std::sync::{Arc, Condvar, Mutex, atomic::Ordering};
@@ -7,12 +7,12 @@ use std::sync::{Arc, Condvar, Mutex, atomic::Ordering};
 pub(super) struct Pending {
     pub graph: Arc<Prepared>,
     pub slot: usize,
-    pub order: u64,
+    // Number of earlier, still-pending submissions with conflicting uses.
+    blockers: usize,
 }
 pub(super) struct Scheduler {
     pub pending: Vec<Pending>,
     pub capacity: usize,
-    pub next_order: u64,
     pub shutdown: bool,
     running: [bool; 3],
 }
@@ -29,7 +29,6 @@ impl Core {
             state: Mutex::new(Scheduler {
                 pending: Vec::with_capacity(capacity),
                 capacity,
-                next_order: 0,
                 shutdown: false,
                 running: [false; 3],
             }),
@@ -46,11 +45,28 @@ impl Scheduler {
             })
         })
     }
-    fn blocked(&self, job: &Pending) -> bool {
-        self.pending.iter().any(|earlier| {
-            earlier.order < job.order
-                && super::dependencies::conflicts(&earlier.graph.uses, &job.graph.uses)
-        })
+    pub fn enqueue(&mut self, graph: Arc<Prepared>, slot: usize) {
+        let blockers = self
+            .pending
+            .iter()
+            .filter(|earlier| super::dependencies::conflicts(&earlier.graph.uses, &graph.uses))
+            .count();
+        self.pending.push(Pending {
+            graph,
+            slot,
+            blockers,
+        });
+    }
+    fn remove(&mut self, index: usize) -> Pending {
+        let job = self.pending.remove(index);
+        // Vec order is submission order. Only later submissions counted this
+        // job, including when cancellation removes a blocked job out of order.
+        for later in &mut self.pending[index..] {
+            if super::dependencies::conflicts(&job.graph.uses, &later.graph.uses) {
+                later.blockers -= 1;
+            }
+        }
+        job
     }
 }
 enum Action {
@@ -81,10 +97,10 @@ fn next_action(
             // Keep occupied until signal publication, preventing a
             // detached completion from being reset during finish.
             drop(slots);
-            action = Some(Action::Finish(scheduler.pending.remove(job_index), failure));
+            action = Some(Action::Finish(scheduler.remove(job_index), failure));
             break;
         }
-        if scheduler.blocked(job) {
+        if job.blockers != 0 {
             continue;
         }
         for (index, operation) in job.graph.operations.iter().enumerate() {
@@ -110,7 +126,7 @@ fn next_action(
     action
 }
 
-pub(super) fn worker(core: Arc<Core>, _engine: Engine) {
+pub(super) fn worker(core: Arc<Core>) {
     loop {
         let action = {
             let mut scheduler = core.state.lock().unwrap_or_else(|e| e.into_inner());
