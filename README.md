@@ -20,6 +20,12 @@ separate from Cargo dependencies and any model weights your application uses.
 
 Tested on **AMD Strix Halo (`gfx1151`)**, on Linux x86_64. The host supplies the
 kernel drivers and compatible system libraries; see [requirements and setup](#cli-and-native-setup).
+Other AMD GPU targets, including `gfx1100` and `gfx90a`, are untested.
+`Target::new` validates architecture names and accepts both; it does not check
+hardware support. The bundled native libraries are built for `gfx1151`, so
+other targets may fail during device initialization, compilation, or executable
+loading. They require a compatible native runtime/compiler build, selected with
+`HRX_BUNDLE_MANIFEST` or the local library overrides below.
 
 The package is `hrx-rs`; Rust imports and the primary CLI use `hrx`.
 Native licenses, source provenance, and rebuild instructions are documented in
@@ -59,6 +65,12 @@ contracts, inferred dependencies, reusable GPU/NPU graphs, and completion handle
 that support blocking waits and Rust `Future`. `hrx::gpu` exposes the existing
 low-level GPU API. Enable `npu` for XDNA2 execution and `npu-compile` for integrated
 IRON/AIE compilation; neither feature needs native tools during Cargo builds.
+
+`execution::Runtime` currently runs at most one region per engine at a time,
+even across independent graphs. GPU and NPU regions can overlap, but GPU regions
+are serialized. Increasing `RuntimeOptions::max_submissions` raises queue capacity
+only; per-engine execution depth is not configurable. The low-level
+`gpu::Stream::graph` API can use up to eight native workstreams.
 
 See [the GPU/NPU guide](docs/GPU-NPU.md) for the trust boundary, host mapping guards,
 shared native runtime setup, compiler pinning, and runnable hardware validation.

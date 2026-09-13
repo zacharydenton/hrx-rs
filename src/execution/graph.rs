@@ -419,10 +419,6 @@ impl ExecutableGraph {
         for access in &self.inner.uses {
             access.view.buffer.storage.host_conflict(access.access)?;
         }
-        let order = scheduler.next_order;
-        let next_order = order
-            .checked_add(1)
-            .ok_or_else(|| Error::Message("submission sequence exhausted".into()))?;
         let mut slots = self.inner.slots.lock().unwrap_or_else(|e| e.into_inner());
         let (slot_index, slot) = slots.iter_mut().enumerate().find(|(index, slot)| !slot.occupied && Arc::strong_count(&self.inner.signals[*index]) == 1 && self.inner.signals[*index].state.lock().unwrap_or_else(|e| e.into_inner()).done).ok_or_else(|| Error::Busy("prepared run slots are occupied; drop completed observers or reserve more slots".into()))?;
         self.inner.signals[slot_index].reset();
@@ -433,15 +429,10 @@ impl ExecutableGraph {
             signal: self.inner.signals[slot_index].clone(),
             core: Arc::downgrade(core),
         };
-        scheduler.next_order = next_order;
         core.counters
             .submissions
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        scheduler.pending.push(super::scheduler::Pending {
-            graph: self.inner.clone(),
-            slot: slot_index,
-            order,
-        });
+        scheduler.enqueue(self.inner.clone(), slot_index);
         drop(slots);
         drop(scheduler);
         core.changed.notify_one();

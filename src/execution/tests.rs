@@ -140,6 +140,71 @@ fn mock(
         }),
     }
 }
+
+fn runtime_without_workers() -> Runtime {
+    let options = RuntimeOptions::default();
+    Runtime {
+        inner: Arc::new(RuntimeOwner {
+            core: Arc::new(Core::new(options.max_submissions)),
+            workers: Mutex::new(Vec::new()),
+            gpu_index: options.gpu_index,
+        }),
+        options,
+    }
+}
+
+#[test]
+fn writer_waits_for_all_readers_completed_out_of_order() {
+    let runtime = runtime_without_workers();
+    let buffer = buffer(&runtime);
+    let reads = mock(&runtime, Engine::Gpu, &buffer, Access::Read, || Ok(()));
+    let writes = mock(&runtime, Engine::Npu, &buffer, Access::Write, || Ok(()));
+    let first = reads.submit().unwrap();
+    let second = reads.submit().unwrap();
+    let writer = writes.submit().unwrap();
+    let core = &runtime.inner.core;
+
+    scheduler::help(core, &writer.signal);
+    assert!(!writer.is_complete());
+    // Read/read submissions may finish in either order, even from one graph.
+    second.wait().unwrap();
+    scheduler::help(core, &writer.signal);
+    assert!(!writer.is_complete());
+    first.wait().unwrap();
+    writer.wait().unwrap();
+    // Reusing slots must not retain dependency counts from an earlier run.
+    drop((first, second, writer));
+    writes.submit().unwrap().wait().unwrap();
+}
+
+#[test]
+fn cancelling_a_blocked_job_preserves_other_dependencies() {
+    let runtime = runtime_without_workers();
+    let shared = buffer(&runtime);
+    let separate = buffer(&runtime);
+    let writes = mock(&runtime, Engine::Gpu, &shared, Access::Write, || Ok(()));
+    let cancelled = mock(&runtime, Engine::Npu, &shared, Access::Write, || {
+        panic!("cancelled work must not execute")
+    });
+    let reads = mock(&runtime, Engine::Npu, &shared, Access::Read, || Ok(()));
+    let independent = mock(&runtime, Engine::Npu, &separate, Access::Write, || Ok(()));
+    let first = writes.submit().unwrap();
+    let middle = cancelled.submit().unwrap();
+    let last = reads.submit().unwrap();
+    let other = independent.submit().unwrap();
+    let core = &runtime.inner.core;
+
+    scheduler::help(core, &last.signal);
+    assert!(!last.is_complete());
+    middle.cancel();
+    assert!(matches!(middle.wait(), Err(Error::Cancelled)));
+    scheduler::help(core, &last.signal);
+    assert!(!last.is_complete());
+    other.wait().unwrap();
+    first.wait().unwrap();
+    last.wait().unwrap();
+}
+
 #[test]
 fn aliases_and_host_guards_share_one_access_domain() {
     let runtime = Runtime::new().unwrap();
@@ -461,15 +526,7 @@ fn heterogeneous_latency_against_direct_backend() -> Result<()> {
 fn host_sync_releases_scheduler_lock_and_rolls_back_failed_leases() {
     // This test exercises lease acquisition, not device execution. No workers
     // can contend for the lock, so try_lock directly detects a retained lock.
-    let options = RuntimeOptions::default();
-    let runtime = Runtime {
-        inner: Arc::new(RuntimeOwner {
-            core: Arc::new(Core::new(options.max_submissions)),
-            workers: Mutex::new(Vec::new()),
-            gpu_index: options.gpu_index,
-        }),
-        options,
-    };
+    let runtime = runtime_without_workers();
     let buffer = buffer(&runtime);
     for write in [false, true] {
         let result = buffer.acquire_with(write, false, || {

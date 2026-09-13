@@ -61,6 +61,7 @@ pub struct RuntimeOptions {
     /// Physical GPU index; zero selects the integrated GPU on the tested host.
     pub gpu_index: i32,
     /// Maximum simultaneous submissions. Exhaustion returns `Busy`.
+    /// This bounds queued work; it does not increase per-engine concurrency.
     pub max_submissions: usize,
     /// Preallocated completion slots per prepared graph.
     pub graph_slots: usize,
@@ -75,6 +76,11 @@ impl Default for RuntimeOptions {
     }
 }
 /// Shared scheduler and allocation domain. Clones use the same dependency state.
+///
+/// At most one region per engine (GPU or NPU) runs at a time, including across
+/// independent graph submissions. GPU and NPU regions can overlap. Raising
+/// [`RuntimeOptions::max_submissions`] increases queue capacity only; per-engine
+/// execution depth is not configurable.
 #[derive(Clone)]
 pub struct Runtime {
     pub(super) inner: Arc<RuntimeOwner>,
@@ -136,11 +142,11 @@ impl Runtime {
             workers: Mutex::new(Vec::new()),
             gpu_index: options.gpu_index,
         });
-        for (name, engine) in [("hrx-gpu", Engine::Gpu), ("hrx-npu", Engine::Npu)] {
+        for name in ["hrx-gpu", "hrx-npu"] {
             let core = core.clone();
             let worker = std::thread::Builder::new()
                 .name(name.into())
-                .spawn(move || scheduler::worker(core, engine))?;
+                .spawn(move || scheduler::worker(core))?;
             owner
                 .workers
                 .lock()
