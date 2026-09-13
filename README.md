@@ -1,13 +1,25 @@
 # hrx-rs
 
-Rust GPU and NPU execution with in-process Loom compilation, built on
-[HRX](https://github.com/ROCm/hrx-system). Includes owned buffers, ordered streams,
-events and coordinated GPU/NPU graph replay.
+**GPU and NPU compute from Rust—no PyTorch or ROCm SDK installation.**
 
-Requires Rust 1.88 or later. GPU execution supports Linux x86_64 with an AMD kernel
-driver, the system C/C++ runtimes and `libatomic`, and access to `/dev/kfd` and
-the render device; gfx1151 is the tested architecture. Native libraries load at
-runtime, so building needs no native toolchain and downloads no native code.
+Write GPU kernels in [Loom](https://github.com/ROCm/hrx-system), compile them
+inside your application, and run them through [HRX](https://github.com/ROCm/hrx-system).
+Add the crate with Cargo; the runtime and compiler download automatically on
+first use, with pinned versions and verified hashes. GPU execution and Loom
+compilation need no Python environment, HIP headers, or `hipcc`.
+
+The **GPU runtime and Loom compiler together are a 7.6 MB download**. The optional
+**NPU runtime adds 4.3 MB**, including XRT. These are the compressed archives in
+the [current native release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260910-gpu-npu),
+separate from Cargo dependencies and any model weights your application uses.
+
+- **Build with Cargo:** no GPU SDK, C++ compiler, or native-library download at build time.
+- **Compile and reuse:** Loom kernels compile in process and share a verified disk cache across applications.
+- **Control execution:** owned buffers, ordered streams, events, and reusable graphs keep data and work on the device.
+- **Use the NPU too:** run precompiled XDNA2 programs without Python or a Ryzen AI SDK installation, and coordinate GPU/NPU work through one API.
+
+Tested on **AMD Strix Halo (`gfx1151`)**, on Linux x86_64. The host supplies the
+kernel drivers and compatible system libraries; see [requirements and setup](#cli-and-native-setup).
 
 The package is `hrx-rs`; Rust imports and the primary CLI use `hrx`.
 Native licenses, source provenance, and rebuild instructions are documented in
@@ -54,9 +66,11 @@ The published GPU and NPU bundles include the matching shared-memory runtime.
 
 ## Use from Rust
 
+Requires Rust 1.88 or later.
+
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.3", features = ["npu"] }
+hrx = { package = "hrx-rs", version = "0.4", features = ["npu"] }
 ```
 
 ```rust,no_run
@@ -106,6 +120,11 @@ too.
 
 ## CLI and native setup
 
+GPU execution requires Linux x86_64, the AMD `amdgpu`/KFD kernel driver,
+the system C/C++ runtimes and `libatomic`, and access to `/dev/kfd` and the render
+device. You do not need a system ROCm SDK or PyTorch installation: HRX supplies
+its own pinned user-space runtime, including HSA, and the Loom compiler.
+
 ```sh
 cargo install hrx-rs --version 0.4.0 --locked --features runner,npu
 hrx prepare
@@ -120,6 +139,7 @@ Once prepared, `HRX_OFFLINE=1` disables network provisioning.
 
 This provisions both user-space runtimes, including XRT; no separate
 XRT, Python or Ryzen AI SDK installation is needed for precompiled NPU programs.
+Compiling new NPU programs uses an [optional external IRON/AIE toolchain](docs/GPU-NPU.md#npu-compilation).
 Linux GPU/NPU drivers, firmware and device permissions remain host prerequisites.
 The bundled runtimes target Ubuntu 26.04 LTS: hosts need glibc 2.43 or newer
 and compatible C/C++ runtime libraries. Stock Ubuntu 24.04 is not supported by
