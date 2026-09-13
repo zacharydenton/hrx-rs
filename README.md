@@ -13,6 +13,33 @@ The package is `hrx-rs`; Rust imports and the primary CLI use `hrx`.
 Native licenses, source provenance, and rebuild instructions are documented in
 [THIRD-PARTY.md](THIRD-PARTY.md).
 
+## Project showcase
+
+These projects use HRX and Loom on AMD Strix Halo for local generation,
+computer vision, and vector search.
+
+| Project | What it does |
+| --- | --- |
+| [hrxdb](https://github.com/zacharydenton/hrxdb) | Embedded GPU vector database with exact cosine search, batched top-k, and custom scoring over resident collections. |
+| [h3-hrx](https://github.com/zacharydenton/h3-hrx) | MiniMax H3 video generation with sound, from text, a first frame, or image and audio references. |
+| [krea2-hrx](https://github.com/zacharydenton/krea2-hrx) | Krea 2 Turbo and Raw text-to-image generation with a complete text encoder, diffusion transformer, and VAE pipeline. |
+| [dinov3-hrx](https://github.com/zacharydenton/dinov3-hrx) | DINOv3 image embeddings and patch features, with resident weights and reusable execution graphs. |
+| [arcface-hrx](https://github.com/zacharydenton/arcface-hrx) | ArcFace face embeddings with five-point alignment and cosine similarity. |
+| [scrfd-hrx](https://github.com/zacharydenton/scrfd-hrx) | SCRFD face detection with bounding boxes, confidence scores, and five facial landmarks. |
+
+| h3-hrx · video with sound | krea2-hrx · image generation |
+| --- | --- |
+| [![A glacier floats above a fjord, with waterfalls falling beside a small boat](https://raw.githubusercontent.com/zacharydenton/h3-hrx/master/docs/media/benchmarks/20260913-768p/h3.jpg)](https://github.com/zacharydenton/h3-hrx/blob/master/docs/media/benchmarks/20260913-768p/h3.mp4) | [![A figure on a basalt sea cliff beneath a ringed planet](https://raw.githubusercontent.com/zacharydenton/krea2-hrx/master/docs/images/planetrise.png)](https://github.com/zacharydenton/krea2-hrx#gallery) |
+| [Watch the 768p glacier video](https://github.com/zacharydenton/h3-hrx/blob/master/docs/media/benchmarks/20260913-768p/h3.mp4) | [Explore the image gallery and prompts](https://github.com/zacharydenton/krea2-hrx#gallery) |
+
+h3 generates the five-second 768p clip in **37 min 33 s**, versus **roughly
+4 h 20 min with ComfyUI** at 20 evaluations on Strix Halo—about **7× faster
+overall**. See the [timing calculation and memory comparison](https://github.com/zacharydenton/h3-hrx/blob/master/docs/benchmarks/20260913-768p/README.md#end-to-end-timing).
+
+The vision libraries also fit together: SCRFD supplies face landmarks to
+ArcFace for alignment and embeddings, while DINOv3 produces image vectors
+that an application can index with hrxdb.
+
 ## GPU + NPU pipelines
 
 The coordinated API is `hrx::execution`: owned shared buffers, checked kernel
