@@ -47,12 +47,14 @@ computer vision, and vector search.
 
 | h3-hrx · video with sound | krea2-hrx · image generation |
 | --- | --- |
-| [![A glacier floats above a fjord, with waterfalls falling beside a small boat](https://raw.githubusercontent.com/zacharydenton/h3-hrx/master/docs/media/benchmarks/20260913-768p/h3.jpg)](https://github.com/zacharydenton/h3-hrx/blob/master/docs/media/benchmarks/20260913-768p/h3.mp4) | [![A figure on a basalt sea cliff beneath a ringed planet](https://raw.githubusercontent.com/zacharydenton/krea2-hrx/master/docs/images/planetrise.png)](https://github.com/zacharydenton/krea2-hrx#gallery) |
-| [Watch the 768p glacier video](https://github.com/zacharydenton/h3-hrx/blob/master/docs/media/benchmarks/20260913-768p/h3.mp4) | [Explore the image gallery and prompts](https://github.com/zacharydenton/krea2-hrx#gallery) |
+| [![An enormous alien creature glides above a fjord and a small boat](https://raw.githubusercontent.com/zacharydenton/h3-hrx/master/docs/media/benchmarks/20260914/h3-i8.jpg)](https://github.com/zacharydenton/h3-hrx/blob/master/docs/media/benchmarks/20260914/h3-i8.mp4) | [![A figure on a basalt sea cliff beneath a ringed planet](https://raw.githubusercontent.com/zacharydenton/krea2-hrx/master/docs/images/planetrise.png)](https://github.com/zacharydenton/krea2-hrx#gallery) |
+| [Watch the 768p alien video](https://github.com/zacharydenton/h3-hrx/blob/master/docs/media/benchmarks/20260914/h3-i8.mp4) | [Explore the image gallery and prompts](https://github.com/zacharydenton/krea2-hrx#gallery) |
 
-h3 generates the five-second 768p clip in **37 min 33 s**, versus **roughly
-4 h 20 min with ComfyUI** at 20 evaluations on Strix Halo—about **7× faster
-overall**. See the [timing calculation and memory comparison](https://github.com/zacharydenton/h3-hrx/blob/master/docs/benchmarks/20260913-768p/README.md#end-to-end-timing).
+h3 generates this five-second 768p clip with sound in **35 min 59 s** on Strix
+Halo. Complete native ComfyUI runs took **4 h 3 min 53 s** with default attention
+and **43 min 33 s** with built-in Comfy Kitchen INT8 attention: **6.78×** and
+**1.21×** h3 end-to-end speedups, respectively. h3 runs without the Python/PyTorch
+stack. See the [full comparison, videos, and memory measurements](https://github.com/zacharydenton/h3-hrx/blob/master/docs/benchmarks/20260914/README.md).
 
 The vision libraries also fit together: SCRFD supplies face landmarks to
 ArcFace for alignment and embeddings, while DINOv3 produces image vectors
