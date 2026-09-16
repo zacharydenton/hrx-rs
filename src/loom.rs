@@ -9,6 +9,8 @@
     clippy::all
 )]
 mod ffi;
+/// Resident compiled-kernel sessions with reusable buffers and graphs.
+pub mod model;
 mod native;
 use crate::{
     Error, Result,

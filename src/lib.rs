@@ -2,7 +2,10 @@
 //!
 //! Native libraries are verified and loaded on first use. See [`bundle`] for
 //! offline setup.
+#[path = "benchmark_statistics.rs"]
+pub mod benchmark;
 pub mod bundle;
+mod dependency_frontier;
 mod runtime;
 #[allow(dead_code)]
 mod sys;

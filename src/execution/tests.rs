@@ -1,9 +1,7 @@
-#[path = "../benchmark_statistics.rs"]
-mod percentiles;
 use super::graph::{Backend, NodeState, Operation, Prepared, Slot, Use};
 use super::*;
 #[cfg(feature = "npu")]
-use percentiles::percentile;
+use crate::benchmark::percentile;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},

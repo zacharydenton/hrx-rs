@@ -1,12 +1,10 @@
 //! Warm end-to-end latency for a real NPU passthrough pipeline.
 //! Usage: shared_bench <passthrough.xclbin> <instructions.bin> <bytes>
-#[path = "../src/benchmark_statistics.rs"]
-mod percentiles;
 use hrx::{
     Result,
+    benchmark::percentile,
     execution::{Access, BindingContract, KernelContract, MemoryPlacement, Runtime},
 };
-use percentiles::percentile;
 use std::time::Instant;
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();

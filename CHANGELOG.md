@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.1 — 2026-09-16
+
+- Add `loom::model::ModelSession`, hoisting the resident buffer/kernel/graph
+  engine shared by the vision-model consumers. Session-scoped region and kernel
+  handles reject cross-session use; explicit binding access drives reusable
+  graph dependencies at byte-interval granularity.
+- Reuse coherent or device-local storage through one upload/readback path,
+  batch multi-output downloads behind a reusable readback allocation, and
+  provide common graph-versus-direct timing distributions and a public
+  nearest-rank `benchmark::percentile` helper.
+- Share the interval-frontier dependency implementation between coordinated
+  execution and resident model graphs, and select the Loom compiler profile
+  from the opened device instead of assuming the default architecture.
+
 ## 0.4.0 — 2026-09-10
 
 - Preserve compiler limits, reporter state and concurrent batch retries alongside
