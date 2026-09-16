@@ -8,7 +8,7 @@ use crate::{
 #[derive(Clone)]
 enum Storage {
     Weight(crate::execution::Buffer),
-    Scratch(usize),
+    Scratch(usize, Placement),
 }
 
 /// Immutable model code and weights in a shared context. Shape-specific plans
@@ -61,7 +61,10 @@ impl ModelSession {
                     };
                     Ok(Storage::Weight(buffer))
                 } else {
-                    Ok(Storage::Scratch(allocation.buffer.bytes()))
+                    Ok(Storage::Scratch(
+                        allocation.buffer.bytes(),
+                        allocation.placement,
+                    ))
                 }
             })
             .collect::<Result<Vec<_>>>()?;
@@ -86,7 +89,7 @@ impl ModelDefinition {
             .iter()
             .map(|storage| match storage {
                 Storage::Weight(buffer) => buffer.len(),
-                Storage::Scratch(_) => 0,
+                Storage::Scratch(..) => 0,
             })
             .sum()
     }
@@ -99,7 +102,7 @@ impl ModelDefinition {
         }
         let bytes = match self.allocations.get(region.allocation) {
             Some(Storage::Weight(buffer)) => buffer.len(),
-            Some(Storage::Scratch(bytes)) => *bytes,
+            Some(Storage::Scratch(bytes, _)) => *bytes,
             None => return Err(Error::Message("invalid model allocation".into())),
         };
         if region
@@ -306,12 +309,18 @@ impl ModelFragment {
             if buffers[index].is_none() {
                 buffers[index] = match storage {
                     Storage::Weight(buffer) => Some((0, buffer.view())),
-                    Storage::Scratch(_) if self.extents[index] == 0 => None,
-                    Storage::Scratch(_) => Some((
+                    Storage::Scratch(..) if self.extents[index] == 0 => None,
+                    Storage::Scratch(_, placement) => Some((
                         0,
                         self.context
                             .runtime()
-                            .allocate(self.extents[index], MemoryPlacement::GpuLocal)?
+                            .allocate(
+                                self.extents[index],
+                                match placement {
+                                    Placement::Device => MemoryPlacement::GpuLocal,
+                                    Placement::Shared => MemoryPlacement::HostVisible,
+                                },
+                            )?
                             .view(),
                     )),
                 };

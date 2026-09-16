@@ -9,6 +9,30 @@ use std::{
     },
     time::Duration,
 };
+#[test]
+fn mapped_views_limit_bytes_but_reserve_the_whole_allocation() {
+    let runtime = runtime_without_workers();
+    let root = buffer(&runtime);
+    let view = root.slice(7..19).unwrap();
+    assert!(view.is_host_visible());
+    let mut write = view.map_write().unwrap();
+    write.fill(42);
+    assert!(matches!(root.try_map_read(), Err(Error::Busy(_))));
+    assert!(matches!(
+        root.slice(32..48).unwrap().map_write(),
+        Err(Error::Busy(_))
+    ));
+    drop(write);
+    let read = view.map_read().unwrap();
+    assert_eq!(&*read, &[42; 12]);
+    assert!(matches!(root.try_map_write(), Err(Error::Busy(_))));
+    drop(read);
+    let read = root.map_read().unwrap();
+    assert_eq!(&read[..7], &[0; 7]);
+    assert_eq!(&read[7..19], &[42; 12]);
+    assert!(read[19..].iter().all(|&v| v == 0));
+}
+
 pub(super) fn buffer(runtime: &Runtime) -> Buffer {
     // Storage owns the only handle and supplies the same leases as native memory.
     #[allow(clippy::arc_with_non_send_sync)]

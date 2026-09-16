@@ -172,6 +172,98 @@ fn model_io_uses_sliced_scratch_without_hidden_copies() -> hrx::Result<()> {
 
 #[test]
 #[ignore = "requires the GPU runtime"]
+fn host_visible_model_io_preserves_slices_slots_and_avoids_staging() -> hrx::Result<()> {
+    use hrx::model::{Command, ModelSession};
+    let context = ModelContext::new(Default::default())?;
+    let mut session = ModelSession::in_context(&context)?;
+    let root = session.allocate_shared(4096)?;
+    let io = root.slice(16, 64)?;
+    let desc = TensorDesc::new(DType::U8, vec![64])?;
+    let plan = unsafe {
+        session.freeze(&context)?.prepare(
+            &[Command::Fill {
+                region: root.slice(32, 8)?,
+                value: 7,
+            }],
+            &[(io, desc.clone())],
+            &[(io, desc)],
+            2,
+        )?
+    };
+    let before = context.runtime().statistics();
+    assert_eq!(before.live_bytes, 2 * 80);
+    let a = plan.submit_host(&[&[9; 64]])?;
+    let b = plan.submit_host(&[&[11; 64]])?;
+    assert!(a.outputs()[0].binding().unwrap().is_host_visible());
+    assert!(matches!(plan.try_acquire(), Err(Error::Busy(_))));
+    let a = a.download()?;
+    assert!(matches!(plan.try_acquire(), Err(Error::Busy(_))));
+    let mut expected = vec![9; 64];
+    expected[16..24].fill(7);
+    assert_eq!(a.wait()?, vec![expected]);
+    let mut actual = [0; 64];
+    b.download()?.read_into(&mut [&mut actual])?;
+    let mut expected = [11; 64];
+    expected[16..24].fill(7);
+    assert_eq!(actual, expected);
+    for value in 0..8 {
+        let mut expected = vec![value; 64];
+        expected[16..24].fill(7);
+        assert_eq!(
+            plan.submit_host(&[&[value; 64]])?.download()?.wait()?,
+            vec![expected]
+        );
+    }
+    let after = context.runtime().statistics();
+    assert_eq!(after.allocations, before.allocations);
+    assert_eq!(after.native_graphs_prepared, before.native_graphs_prepared);
+    assert_eq!(after.submissions - before.submissions, 10);
+    assert_eq!(after.uploaded_bytes, before.uploaded_bytes);
+    assert_eq!(after.downloaded_bytes, before.downloaded_bytes);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the GPU runtime"]
+fn mixed_host_and_device_io_only_stages_device_bindings() -> hrx::Result<()> {
+    use hrx::execution::MemoryPlacement;
+    let context = ModelContext::new(Default::default())?;
+    let desc = TensorDesc::new(DType::U8, vec![32])?;
+    let plan = PreparedModel::prepare(&context, 1, |context| {
+        let host = context.allocate_with(desc.clone(), MemoryPlacement::HostVisible)?;
+        let device = context.allocate(desc.clone())?;
+        let mut graph = context.runtime().graph();
+        graph.fill(host.binding().unwrap().slice(0..1)?, 7)?;
+        graph.fill(device.binding().unwrap().slice(0..1)?, 8)?;
+        Ok(InferenceGraph {
+            inputs: vec![host.clone(), device.clone()],
+            outputs: vec![host, device],
+            graph: graph.prepare()?,
+        })
+    })?;
+    for value in 0..3 {
+        let before = context.runtime().statistics();
+        let output = plan
+            .submit_host(&[&[value; 32], &[value + 10; 32]])?
+            .download()?
+            .wait()?;
+        let mut a = vec![value; 32];
+        a[0] = 7;
+        let mut b = vec![value + 10; 32];
+        b[0] = 8;
+        assert_eq!(output, vec![a, b]);
+        let after = context.runtime().statistics();
+        assert_eq!(after.uploaded_bytes - before.uploaded_bytes, 32);
+        assert_eq!(after.downloaded_bytes - before.downloaded_bytes, 32);
+        if value > 0 {
+            assert_eq!(after.allocations, before.allocations);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the GPU runtime"]
 fn slot_factory_rejects_foreign_graphs_tensors_and_inconsistent_shapes() -> hrx::Result<()> {
     let context = ModelContext::new(Default::default())?;
     let foreign = ModelContext::new(Default::default())?;

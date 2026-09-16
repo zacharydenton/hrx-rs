@@ -83,6 +83,10 @@ GPU-only and mixed GPU/NPU image processing with standalone model backends.
 Its [measured results](scripts/vision-bench/RESULTS.md) cover application throughput
 using those runtimes; they do not measure the Rust scheduler.
 
+The [single-image Rust vision benchmark](benchmarks/vision/README.md) runs DINOv3,
+SCRFD and ArcFace in one shared HRX context, reporting end-to-end and per-stage
+median/p95 latency, raw samples and checked outputs.
+
 ## Use from Rust
 
 Requires Rust 1.91 or later.

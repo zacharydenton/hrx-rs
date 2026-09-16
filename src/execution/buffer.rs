@@ -120,22 +120,34 @@ impl Buffer {
     /// Live conflicting host guards return `Busy` instead of waiting.
     pub fn map_read(&self) -> Result<ReadGuard<'_>> {
         self.acquire(false, true)?;
-        Ok(ReadGuard { buffer: self })
+        Ok(ReadGuard {
+            buffer: self,
+            range: 0..self.len(),
+        })
     }
     /// Map for reading without waiting for device work.
     pub fn try_map_read(&self) -> Result<ReadGuard<'_>> {
         self.acquire(false, false)?;
-        Ok(ReadGuard { buffer: self })
+        Ok(ReadGuard {
+            buffer: self,
+            range: 0..self.len(),
+        })
     }
     /// Wait for device access and map initialized bytes for host mutation.
     pub fn map_write(&self) -> Result<WriteGuard<'_>> {
         self.acquire(true, true)?;
-        Ok(WriteGuard { buffer: self })
+        Ok(WriteGuard {
+            buffer: self,
+            range: 0..self.len(),
+        })
     }
     /// Map for mutation without waiting for device work.
     pub fn try_map_write(&self) -> Result<WriteGuard<'_>> {
         self.acquire(true, false)?;
-        Ok(WriteGuard { buffer: self })
+        Ok(WriteGuard {
+            buffer: self,
+            range: 0..self.len(),
+        })
     }
     fn acquire(&self, write: bool, wait: bool) -> Result<()> {
         self.acquire_with(write, wait, || self.storage.make_visible(Engine::Host))
@@ -209,6 +221,28 @@ impl Buffer {
     }
 }
 impl BufferView {
+    /// Whether this allocation supports guarded host access without a copy.
+    pub fn is_host_visible(&self) -> bool {
+        !self.buffer.storage.pointer.is_null()
+    }
+    /// Map this subrange for reading, waiting for device writers. Host access
+    /// reserves the entire allocation, including other views of it.
+    pub fn map_read(&self) -> Result<ReadGuard<'_>> {
+        self.buffer.acquire(false, true)?;
+        Ok(ReadGuard {
+            buffer: &self.buffer,
+            range: self.range.clone(),
+        })
+    }
+    /// Map this subrange for mutation, waiting for device accesses. Host access
+    /// reserves the entire allocation, including other views of it.
+    pub fn map_write(&self) -> Result<WriteGuard<'_>> {
+        self.buffer.acquire(true, true)?;
+        Ok(WriteGuard {
+            buffer: &self.buffer,
+            range: self.range.clone(),
+        })
+    }
     /// Size of this view.
     pub fn len(&self) -> usize {
         self.range.len()
@@ -304,11 +338,17 @@ impl Storage {
 /// ```
 pub struct ReadGuard<'a> {
     buffer: &'a Buffer,
+    range: Range<usize>,
 }
 impl Deref for ReadGuard<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.buffer.storage.pointer, self.buffer.len()) }
+        unsafe {
+            std::slice::from_raw_parts(
+                self.buffer.storage.pointer.add(self.range.start),
+                self.range.len(),
+            )
+        }
     }
 }
 impl Drop for ReadGuard<'_> {
@@ -325,16 +365,27 @@ impl Drop for ReadGuard<'_> {
 /// An exclusive host write lease. Releasing it marks host writes authoritative.
 pub struct WriteGuard<'a> {
     buffer: &'a Buffer,
+    range: Range<usize>,
 }
 impl Deref for WriteGuard<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.buffer.storage.pointer, self.buffer.len()) }
+        unsafe {
+            std::slice::from_raw_parts(
+                self.buffer.storage.pointer.add(self.range.start),
+                self.range.len(),
+            )
+        }
     }
 }
 impl DerefMut for WriteGuard<'_> {
     fn deref_mut(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.buffer.storage.pointer, self.buffer.len()) }
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                self.buffer.storage.pointer.add(self.range.start),
+                self.range.len(),
+            )
+        }
     }
 }
 impl Drop for WriteGuard<'_> {
