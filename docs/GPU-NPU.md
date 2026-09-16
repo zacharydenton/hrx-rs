@@ -78,12 +78,13 @@ Cargo builds and rustdoc need no XRT installation, Python, ROCm SDK or C++ compi
 Install the CLI with GPU and NPU support:
 
 ```bash
-cargo install hrx-rs --version 0.4.1 --locked --features runner,npu
+cargo install --path . --locked --features npu
 hrx prepare
 hrx doctor
 ```
 
-For a source checkout, use `cargo install --path . --features runner,npu`.
+These commands use the current source checkout; the feature simplification is
+not yet published. Omit `--features npu` for GPU-only builds.
 The matched native runtimes and corresponding sources are published in
 [the native release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260910-gpu-npu).
 
@@ -127,7 +128,7 @@ overlays remain available through `scripts/build-interop-overlay.py`.
 
 ## NPU compilation
 
-Enable `npu-compile`. `npu::compiler::Compiler` runs an IRON generator or AIE MLIR
+Enable `npu`. `npu::compiler::Compiler` runs an IRON generator or AIE MLIR
 project in a private subprocess workspace. It never initializes a GPU or NPU.
 Compiler input generators are trusted host programs, not sandboxed code.
 
@@ -138,7 +139,7 @@ python3 scripts/pin-npu-toolchain.py \
   --python /absolute/ironenv/bin/python \
   --aiecc /absolute/ironenv/bin/aiecc \
   --backend Peano --output toolchain.json
-cargo run --features npu-compile --example compile_npu -- toolchain.json 262144
+cargo run --features npu --example compile_npu -- toolchain.json 262144
 ```
 
 For Chess, source its installed environment first and select `--backend Chess`.

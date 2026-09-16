@@ -1,0 +1,161 @@
+amdgpu.target<gfx11-generic> @composite_target {subgroup_size = 32}
+kernel.def target(@composite_target) export("composite_rgb") @composite_rgb(%unused: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %grid = index.constant @GRID@ : index
+  kernel.launch.config workgroups(%grid, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%unused: index, %image: buffer, %crop: buffer, %mask: buffer, %matrix: buffer, %region: buffer, %output: buffer) {
+  %off = index.constant 0 : offset
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %two = index.constant 2 : index
+  %three = index.constant 3 : index
+  %four = index.constant 4 : index
+  %five = index.constant 5 : index
+  %threads = index.constant 256 : index
+  %lane = kernel.workitem.id<x> : index
+  %group = kernel.workgroup.id<x> : index
+  %base = index.mul %group, %threads : index
+  %raw = index.add %base, %lane : index
+  %count = index.constant @COUNT@ : index
+  %width = index.constant @WIDTH@ : index
+  %cw = index.constant @CROP_WIDTH@ : index
+  %ig = buffer.assume.memory_space<global> %image : buffer
+  %cg = buffer.assume.memory_space<global> %crop : buffer
+  %mg = buffer.assume.memory_space<global> %mask : buffer
+  %tg = buffer.assume.memory_space<global> %matrix : buffer
+  %rg = buffer.assume.memory_space<global> %region : buffer
+  %og = buffer.assume.memory_space<global> %output : buffer
+  %iv = buffer.view %ig[%off] : buffer -> view<@COUNT@xi8>
+  %cv = buffer.view %cg[%off] : buffer -> view<@CROP@xf32>
+  %mv = buffer.view %mg[%off] : buffer -> view<@MASK@xf32>
+  %tv = buffer.view %tg[%off] : buffer -> view<6xf32>
+  %rv = buffer.view %rg[%off] : buffer -> view<5xf32>
+  %ov = buffer.view %og[%off] : buffer -> view<@COUNT@xi8>
+  %valid = index.cmp ult, %raw, %count : index
+  scf.if %valid {
+    %i = index.assume %raw [range(%raw, 0, @LAST_OUTPUT@)] : index
+    %original = view.load %iv[%i] : view<@COUNT@xi8> -> i8
+    %ch = index.rem %i, %three : index
+    %pixel = index.div %i, %three : index
+    %x = index.rem %pixel, %width : index
+    %y = index.div %pixel, %width : index
+    %xi = index.cast %x : index to i32
+    %yi = index.cast %y : index to i32
+    %xf = scalar.uitofp %xi : i32 to f32
+    %yf = scalar.uitofp %yi : i32 to f32
+    %left = view.load %rv[%zero] : view<5xf32> -> f32
+    %top = view.load %rv[%one] : view<5xf32> -> f32
+    %right = view.load %rv[%two] : view<5xf32> -> f32
+    %bottom = view.load %rv[%three] : view<5xf32> -> f32
+    %x0 = scalar.cmpf oge, %xf, %left : f32
+    %x1 = scalar.cmpf olt, %xf, %right : f32
+    %y0 = scalar.cmpf oge, %yf, %top : f32
+    %y1 = scalar.cmpf olt, %yf, %bottom : f32
+    %inside_x = scalar.andi %x0, %x1 : i1
+    %inside_y = scalar.andi %y0, %y1 : i1
+    %inside = scalar.andi %inside_x, %inside_y : i1
+    %a = view.load %tv[%zero] : view<6xf32> -> f32
+    %b = view.load %tv[%one] : view<6xf32> -> f32
+    %tx = view.load %tv[%two] : view<6xf32> -> f32
+    %c = view.load %tv[%three] : view<6xf32> -> f32
+    %d = view.load %tv[%four] : view<6xf32> -> f32
+    %ty = view.load %tv[%five] : view<6xf32> -> f32
+    %ax = scalar.mulf %a, %xf : f32
+    %by = scalar.mulf %b, %yf : f32
+    %ab = scalar.addf %ax, %by : f32
+    %xx = scalar.addf %ab, %tx : f32
+    %cx = scalar.mulf %c, %xf : f32
+    %dy = scalar.mulf %d, %yf : f32
+    %cd = scalar.addf %cx, %dy : f32
+    %yy = scalar.addf %cd, %ty : f32
+    %fzero = scalar.constant 0.0 : f32
+    %fone = scalar.constant 1.0 : f32
+    %bound = scalar.constant 1.0e12 : f32
+    %absx = scalar.absf %xx : f32
+    %absy = scalar.absf %yy : f32
+    %finitex = scalar.cmpf olt, %absx, %bound : f32
+    %finitey = scalar.cmpf olt, %absy, %bound : f32
+    %finite = scalar.andi %finitex, %finitey : i1
+    %safe = scalar.andi %inside, %finite : i1
+    %result = scf.if %safe -> (i8) {
+      %floorx = scalar.floorf %xx : f32
+      %floory = scalar.floorf %yy : f32
+      %fx = scalar.subf %xx, %floorx : f32
+      %fy = scalar.subf %yy, %floory : f32
+      %wx0 = scalar.subf %fone, %fx : f32
+      %wy0 = scalar.subf %fone, %fy : f32
+      %fw = scalar.constant @CROP_WIDTH@.0 : f32
+      %fh = scalar.constant @CROP_HEIGHT@.0 : f32
+      %lastx = scalar.subf %fw, %fone : f32
+      %lasty = scalar.subf %fh, %fone : f32
+      %face0, %alpha0 = scf.for %oy = [%zero to %two step %one](%faces = %fzero : f32, %masks = %fzero : f32) -> (f32, f32) {
+        %oyi = index.cast %oy : index to i32
+        %oyf = scalar.uitofp %oyi : i32 to f32
+        %py = scalar.addf %floory, %oyf : f32
+        %top_pixel = index.cmp eq, %oy, %zero : index
+        %wy = scf.select %top_pixel, %wy0, %fy : f32
+        %face_row, %mask_row = scf.for %ox = [%zero to %two step %one](%fs = %faces : f32, %ms = %masks : f32) -> (f32, f32) {
+          %oxi = index.cast %ox : index to i32
+          %oxf = scalar.uitofp %oxi : i32 to f32
+          %px = scalar.addf %floorx, %oxf : f32
+          %left_pixel = index.cmp eq, %ox, %zero : index
+          %wx = scf.select %left_pixel, %wx0, %fx : f32
+          %px0 = scalar.cmpf oge, %px, %fzero : f32
+          %px1 = scalar.cmpf olt, %px, %fw : f32
+          %py0 = scalar.cmpf oge, %py, %fzero : f32
+          %py1 = scalar.cmpf olt, %py, %fh : f32
+          %pxok = scalar.andi %px0, %px1 : i1
+          %pyok = scalar.andi %py0, %py1 : i1
+          %pixelok = scalar.andi %pxok, %pyok : i1
+          %pxlo = scalar.maxnumf %px, %fzero : f32
+          %pylo = scalar.maxnumf %py, %fzero : f32
+          %pxsafe = scalar.minnumf %pxlo, %lastx : f32
+          %pysafe = scalar.minnumf %pylo, %lasty : f32
+          %pxint = scalar.fptoui %pxsafe : f32 to i32
+          %pyint = scalar.fptoui %pysafe : f32 to i32
+          %pxraw = index.cast %pxint : i32 to index
+          %pyraw = index.cast %pyint : i32 to index
+          %pxidx = index.assume %pxraw [range(%pxraw, 0, @LAST_X@)] : index
+          %pyidx = index.assume %pyraw [range(%pyraw, 0, @LAST_Y@)] : index
+          %row = index.mul %pyidx, %cw : index
+          %addr0 = index.add %row, %pxidx : index
+          %atmask = index.assume %addr0 [range(%addr0, 0, @LAST_MASK@)] : index
+          %rgb0 = index.mul %addr0, %three : index
+          %addr = index.add %rgb0, %ch : index
+          %at = index.assume %addr [range(%addr, 0, @LAST_CROP@)] : index
+          %color = view.load %cv[%at] : view<@CROP@xf32> -> f32
+          %maskvalue = view.load %mv[%atmask] : view<@MASK@xf32> -> f32
+          %weight = scalar.mulf %wx, %wy : f32
+          %maskweight = scf.select %pixelok, %weight, %fzero : f32
+          %cterm = scalar.mulf %color, %weight : f32
+          %mterm = scalar.mulf %maskvalue, %maskweight : f32
+          %nextface = scalar.addf %fs, %cterm : f32
+          %nextmask = scalar.addf %ms, %mterm : f32
+          scf.yield %nextface, %nextmask : f32, f32
+        }
+        scf.yield %face_row, %mask_row : f32, f32
+      }
+      @CROP_ROUND@
+      %alphalo = scalar.maxnumf %alpha0, %fzero : f32
+      %alpha = scalar.minnumf %alphalo, %fone : f32
+      %inv = scalar.subf %fone, %alpha : f32
+      %original_int = scalar.extui %original : i8 to i32
+      %original_float = scalar.uitofp %original_int : i32 to f32
+      %before = scalar.mulf %original_float, %inv : f32
+      %after = scalar.mulf %face, %alpha : f32
+      %value = scalar.addf %before, %after : f32
+      %limit = scalar.constant 255.0 : f32
+      %low = scalar.maxnumf %value, %fzero : f32
+      %clamped = scalar.minnumf %low, %limit : f32
+      @FINAL_BLEND@
+      %integer = scalar.fptoui %final : f32 to i32
+      %byte = scalar.trunci %integer : i32 to i8
+      scf.yield %byte : i8
+    } else {
+      scf.yield %original : i8
+    }
+    view.store %result, %ov[%i] : i8, view<@COUNT@xi8>
+  }
+  kernel.return
+}

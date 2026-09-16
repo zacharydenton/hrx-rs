@@ -415,17 +415,10 @@ pub fn prepare(manifest: &Manifest, root: &Path, offline: bool) -> Result<PathBu
                 "runtime bundle URL must use HTTPS or file://".into(),
             ));
         }
-        #[cfg(feature = "download")]
-        {
-            let mut response = ureq::get(&manifest.url).call().map_err(|e| {
-                Error::Download(Box::new(e)).context(format!("download {}", manifest.url))
-            })?;
-            std::io::copy(&mut response.body_mut().as_reader(), &mut archive)?;
-        }
-        #[cfg(not(feature = "download"))]
-        return Err(Error::Message(
-            "network provisioning disabled; enable `download` or prepare the cache offline".into(),
-        ));
+        let mut response = ureq::get(&manifest.url).call().map_err(|e| {
+            Error::Download(Box::new(e)).context(format!("download {}", manifest.url))
+        })?;
+        std::io::copy(&mut response.body_mut().as_reader(), &mut archive)?;
     }
     archive.flush()?;
     manifest.install(archive.path(), root)

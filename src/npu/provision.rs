@@ -196,19 +196,10 @@ impl Manifest {
                     "NPU component URL must use HTTPS or file://".into(),
                 ));
             }
-            #[cfg(feature = "download")]
-            {
-                let mut response = ureq::get(&self.url)
-                    .call()
-                    .map_err(|e| Error::Download(Box::new(e)))?;
-                std::io::copy(&mut response.body_mut().as_reader(), &mut archive)?;
-            }
-            #[cfg(not(feature = "download"))]
-            {
-                return Err(Error::Unsupported(
-                    "enable download or supply a local component archive".into(),
-                ));
-            }
+            let mut response = ureq::get(&self.url)
+                .call()
+                .map_err(|e| Error::Download(Box::new(e)))?;
+            std::io::copy(&mut response.body_mut().as_reader(), &mut archive)?;
         }
         archive.flush()?;
         self.install(archive.path(), &root)

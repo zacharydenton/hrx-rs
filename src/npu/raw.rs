@@ -264,6 +264,7 @@ unsafe impl Sync for CtxInner {}
 /// A device + xclbin + hw_context + `MLIR_AIE` kernel.
 pub struct Context {
     inner: Arc<CtxInner>,
+    budget: Option<crate::residency::MemoryBudget>,
 }
 
 impl Context {
@@ -280,7 +281,15 @@ impl Context {
         }
         Ok(Context {
             inner: Arc::new(CtxInner { ptr }),
+            budget: None,
         })
+    }
+
+    /// Charge future owned BOs to this ceiling. Imports remain charged by their
+    /// external owner; sub-buffers and in-flight runs retain the root charge.
+    pub fn with_memory_budget(mut self, budget: crate::residency::MemoryBudget) -> Self {
+        self.budget = Some(budget);
+        self
     }
 
     /// The memory bank for kernel argument `argidx` (used when allocating BOs).
@@ -324,6 +333,7 @@ impl Context {
                 allocation: Arc::new(AllocationState::new()),
                 range: 0..nbytes,
                 _parent: None,
+                _reservation: None,
             }),
         })
     }
@@ -367,6 +377,7 @@ impl Context {
                 allocation: Arc::new(AllocationState::new()),
                 range: 0..extent,
                 _parent: None,
+                _reservation: None,
             }),
         };
         if offset == 0 {
@@ -377,6 +388,22 @@ impl Context {
     }
 
     pub fn alloc_bo(&self, nbytes: usize, kind: BoKind, group_id: i32) -> Result<Bo, String> {
+        let reservation = self
+            .budget
+            .as_ref()
+            .map(|budget| budget.reserve(nbytes))
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        self.alloc_bo_reserved(nbytes, kind, group_id, reservation)
+    }
+
+    pub(crate) fn alloc_bo_reserved(
+        &self,
+        nbytes: usize,
+        kind: BoKind,
+        group_id: i32,
+        reservation: Option<crate::residency::MemoryReservation>,
+    ) -> Result<Bo, String> {
         if nbytes == 0 {
             return Err("cannot allocate a zero-length XRT BO".into());
         }
@@ -391,6 +418,7 @@ impl Context {
                 allocation: Arc::new(AllocationState::new()),
                 range: 0..nbytes,
                 _parent: None,
+                _reservation: reservation,
             }),
         })
     }
@@ -590,6 +618,8 @@ struct BoInner {
     // Byte range within the root allocation. Sub-BOs share `allocation`.
     range: Range<usize>,
     _parent: Option<Arc<BoInner>>,
+    // Dropped only after native destruction, or retained with a quarantined run.
+    _reservation: Option<crate::residency::MemoryReservation>,
 }
 
 unsafe impl Send for BoInner {}
@@ -682,6 +712,7 @@ impl Bo {
                 allocation: self.inner.allocation.clone(),
                 range: absolute,
                 _parent: Some(self.inner.clone()),
+                _reservation: None,
             }),
         })
     }

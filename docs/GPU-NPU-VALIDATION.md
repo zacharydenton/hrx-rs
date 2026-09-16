@@ -101,7 +101,7 @@ HRX_TEST_NPU_DIR=/absolute/passthrough-artifact \
   python3 scripts/qualify-npu-performance.py
 
 cargo test --locked --all-features
-cargo +nightly miri test --lib --no-default-features execution:: -- --test-threads=1
+cargo +nightly miri test --lib execution:: -- --test-threads=1
 bash scripts/check-feature-matrix.sh
 cargo package --allow-dirty --all-features
 ```

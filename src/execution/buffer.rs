@@ -76,6 +76,8 @@ pub(super) struct Storage {
     pub runtime: Arc<RuntimeOwner>,
     #[cfg(test)]
     pub _test_memory: Option<Arc<std::cell::UnsafeCell<[u8; 256]>>>,
+    // Last: keep native storage charged through destruction and quarantine.
+    pub _reservation: Option<crate::residency::MemoryReservation>,
 }
 // All host dereferences require a host lease; device access is reserved under
 // the scheduler lock. Native handles never escape this tracked allocation.
@@ -91,6 +93,7 @@ pub struct Buffer {
 pub struct BufferView {
     pub(super) buffer: Buffer,
     pub(super) range: Range<usize>,
+    pub(super) retained: Vec<Arc<dyn Send + Sync>>,
 }
 impl Buffer {
     /// Allocation size in bytes.
@@ -106,6 +109,7 @@ impl Buffer {
         BufferView {
             buffer: self.clone(),
             range: 0..self.len(),
+            retained: Vec::new(),
         }
     }
     /// Create a checked subregion.
@@ -225,7 +229,12 @@ impl BufferView {
         Ok(Self {
             buffer: self.buffer.clone(),
             range: self.range.start + range.start..self.range.start + range.end,
+            retained: self.retained.clone(),
         })
+    }
+    pub(crate) fn retain(mut self, owner: Arc<dyn Send + Sync>) -> Self {
+        self.retained.push(owner);
+        self
     }
     pub(super) fn overlaps(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.buffer.storage, &other.buffer.storage)
@@ -358,7 +367,12 @@ impl Drop for Storage {
         {
             // Do not release pages while failed cache maintenance could leave
             // CPU writes able to reach a later allocation of those pages.
-            std::mem::forget((self.bo.take(), self.descriptor.take(), self.gpu.take()));
+            std::mem::forget((
+                self.bo.take(),
+                self.descriptor.take(),
+                self.gpu.take(),
+                self._reservation.take(),
+            ));
             return;
         }
 

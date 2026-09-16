@@ -1,4 +1,4 @@
-//! End-to-end stream costs on a prepared GPU. Run with --release --features loom.
+//! End-to-end stream costs on a prepared GPU. Run with --release.
 use hrx::{Constants, Result, Stream};
 use std::{collections::BTreeMap, hint::black_box, time::Instant};
 

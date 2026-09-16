@@ -9,17 +9,21 @@ mod contract;
 mod dependencies;
 mod graph;
 mod handoff;
+mod native_session;
 mod scheduler;
 mod statistics;
+mod trace;
 use crate::{Error, Result};
 pub use buffer::{Buffer, BufferView, MemoryPlacement, ReadGuard, WriteGuard};
 use buffer::{Engine, HostState, Storage, Visibility};
-pub use completion::Completion;
+pub use completion::{Completion, CompletionProfile};
 pub use contract::{Access, BindingContract, KernelContract};
-pub use graph::{ExecutableGraph, GpuKernel, Graph, Node};
+pub use graph::{ExecutableGraph, GpuKernel, GpuLane, Graph, Node};
+pub use native_session::NativeSession;
 use scheduler::Core;
 pub use statistics::Statistics;
 use std::sync::{Arc, Mutex};
+pub use trace::{ExecutionTrace, TraceEvent};
 
 /// A buffer region and the access performed during an external GPU handoff.
 #[derive(Clone)]
@@ -34,6 +38,7 @@ pub(super) struct RuntimeOwner {
     core: Arc<Core>,
     workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
     gpu_index: i32,
+    copy_streams: [Mutex<Option<Arc<Mutex<graph::CopyStream>>>>; 3],
 }
 impl Drop for RuntimeOwner {
     fn drop(&mut self) {
@@ -58,6 +63,10 @@ impl Drop for RuntimeOwner {
 /// Runtime limits fixed before workers or prepared run slots are created.
 #[derive(Clone, Debug)]
 pub struct RuntimeOptions {
+    /// Optional shared byte ceiling for tracked allocations, including weights,
+    /// private scratch and transfer staging. Native allocations made outside
+    /// this runtime are not covered; adoption charges them at the boundary.
+    pub memory_budget: Option<crate::residency::MemoryBudget>,
     /// Physical GPU index; zero selects the integrated GPU on the tested host.
     pub gpu_index: i32,
     /// Maximum simultaneous submissions. Exhaustion returns `Busy`.
@@ -69,6 +78,7 @@ pub struct RuntimeOptions {
 impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
+            memory_budget: None,
             gpu_index: 0,
             max_submissions: 64,
             graph_slots: 2,
@@ -77,10 +87,9 @@ impl Default for RuntimeOptions {
 }
 /// Shared scheduler and allocation domain. Clones use the same dependency state.
 ///
-/// At most one region per engine (GPU or NPU) runs at a time, including across
-/// independent graph submissions. GPU and NPU regions can overlap. Raising
-/// [`RuntimeOptions::max_submissions`] increases queue capacity only; per-engine
-/// execution depth is not configurable.
+/// Upload, compute, download, and NPU regions have independent scheduling lanes.
+/// Each lane runs one region at a time; conflicting memory accesses are ordered
+/// across all lanes and submissions. Actual device overlap depends on hardware.
 #[derive(Clone)]
 pub struct Runtime {
     pub(super) inner: Arc<RuntimeOwner>,
@@ -104,9 +113,10 @@ impl GpuDevice {
 }
 /// An explicitly selected NPU ordinal.
 #[cfg(feature = "npu")]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct NpuDevice {
     index: i32,
+    budget: Option<crate::residency::MemoryBudget>,
 }
 #[cfg(feature = "npu")]
 impl NpuDevice {
@@ -121,10 +131,37 @@ impl NpuDevice {
         &self,
         path: impl AsRef<std::path::Path>,
     ) -> Result<crate::npu::NpuProgram> {
-        unsafe { crate::npu::NpuProgram::load(self.index, path) }
+        let mut program = unsafe { crate::npu::NpuProgram::load(self.index, path) }?;
+        program.budget = self.budget.clone();
+        Ok(program)
     }
 }
 impl Runtime {
+    /// Begin an opt-in bounded trace of host-observed native-region latencies.
+    pub fn start_trace(&self, event_capacity: usize) -> Result<()> {
+        self.inner.core.tracer.start(event_capacity)
+    }
+    /// Stop capture without waiting for pending work. Wait for its completions
+    /// first when the capture should include the entire request.
+    pub fn finish_trace(&self) -> Option<ExecutionTrace> {
+        self.inner.core.tracer.finish()
+    }
+    /// Whether a view belongs to this runtime's allocation and scheduling domain.
+    pub fn owns(&self, view: &BufferView) -> bool {
+        Arc::ptr_eq(&self.inner, &view.buffer.storage.runtime)
+    }
+
+    /// Whether two handles share the same allocation and scheduling domain.
+    pub fn same_domain(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    /// Shared allocation ceiling, if selected at construction. Native clients
+    /// can attach it to their streams before loading weights or workspace.
+    pub fn memory_budget(&self) -> Option<&crate::residency::MemoryBudget> {
+        self.options.memory_budget.as_ref()
+    }
+
     /// Create a runtime. Native devices are opened lazily when requested.
     pub fn new() -> Result<Self> {
         Self::with_options(RuntimeOptions::default())
@@ -141,8 +178,9 @@ impl Runtime {
             core: core.clone(),
             workers: Mutex::new(Vec::new()),
             gpu_index: options.gpu_index,
+            copy_streams: std::array::from_fn(|_| Mutex::new(None)),
         });
-        for name in ["hrx-gpu", "hrx-npu"] {
+        for name in ["hrx-upload", "hrx-compute", "hrx-download", "hrx-npu"] {
             let core = core.clone();
             let worker = std::thread::Builder::new()
                 .name(name.into())
@@ -172,7 +210,10 @@ impl Runtime {
         if index < 0 {
             return Err(Error::Message("NPU index must be nonnegative".into()));
         }
-        Ok(NpuDevice { index })
+        Ok(NpuDevice {
+            index,
+            budget: self.options.memory_budget.clone(),
+        })
     }
     /// Allocate initialized storage. Shared memory is exported and imported once.
     pub fn allocate(&self, bytes: usize, placement: MemoryPlacement) -> Result<Buffer> {
@@ -215,6 +256,17 @@ impl Runtime {
             ));
         }
         let mut storage = Storage {
+            _reservation: self
+                .options
+                .memory_budget
+                .as_ref()
+                .filter(|budget| {
+                    !adopted
+                        .as_ref()
+                        .is_some_and(|buffer| buffer.charged_to(budget))
+                })
+                .map(|budget| budget.reserve(bytes))
+                .transpose()?,
             #[cfg(feature = "npu")]
             bo: None,
             #[cfg(feature = "npu")]

@@ -32,6 +32,7 @@ pub(super) fn buffer(runtime: &Runtime) -> Buffer {
             visibility: Mutex::new(Visibility::new()),
             runtime: runtime.inner.clone(),
             _test_memory: Some(memory),
+            _reservation: None,
         }),
     }
 }
@@ -101,7 +102,7 @@ fn interval_frontiers_preserve_reference_order_and_compact_repeated_writes() {
         1
     );
 }
-fn mock(
+pub(super) fn mock(
     runtime: &Runtime,
     engine: Engine,
     buffer: &Buffer,
@@ -114,12 +115,14 @@ fn mock(
     }];
     ExecutableGraph {
         inner: Arc::new(Prepared {
+            quarantined: std::sync::atomic::AtomicBool::new(false),
             signals: (0..runtime.options.graph_slots)
                 .map(|_| completion::Signal::new())
                 .collect(),
             runtime: runtime.inner.clone(),
             parallel: false,
             operations: vec![Operation {
+                lane: GpuLane::Compute,
                 copy_bytes: 0,
                 backend: Backend::Mock(engine, Arc::new(action)),
                 uses: uses.clone(),
@@ -139,6 +142,108 @@ fn mock(
     }
 }
 
+#[test]
+fn native_stages_share_compute_but_leave_transfer_lanes_available() {
+    let runtime = Runtime::new().unwrap();
+    let compute = mock(
+        &runtime,
+        Engine::Gpu,
+        &buffer(&runtime),
+        Access::Write,
+        || Ok(()),
+    );
+    let mut upload = mock(
+        &runtime,
+        Engine::Gpu,
+        &buffer(&runtime),
+        Access::Write,
+        || Ok(()),
+    );
+    Arc::get_mut(&mut upload.inner).unwrap().operations[0].lane = GpuLane::Upload;
+    // SAFETY: mock session and operations use no device resources.
+    let mut native = unsafe { NativeSession::new(&runtime, (), |_| Ok(())) };
+    let completion = unsafe {
+        native.run(|_| {
+            let completion = compute.submit().unwrap();
+            upload.submit().unwrap().wait().unwrap();
+            assert!(
+                !completion.is_complete(),
+                "compute ran inside a native stage"
+            );
+            completion
+        })
+    }
+    .unwrap();
+    completion.wait().unwrap();
+}
+
+#[test]
+fn native_stages_count_toward_submission_capacity() {
+    let runtime = Runtime::with_options(RuntimeOptions {
+        max_submissions: 1,
+        ..Default::default()
+    })
+    .unwrap();
+    let graph = mock(
+        &runtime,
+        Engine::Gpu,
+        &buffer(&runtime),
+        Access::Write,
+        || Ok(()),
+    );
+    // SAFETY: no device work in this host-only fixture.
+    let mut native = unsafe { NativeSession::new(&runtime, (), |_| Ok(())) };
+    unsafe {
+        native.run(|_| {
+            assert!(matches!(graph.submit(), Err(Error::Busy(_))));
+            let runtime = runtime.clone();
+            std::thread::spawn(move || {
+                let mut other = NativeSession::new(&runtime, (), |_| panic!("unadmitted fence"));
+                assert!(matches!(
+                    other.run::<()>(|_| panic!("unadmitted stage")),
+                    Err(Error::Busy(_))
+                ));
+            })
+            .join()
+            .unwrap();
+        })
+    }
+    .unwrap();
+    graph.submit().unwrap().wait().unwrap();
+}
+
+#[test]
+fn failed_dependency_does_not_poison_or_quarantine_untouched_output() {
+    let runtime = Runtime::new().unwrap();
+    let output = buffer(&runtime);
+    // This tests dependency propagation, not native failure quarantine (covered
+    // separately). An already failed producer needs no deliberately leaked
+    // native owner or worker threads, so the consumer remains testable in Miri.
+    let signal = completion::Signal::new();
+    signal.reset();
+    signal.finish(Some(Arc::new(Error::DeviceLost("injected".into()))));
+    let failure = Completion {
+        signal,
+        core: Arc::downgrade(&runtime.inner.core),
+    };
+    let runs = Arc::new(AtomicUsize::new(0));
+    let seen = runs.clone();
+    let consumer = mock(&runtime, Engine::Gpu, &output, Access::Write, move || {
+        seen.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    });
+    let dependent = consumer
+        .submit_after(std::slice::from_ref(&failure))
+        .unwrap();
+    assert!(dependent.wait().is_err());
+    assert_eq!(runs.load(Ordering::Relaxed), 0);
+    assert!(!consumer.inner.quarantined.load(Ordering::Acquire));
+    drop(dependent);
+    consumer.submit().unwrap().wait().unwrap();
+    assert_eq!(runs.load(Ordering::Relaxed), 1);
+    assert!(output.map_read().is_ok());
+}
+
 fn runtime_without_workers() -> Runtime {
     let options = RuntimeOptions::default();
     Runtime {
@@ -146,9 +251,79 @@ fn runtime_without_workers() -> Runtime {
             core: Arc::new(Core::new(options.max_submissions)),
             workers: Mutex::new(Vec::new()),
             gpu_index: options.gpu_index,
+            copy_streams: std::array::from_fn(|_| Mutex::new(None)),
         }),
         options,
     }
+}
+
+#[test]
+fn independent_gpu_lanes_can_run_together() {
+    let runtime = Runtime::new().unwrap();
+    let (started, received) = mpsc::channel();
+    let mut releases = Vec::new();
+    let mut completions = Vec::new();
+    for lane in [GpuLane::Upload, GpuLane::Compute, GpuLane::Download] {
+        let storage = buffer(&runtime);
+        let (release, released) = mpsc::channel();
+        releases.push(release);
+        let released = Mutex::new(released);
+        let started = started.clone();
+        let mut graph = mock(&runtime, Engine::Gpu, &storage, Access::Write, move || {
+            started.send(lane).unwrap();
+            released
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .map_err(|error| Error::Message(error.to_string()))?;
+            Ok(())
+        });
+        Arc::get_mut(&mut graph.inner).unwrap().operations[0].lane = lane;
+        completions.push(graph.submit().unwrap());
+    }
+    let observed = (0..3)
+        .map(|_| received.recv_timeout(Duration::from_secs(3)))
+        .collect::<Vec<_>>();
+    for release in releases {
+        let _ = release.send(());
+    }
+    for completion in completions {
+        completion.wait().unwrap();
+    }
+    assert!(
+        observed.iter().all(|result| result.is_ok()),
+        "lanes were serialized: {observed:?}"
+    );
+}
+
+#[test]
+fn gpu_lane_changes_preserve_conflicting_submission_order() {
+    let runtime = Runtime::new().unwrap();
+    let storage = buffer(&runtime);
+    let sequence = Arc::new(AtomicUsize::new(0));
+    let mut completions = Vec::new();
+    for (index, lane) in [GpuLane::Upload, GpuLane::Compute, GpuLane::Download]
+        .into_iter()
+        .enumerate()
+    {
+        let sequence = sequence.clone();
+        let mut graph = mock(
+            &runtime,
+            Engine::Gpu,
+            &storage,
+            Access::ReadWrite,
+            move || {
+                assert_eq!(sequence.fetch_add(1, Ordering::SeqCst), index);
+                Ok(())
+            },
+        );
+        Arc::get_mut(&mut graph.inner).unwrap().operations[0].lane = lane;
+        completions.push(graph.submit().unwrap());
+    }
+    for completion in completions {
+        completion.wait().unwrap();
+    }
+    assert_eq!(sequence.load(Ordering::SeqCst), 3);
 }
 
 #[test]
@@ -290,6 +465,7 @@ fn independent_regions_in_one_graph_progress_with_a_host_waiter() {
     };
     prepared.uses.push(usage.clone());
     prepared.operations.push(Operation {
+        lane: GpuLane::Compute,
         copy_bytes: 0,
         dependencies: vec![],
         uses: vec![usage],
@@ -406,7 +582,10 @@ fn a_completed_single_slot_can_be_reused_immediately() {
 )]
 fn uncertain_failure_poison_is_shared_and_resources_are_quarantined() {
     let runtime = Runtime::new().unwrap();
-    let buffer = buffer(&runtime);
+    let manager = crate::residency::ResidencyManager::new(256).unwrap();
+    let mut buffer = buffer(&runtime);
+    Arc::get_mut(&mut buffer.storage).unwrap()._reservation =
+        Some(manager.budget().reserve(256).unwrap());
     let weak = Arc::downgrade(&buffer.storage);
     let alias = buffer.clone();
     let graph = mock(&runtime, Engine::Gpu, &buffer, Access::Write, || {
@@ -433,6 +612,8 @@ fn uncertain_failure_poison_is_shared_and_resources_are_quarantined() {
     drop(buffer);
     drop(runtime);
     assert!(weak.upgrade().is_some());
+    assert_eq!(manager.statistics().reserved_bytes, 256);
+    assert!(manager.budget().reserve(1).is_err());
 }
 
 #[test]

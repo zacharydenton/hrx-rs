@@ -1,0 +1,111 @@
+amdgpu.target<gfx11-generic> @resize_target {subgroup_size = 32}
+kernel.def target(@resize_target) export("resize_rgb") @resize_rgb(%unused: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %grid = index.constant @GRID@ : index
+  kernel.launch.config workgroups(%grid, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%unused: index, %input: buffer, %coefficients: buffer, %output: buffer) {
+  %off = index.constant 0 : offset
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %two = index.constant 2 : index
+  %three = index.constant 3 : index
+  %four = index.constant 4 : index
+  %count = index.constant @COUNT@ : index
+  %sw = index.constant @SW@ : index
+  %sh = index.constant @SH@ : index
+  %dw = index.constant @DW@ : index
+  %dh = index.constant @DH@ : index
+  %left = index.constant @LEFT@ : index
+  %top = index.constant @TOP@ : index
+  %right = index.constant @RIGHT@ : index
+  %bottom = index.constant @BOTTOM@ : index
+  %vertical = scalar.constant @VERTICAL@ : i1
+  %threads = index.constant 256 : index
+  %lane = kernel.workitem.id<x> : index
+  %group = kernel.workgroup.id<x> : index
+  %base = index.mul %group, %threads : index
+  %raw = index.add %base, %lane : index
+  %ig = buffer.assume.memory_space<global> %input : buffer
+  %cg = buffer.assume.memory_space<global> %coefficients : buffer
+  %og = buffer.assume.memory_space<global> %output : buffer
+  %iv = buffer.view %ig[%off] : buffer -> view<@INPUT@xi8>
+  %cv = buffer.view %cg[%off] : buffer -> view<@COEFFS@xi32>
+  %ov = buffer.view %og[%off] : buffer -> view<@COUNT@xi8>
+  %valid = index.cmp ult, %raw, %count : index
+  scf.if %valid {
+    %i = index.assume %raw [range(%raw, 0, @LAST@)] : index
+    %c = index.rem %i, %three : index
+    %pixel = index.div %i, %three : index
+    %x = index.rem %pixel, %dw : index
+    %row = index.div %pixel, %dw : index
+    %y = index.rem %row, %dh : index
+    %batch = index.div %row, %dh : index
+    %x0 = index.cmp uge, %x, %left : index
+    %x1 = index.cmp ult, %x, %right : index
+    %y0 = index.cmp uge, %y, %top : index
+    %y1 = index.cmp ult, %y, %bottom : index
+    %xok = scalar.andi %x0, %x1 : i1
+    %yok = scalar.andi %y0, %y1 : i1
+    %inside = scalar.andi %xok, %yok : i1
+    %value = scf.if %inside -> (i32) {
+      %xx = index.sub %x, %left : index
+      %yy = index.sub %y, %top : index
+      %axis = scf.select %vertical, %yy, %xx : index
+      %t0r = index.mul %axis, %four : index
+      %t1r = index.add %t0r, %one : index
+      %t2r = index.add %t0r, %two : index
+      %t3r = index.add %t0r, %three : index
+      %t0 = index.assume %t0r [range(%t0r, 0, @COEFFS_LAST@)] : index
+      %t1 = index.assume %t1r [range(%t1r, 0, @COEFFS_LAST@)] : index
+      %t2 = index.assume %t2r [range(%t2r, 0, @COEFFS_LAST@)] : index
+      %t3 = index.assume %t3r [range(%t3r, 0, @COEFFS_LAST@)] : index
+      %a = view.load %cv[%t0] : view<@COEFFS@xi32> -> i32
+      %b = view.load %cv[%t1] : view<@COEFFS@xi32> -> i32
+      %wa = view.load %cv[%t2] : view<@COEFFS@xi32> -> i32
+      %wb = view.load %cv[%t3] : view<@COEFFS@xi32> -> i32
+      %air = index.cast %a : i32 to index
+      %bir = index.cast %b : i32 to index
+      %ai = index.assume %air [range(%air, 0, @AXIS_LAST@)] : index
+      %bi = index.assume %bir [range(%bir, 0, @AXIS_LAST@)] : index
+      %ax = scf.select %vertical, %xx, %ai : index
+      %bx = scf.select %vertical, %xx, %bi : index
+      %ay = scf.select %vertical, %ai, %yy : index
+      %by = scf.select %vertical, %bi, %yy : index
+      %batchrow = index.mul %batch, %sh : index
+      %ar = index.add %batchrow, %ay : index
+      %br = index.add %batchrow, %by : index
+      %arw = index.mul %ar, %sw : index
+      %brw = index.mul %br, %sw : index
+      %ap = index.add %arw, %ax : index
+      %bp = index.add %brw, %bx : index
+      %apc = index.mul %ap, %three : index
+      %bpc = index.mul %bp, %three : index
+      %ac = index.add %apc, %c : index
+      %bc = index.add %bpc, %c : index
+      %ia = index.assume %ac [range(%ac, 0, @INPUT_LAST@)] : index
+      %ib = index.assume %bc [range(%bc, 0, @INPUT_LAST@)] : index
+      %va8 = view.load %iv[%ia] : view<@INPUT@xi8> -> i8
+      %vb8 = view.load %iv[%ib] : view<@INPUT@xi8> -> i8
+      %va = scalar.extui %va8 : i8 to i32
+      %vb = scalar.extui %vb8 : i8 to i32
+      %aw = scalar.muli %va, %wa : i32
+      %bw = scalar.muli %vb, %wb : i32
+      %sum = scalar.addi %aw, %bw : i32
+      %round = scalar.constant @ROUND@ : i32
+      %rounded = scalar.addi %sum, %round : i32
+      %precision = scalar.constant @PRECISION@ : i32
+      %shifted = scalar.shrui %rounded, %precision : i32
+      %max = scalar.constant 255 : i32
+      %limit = scalar.cmpi ugt, %shifted, %max : i32
+      %clamped = scf.select %limit, %max, %shifted : i32
+      scf.yield %clamped : i32
+    } else {
+      %black = scalar.constant 0 : i32
+      scf.yield %black : i32
+    }
+    %byte = scalar.trunci %value : i32 to i8
+    view.store %byte, %ov[%i] : i8, view<@COUNT@xi8>
+  }
+  kernel.return
+}

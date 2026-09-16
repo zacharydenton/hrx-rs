@@ -11,6 +11,9 @@ use std::{
 };
 
 pub(super) struct State {
+    submitted: Option<Instant>,
+    started: Option<Instant>,
+    finished: Option<Instant>,
     pub done: bool,
     pub failure: Option<Arc<Error>>,
     pub cancelled: bool,
@@ -26,6 +29,9 @@ impl Signal {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(State {
+                submitted: None,
+                started: None,
+                finished: None,
                 done: true,
                 failure: None,
                 cancelled: false,
@@ -39,6 +45,9 @@ impl Signal {
     pub fn reset(&self) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.done = false;
+        state.submitted = Some(Instant::now());
+        state.started = None;
+        state.finished = None;
         state.failure = None;
         state.cancelled = false;
         state.wakers.fill(None);
@@ -51,6 +60,7 @@ impl Signal {
             state.failure = failure;
             state.cancelled = self.cancel.load(Ordering::Acquire);
             state.done = true;
+            state.finished = Some(Instant::now());
             (
                 std::mem::replace(&mut state.wakers, std::array::from_fn(|_| None)),
                 std::mem::take(&mut state.overflow_wakers),
@@ -63,6 +73,26 @@ impl Signal {
         }
     }
 }
+impl Signal {
+    pub fn started(&self, now: Instant) {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .started
+            .get_or_insert(now);
+    }
+}
+
+/// Host-observed submission latency, including dependency and driver overhead.
+/// This is not a measurement of GPU kernel execution time.
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+pub struct CompletionProfile {
+    /// Time from accepted submission to its terminal result, in microseconds.
+    pub elapsed_us: f64,
+    /// Time until its first native region starts, or None if none ran.
+    pub queue_us: Option<f64>,
+}
+
 fn outcome(state: &State) -> Result<()> {
     if let Some(message) = &state.failure {
         return Err(Error::Execution {
@@ -83,6 +113,52 @@ pub struct Completion {
     pub(super) core: std::sync::Weak<super::scheduler::Core>,
 }
 impl Completion {
+    /// Host monotonic time at which execution reached a terminal state. This
+    /// permits pipeline boundary timing without including a caller's late wait.
+    /// It is not a device timestamp and does not imply successful execution.
+    pub fn finished_at(&self) -> Option<Instant> {
+        self.signal
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .finished
+    }
+    /// Inspect final host-observed timing without waiting for completion.
+    pub fn profile(&self) -> Option<CompletionProfile> {
+        let state = self.signal.state.lock().unwrap_or_else(|e| e.into_inner());
+        let submitted = state.submitted?;
+        Some(CompletionProfile {
+            elapsed_us: state.finished?.duration_since(submitted).as_secs_f64() * 1e6,
+            queue_us: state
+                .started
+                .map(|start| start.duration_since(submitted).as_secs_f64() * 1e6),
+        })
+    }
+    pub(crate) fn validate_runtime(&self, runtime: &super::Runtime) -> Result<()> {
+        if let Some(owner) = self.core.upgrade() {
+            if !Arc::ptr_eq(&runtime.inner.core, &owner) {
+                return Err(Error::Message(
+                    "completion belongs to another runtime".into(),
+                ));
+            }
+        } else if !self.is_complete() {
+            return Err(Error::Message("orphaned incomplete producer".into()));
+        }
+        Ok(())
+    }
+    /// Observe a terminal result without blocking, or `None` while pending.
+    pub fn result(&self) -> Option<Result<()>> {
+        let state = self.signal.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.done.then(|| outcome(&state))
+    }
+
+    pub(crate) fn ready() -> Self {
+        Self {
+            signal: Signal::new(),
+            core: std::sync::Weak::new(),
+        }
+    }
+
     /// Whether the operation reached a terminal state, including failure.
     pub fn is_complete(&self) -> bool {
         self.signal
@@ -130,6 +206,9 @@ impl Completion {
     /// This request does not revoke resources or abort an unrelated submission.
     pub fn cancel(&self) {
         self.signal.cancel.store(true, Ordering::Release);
+        if let Some(core) = self.core.upgrade() {
+            core.changed.notify_all();
+        }
     }
 }
 impl Future for Completion {

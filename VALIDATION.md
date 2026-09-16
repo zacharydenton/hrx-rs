@@ -1,5 +1,21 @@
 # Validation
 
+## Shared inference 0.6 qualification, 2026-09-16
+
+Rust 1.91 all-feature CPU tests and stable strict Clippy pass. GPU-only and NPU
+feature configurations build; `npu` is the only optional feature. Miri passes
+24 execution/ownership tests with leak checks enabled; three intentional native
+quarantine tests run outside Miri. Strict Rustdoc and package verification pass.
+
+On gfx1151/XDNA2, the coordinated, owned-inference and mixed GPU/NPU suites pass,
+including cross-lane ordering, retained-output backpressure, cancellation/drain,
+native allocation budgets and quarantine. Pinned H3 and Krea pipeline fixtures
+retain exact outputs after migration; H3 additionally checks four independent
+idle-unit evictions, exact reload, native-stage lane exclusion and zero budget
+charges at teardown. Compiler/driver allocations and allocator rounding remain
+outside explicit budget accounting. These are correctness and ownership checks,
+not a claim of universal speedups or whole-system memory reductions.
+
 ## Reviewed native bundle, 2026-09-09
 
 The replacement bundle uses freshly built HRX/Loom and the AMD runtime from
@@ -160,8 +176,8 @@ Keep other GPU work idle and use the same native bundle for both.
 ## CI
 
 `.github/workflows/ci.yml` runs on pushes and pull requests using stable
-Rust and Rust 1.88. It checks formatting, builds all targets, runs clippy, CPU tests
-and rustdoc, checks every feature subset, and lists package contents.
+Rust and Rust 1.91. It checks formatting, builds all targets, runs clippy, CPU tests
+and rustdoc, checks GPU-only and NPU-enabled builds, and lists package contents.
 
 `.github/workflows/gpu.yml` runs on pushes or manual dispatch. It needs a
 registered runner with labels `self-hosted`, `linux`, `x64`, and `gfx1151`, access

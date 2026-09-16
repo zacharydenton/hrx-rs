@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [stable, '1.88.0']
+        rust: [stable, '1.91.0']
     env:
       HRX_OFFLINE: '1'
     steps:
@@ -31,4 +31,4 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup toolchain install nightly --profile minimal --component miri
       - run: |
-          cargo +nightly miri test --lib --no-default-features execution:: -- --test-threads=1
+          cargo +nightly miri test --lib execution:: -- --test-threads=1

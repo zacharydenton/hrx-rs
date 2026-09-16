@@ -210,7 +210,6 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     request.set_config("krea2.euler.grid_x", "1");
     request.set_config("krea2.euler.grid_y", "1");
     let artifact = module.compile(&request)?;
-    #[cfg(feature = "runner")]
     let path = artifact.path().to_path_buf();
     let mut stream = Stream::open()?;
     let kernel = unsafe { stream.load_artifact(&artifact)? };
@@ -337,7 +336,6 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     // A kernel is still refused on a device that did not load it; with one GPU
     // present the device check is exercised through Buffer, not Kernel.
     assert!(Device::open(1).is_err());
-    #[cfg(feature = "runner")]
     {
         let scratch = tempfile::tempdir()?;
         let input = scratch.path().join("runner-input.bin");
@@ -702,4 +700,64 @@ fn small_fan_in_recording_does_not_allocate() -> hrx::Result<()> {
     stream.read_blocking(b.binding(), &mut bytes)?;
     assert_eq!(bytes, [4; 1024]);
     Ok(())
+}
+#[test]
+#[ignore = "requires a provisioned GPU runtime"]
+fn native_budget_retains_queued_and_recorded_owners_without_double_charging_adoption() {
+    use hrx::residency::ResidencyManager;
+    let manager = ResidencyManager::new(8192).unwrap();
+    let budget = manager.budget();
+    let mut stream = hrx::Stream::open()
+        .unwrap()
+        .with_memory_budget(budget.clone());
+    let mut consumer = hrx::Stream::open().unwrap();
+    let buffer = stream.allocate(4096).unwrap();
+    assert!(stream.allocate(4097).is_err());
+    consumer.fill(buffer.binding(), 3).unwrap();
+    drop(buffer);
+    assert_eq!(budget.reserved_bytes(), 4096);
+    consumer.synchronize().unwrap();
+    assert_eq!(budget.reserved_bytes(), 0);
+
+    let buffer = stream.allocate(4096).unwrap();
+    let mut graph = stream.graph().unwrap();
+    graph.fill(&[], buffer.binding(), 7).unwrap();
+    let mut graph = graph.finish().unwrap();
+    drop(buffer);
+    assert_eq!(budget.reserved_bytes(), 4096);
+    stream.launch(&mut graph).unwrap();
+    stream.synchronize().unwrap();
+    assert_eq!(budget.reserved_bytes(), 4096);
+    drop(graph);
+    assert_eq!(budget.reserved_bytes(), 0);
+
+    let context = hrx::inference::ModelContext::new(hrx::execution::RuntimeOptions {
+        memory_budget: Some(budget.clone()),
+        ..Default::default()
+    })
+    .unwrap();
+    let buffer = stream.allocate_zeroed(4096).unwrap();
+    stream.synchronize().unwrap();
+    // SAFETY: initialization drained; the buffer has no graph or external alias.
+    let adopted = unsafe {
+        context
+            .runtime()
+            .adopt_gpu_buffer(buffer, hrx::execution::MemoryPlacement::GpuLocal)
+    }
+    .unwrap();
+    assert_eq!(budget.reserved_bytes(), 4096);
+    let alias = adopted.view();
+    drop(adopted);
+    assert_eq!(budget.reserved_bytes(), 4096);
+    drop(alias);
+    assert_eq!(budget.reserved_bytes(), 0);
+
+    let tiny = ResidencyManager::new(16).unwrap();
+    let mut limited = hrx::Stream::open()
+        .unwrap()
+        .with_memory_budget(tiny.budget());
+    let buffer = limited.allocate(16).unwrap();
+    assert!(limited.upload(buffer.binding(), &[1; 16]).is_err());
+    drop(buffer);
+    assert_eq!(tiny.statistics().reserved_bytes, 0);
 }

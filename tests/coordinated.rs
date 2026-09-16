@@ -67,7 +67,6 @@ fn host_visible_transfers_and_scoped_handoffs() -> hrx::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "loom")]
 #[test]
 #[ignore = "requires the GPU runtime and Loom compiler"]
 fn keyed_pending_hits_preserve_batch_building() -> hrx::Result<()> {
@@ -105,7 +104,6 @@ fn keyed_pending_hits_preserve_batch_building() -> hrx::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "loom")]
 #[test]
 #[ignore = "requires the GPU runtime and Loom compiler"]
 fn direct_requests_publish_once_to_the_pending_batch() -> hrx::Result<()> {

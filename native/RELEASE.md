@@ -53,7 +53,7 @@ python3 scripts/fetch-native-inputs.py --work artifacts/new-release
 bash scripts/rebuild-hrx.sh artifacts/new-release
 python3 scripts/stage-native-release.py --work artifacts/new-release \
   --release-tag native-20260910-gpu-npu
-cargo run --release --features runner --bin hrx -- pack \
+cargo run --release --bin hrx -- pack \
   artifacts/new-release/stage artifacts/new-release/packed \
   https://github.com/zacharydenton/hrx-rs/releases/download/native-20260910-gpu-npu/hrx-linux-x86_64-gfx1151.tar.gz \
   'HRX ecaaf7376f7d + eight patches; TheRock 26672984641' gfx1151

@@ -56,6 +56,10 @@ impl KernelContract {
         Ok(())
     }
     pub(super) fn check(&self, bindings: &[super::BufferView]) -> Result<()> {
+        self.check_extents(bindings)?;
+        self.check_aliases(bindings)
+    }
+    pub(super) fn check_extents(&self, bindings: &[super::BufferView]) -> Result<()> {
         self.validate()?;
         if bindings.len() != self.bindings.len() {
             return Err(Error::Message("kernel binding count mismatch".into()));
@@ -68,6 +72,9 @@ impl KernelContract {
                 )));
             }
         }
+        Ok(())
+    }
+    pub(super) fn check_aliases(&self, bindings: &[super::BufferView]) -> Result<()> {
         // Aliasing across arguments is not asserted by the initial contract format.
         for (index, a) in bindings.iter().enumerate() {
             for (other, b) in bindings[..index].iter().enumerate() {

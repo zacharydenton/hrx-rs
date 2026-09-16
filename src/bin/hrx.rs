@@ -100,7 +100,7 @@ fn dispatch(args: &[String]) -> Result<()> {
                 );
             }
             #[cfg(not(feature = "npu"))]
-            println!("NPU support: not compiled; install with --features runner,npu");
+            println!("NPU support: not compiled; install with --features npu");
             println!(
                 "NPU kernel compilation uses an explicit toolchain manifest; doctor does not install drivers or compilers."
             );
@@ -124,7 +124,7 @@ fn dispatch(args: &[String]) -> Result<()> {
             };
             println!("{}", directory.display());
         }
-        #[cfg(feature = "npu-compile")]
+        #[cfg(feature = "npu")]
         Some("compile-npu") if args.len() == 3 => {
             use hrx::npu::compiler::{Compiler, CompilerOptions, Project, Toolchain};
             let project: Project = serde_json::from_slice(&std::fs::read(&args[2])?)?;
