@@ -84,7 +84,7 @@ Requires Rust 1.91 or later.
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.6.0", features = ["npu"] }
+hrx = { package = "hrx-rs", version = "0.7.0", features = ["npu"] }
 ```
 
 ```rust,no_run
@@ -144,6 +144,17 @@ compiler and scheduling domain. `ModelSession::freeze` produces immutable shared
 weights/code; `ModelDefinition::prepare` creates bounded private inference slots.
 Owned `DeviceTensor` views carry checked metadata, producer completions and slot
 leases, so downstream consumers cannot observe recycled output storage.
+
+For a composed pipeline, validate each stage with `ModelDefinition::fragment`
+and call `ModelFragment::record` on the same `execution::Graph`, passing one
+stage's output tensors directly to the next. Prepare that graph once. Adjacent
+GPU stages become one native graph without intermediate copies or submissions.
+Image normalization, patchification, resize, affine sampling and similarity
+fitting also expose recordable fragments. `PreparedModel::prepare` takes a slot
+factory returning `InferenceGraph { inputs, outputs, graph }`: each slot owns
+the actual pipeline bindings, including sliced or in-place IO. Host transfer
+storage is allocated on first upload/readback and reused thereafter; device-only
+pipelines allocate none. Independent slots must not share writable IO.
 
 Shared operations need not all execute on the GPU. `TensorOps::gather_rows`
 accepts checked host-selected indices while keeping complete rows on-device.
@@ -213,7 +224,7 @@ its own pinned user-space runtime, including HSA, and the Loom compiler.
 Install the CLI, including optional NPU support:
 
 ```sh
-cargo install hrx-rs --version 0.6.0 --locked --features npu
+cargo install hrx-rs --version 0.7.0 --locked --features npu
 hrx prepare
 hrx doctor
 ```

@@ -46,7 +46,7 @@ use std::{
 
 #[path = "model/definition.rs"]
 mod definition;
-pub use definition::ModelDefinition;
+pub use definition::{ModelDefinition, ModelFragment};
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 

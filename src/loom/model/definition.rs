@@ -1,10 +1,11 @@
 use super::*;
 use crate::{
-    execution::{BindingContract, KernelContract, MemoryPlacement},
-    inference::{ModelContext, PreparedModel},
-    tensor::TensorDesc,
+    execution::{BindingContract, BufferView, GpuKernel, Graph, KernelContract, MemoryPlacement},
+    inference::{InferenceGraph, ModelContext, PreparedModel},
+    tensor::{DeviceTensor, TensorDesc},
 };
 
+#[derive(Clone)]
 enum Storage {
     Weight(crate::execution::Buffer),
     Scratch(usize),
@@ -17,6 +18,18 @@ pub struct ModelDefinition {
     context: ModelContext,
     allocations: Vec<Storage>,
     kernels: Vec<Kernel>,
+}
+
+/// Validated, shape-specific model commands with shared immutable weights.
+/// Record into a caller-owned graph to connect stages without copies, or build
+/// a standalone bounded inference pool with [`Self::prepare`].
+pub struct ModelFragment {
+    context: ModelContext,
+    allocations: Vec<Storage>,
+    extents: Vec<usize>,
+    commands: Vec<(Option<GpuKernel>, Vec<Region>, Option<u8>)>,
+    inputs: Vec<(Region, TensorDesc)>,
+    outputs: Vec<(Region, TensorDesc)>,
 }
 
 impl ModelSession {
@@ -114,6 +127,22 @@ impl ModelDefinition {
         outputs: &[(Region, TensorDesc)],
         capacity: usize,
     ) -> Result<PreparedModel> {
+        // Safety: forwarded unchanged from the caller.
+        unsafe { self.fragment(commands, inputs, outputs)? }.prepare(capacity)
+    }
+
+    /// Validate a shape's commands once, without allocating inference slots.
+    /// The fragment owns shared weights and code independently of this definition.
+    ///
+    /// # Safety
+    /// Dispatch contracts, accessible extents and writable aliases must satisfy
+    /// the same requirements as [`Self::prepare`].
+    pub unsafe fn fragment(
+        &self,
+        commands: &[Command],
+        inputs: &[(Region, TensorDesc)],
+        outputs: &[(Region, TensorDesc)],
+    ) -> Result<ModelFragment> {
         for (region, desc) in inputs.iter().chain(outputs) {
             self.validate_region(*region)?;
             if desc.is_empty() || desc.bytes() > region.bytes {
@@ -200,69 +229,139 @@ impl ModelDefinition {
             extents[region.allocation] =
                 extents[region.allocation].max(region.offset + desc.bytes());
         }
-        let input_descs = inputs
-            .iter()
-            .map(|(_, desc)| desc.clone())
-            .collect::<Vec<_>>();
-        let output_descs = outputs
-            .iter()
-            .map(|(_, desc)| desc.clone())
-            .collect::<Vec<_>>();
-        PreparedModel::prepare(
-            &self.context,
-            &input_descs,
-            &output_descs,
-            capacity,
-            |context, input_tensors, output_tensors| {
-                let buffers = self
-                    .allocations
-                    .iter()
-                    .enumerate()
-                    .map(|(index, storage)| match storage {
-                        Storage::Weight(buffer) => Ok(Some(buffer.clone())),
-                        Storage::Scratch(_) if extents[index] == 0 => Ok(None),
-                        Storage::Scratch(_) => context
-                            .runtime()
-                            .allocate(extents[index], MemoryPlacement::GpuLocal)
-                            .map(Some),
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                let view = |region: Region| {
-                    buffers[region.allocation]
-                        .as_ref()
-                        .expect("referenced allocation")
-                        .slice(region.offset..region.offset + region.bytes)
-                };
-                let mut graph = context.runtime().graph();
-                for ((region, desc), tensor) in inputs.iter().zip(input_tensors) {
-                    graph.copy(
-                        view(region.slice(0, desc.bytes())?)?,
-                        tensor.binding().expect("nonempty IO"),
-                    )?;
+        Ok(ModelFragment {
+            context: self.context.clone(),
+            allocations: self.allocations.clone(),
+            extents,
+            commands: prepared,
+            inputs: inputs.to_vec(),
+            outputs: outputs.to_vec(),
+        })
+    }
+}
+
+impl ModelFragment {
+    /// Allocate independent fixed-address slots, exposing their actual model IO.
+    pub fn prepare(&self, capacity: usize) -> Result<PreparedModel> {
+        PreparedModel::prepare(&self.context, capacity, |context| {
+            let mut graph = context.runtime().graph();
+            let (inputs, outputs) = self.append(&mut graph, None)?;
+            Ok(InferenceGraph {
+                inputs,
+                outputs,
+                graph: graph.prepare()?,
+            })
+        })
+    }
+
+    /// Append model commands directly to an unprepared graph. Inputs are bound
+    /// without a device copy; outputs and scratch are allocated for this graph.
+    /// Adjacent stages can consume the returned tensors before graph preparation.
+    /// No pool, host staging, submission or intermediate synchronization is added.
+    ///
+    /// Inputs must describe the complete accessed regions of their allocations.
+    /// Partial aliases which would require a copy are rejected. Initialization
+    /// producers are drained here; this is a preparation-time operation.
+    pub fn record(&self, graph: &mut Graph, inputs: &[DeviceTensor]) -> Result<Vec<DeviceTensor>> {
+        Ok(self.append(graph, Some(inputs))?.1)
+    }
+
+    fn append(
+        &self,
+        graph: &mut Graph,
+        supplied: Option<&[DeviceTensor]>,
+    ) -> Result<(Vec<DeviceTensor>, Vec<DeviceTensor>)> {
+        graph.validate_runtime(self.context.runtime())?;
+        let mut buffers: Vec<Option<(usize, BufferView)>> = vec![None; self.allocations.len()];
+        if let Some(inputs) = supplied {
+            if inputs.len() != self.inputs.len() {
+                return Err(Error::Message("fragment input count mismatch".into()));
+            }
+            for ((region, desc), tensor) in self.inputs.iter().zip(inputs) {
+                self.context.validate(tensor)?;
+                if tensor.desc() != desc {
+                    return Err(Error::Message("fragment input descriptor mismatch".into()));
                 }
-                for (kernel, regions, fill) in &prepared {
-                    if let Some(value) = fill {
-                        graph.fill(view(regions[0])?, *value)?;
-                    } else if let Some(kernel) = kernel {
-                        let bindings = regions
-                            .iter()
-                            .map(|&region| view(region))
-                            .collect::<Result<Vec<_>>>()?;
-                        // Safety: this preparation accepts the same aliasing contract
-                        // as the model's trusted dispatch declarations.
-                        unsafe {
-                            graph.gpu_aliasing(kernel, &bindings)?;
-                        }
+                tensor.completion().wait()?;
+                let binding = tensor.binding().expect("nonempty fragment IO");
+                if buffers.iter().enumerate().any(|(index, old)| {
+                    index != region.allocation && old.as_ref().is_some_and(|(_, old)| old.overlaps(&binding))
+                }) || self.allocations.iter().any(|storage| {
+                    matches!(storage, Storage::Weight(weight) if weight.view().overlaps(&binding))
+                }) {
+                    return Err(Error::Message("fragment remapping introduces an undeclared alias".into()));
+                }
+                if let Some((base, old)) = &buffers[region.allocation] {
+                    if *base != region.offset || !old.same_region(&binding) {
+                        return Err(Error::Message(
+                            "fragment inputs alias one allocation inconsistently".into(),
+                        ));
                     }
+                } else {
+                    buffers[region.allocation] = Some((region.offset, binding));
                 }
-                for ((region, desc), tensor) in outputs.iter().zip(output_tensors) {
-                    graph.copy(
-                        tensor.binding().expect("nonempty IO"),
+            }
+        }
+        for (index, storage) in self.allocations.iter().enumerate() {
+            if buffers[index].is_none() {
+                buffers[index] = match storage {
+                    Storage::Weight(buffer) => Some((0, buffer.view())),
+                    Storage::Scratch(_) if self.extents[index] == 0 => None,
+                    Storage::Scratch(_) => Some((
+                        0,
+                        self.context
+                            .runtime()
+                            .allocate(self.extents[index], MemoryPlacement::GpuLocal)?
+                            .view(),
+                    )),
+                };
+            }
+        }
+        let view = |region: Region| -> Result<BufferView> {
+            let (base, buffer) = buffers[region.allocation]
+                .as_ref()
+                .expect("referenced allocation");
+            let start = region
+                .offset
+                .checked_sub(*base)
+                .ok_or_else(|| Error::Message("fragment access precedes bound input".into()))?;
+            buffer.slice(start..start + region.bytes)
+        };
+        let tensors = |io: &[(Region, TensorDesc)]| {
+            io.iter()
+                .map(|(region, desc)| {
+                    self.context.tensor(
+                        desc.clone(),
                         view(region.slice(0, desc.bytes())?)?,
-                    )?;
+                        crate::Completion::ready(),
+                    )
+                })
+                .collect::<Result<Vec<_>>>()
+        };
+        let inputs = tensors(&self.inputs)?;
+        let outputs = tensors(&self.outputs)?;
+        // Validate every binding before mutating the caller's graph.
+        let bindings = self
+            .commands
+            .iter()
+            .map(|(_, regions, _)| {
+                regions
+                    .iter()
+                    .map(|&region| view(region))
+                    .collect::<Result<Vec<_>>>()
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for ((kernel, _, fill), bindings) in self.commands.iter().zip(bindings) {
+            if let Some(value) = fill {
+                graph.fill(bindings[0].clone(), *value)?;
+            } else if let Some(kernel) = kernel {
+                // Safety: fragment construction validated the caller's trusted
+                // contracts. Remapping preserves region offsets and extents.
+                unsafe {
+                    graph.gpu_aliasing(kernel, &bindings)?;
                 }
-                graph.prepare()
-            },
-        )
+            }
+        }
+        Ok((inputs, outputs))
     }
 }

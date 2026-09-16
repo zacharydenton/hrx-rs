@@ -4,7 +4,7 @@ use crate::{
     Error, Result,
     inference::{Inference, ModelContext, PreparedModel},
     loom::Specialization,
-    model::{Command, Dispatch, ModelSession},
+    model::{Command, Dispatch, ModelFragment, ModelSession},
     plan_cache::PlanCache,
     tensor::{DType, DeviceTensor, Layout, TensorDesc},
 };
@@ -53,6 +53,13 @@ impl ImageOps {
     /// Within a patch, values are in channel, row, column order. No arithmetic
     /// changes the values, including non-finite payloads. Both axes must divide p.
     pub fn prepare_patchify(&self, input: &TensorDesc, patch: usize) -> Result<Arc<PreparedModel>> {
+        self.patch_plans.get_or_prepare((input.clone(), patch), || {
+            self.patchify_fragment(input, patch)?.prepare(3)
+        })
+    }
+
+    /// Recordable patchification for direct composition with a model graph.
+    pub fn patchify_fragment(&self, input: &TensorDesc, patch: usize) -> Result<ModelFragment> {
         if input.dtype() != DType::F32
             || input.layout() != Layout::Nchw
             || !input.is_contiguous()
@@ -73,13 +80,12 @@ impl ImageOps {
         {
             return Err(Error::Message("invalid patch or image size".into()));
         }
-        self.patch_plans.get_or_prepare((input.clone(), patch), || {
-            let count = input.elements();
-            let cells = (height / patch) * (width / patch);
-            let patch_elements = channels * patch * patch;
-            let output = TensorDesc::new(DType::F32, vec![batch, cells, patch_elements])?;
-            let source = format!(
-                r#"
+        let count = input.elements();
+        let cells = (height / patch) * (width / patch);
+        let patch_elements = channels * patch * patch;
+        let output = TensorDesc::new(DType::F32, vec![batch, cells, patch_elements])?;
+        let source = format!(
+            r#"
 amdgpu.target<gfx11-generic> @image_target {{subgroup_size = 32}}
 kernel.def target(@image_target) export("patchify") @patchify(%unused: index) {{
   %one = index.constant 1 : index
@@ -136,31 +142,28 @@ kernel.def target(@image_target) export("patchify") @patchify(%unused: index) {{
   kernel.return
 }}
 "#,
-                grid = count.div_ceil(256),
-                pp = patch * patch,
-                pxs = width / patch
-            );
-            let mut model = ModelSession::in_context(&self.context)?;
-            let src = model.allocate(input.bytes())?;
-            let dst = model.allocate(output.bytes())?;
-            // The generated kernel's scalar and memory extents are fixed above.
-            let kernel =
-                unsafe { model.compile(&[(&source, Specialization::new("patchify"))])? }[0];
-            let definition = model.freeze(&self.context)?;
-            unsafe {
-                definition.prepare(
-                    &[Command::Dispatch(Dispatch::indices(
-                        kernel,
-                        [0],
-                        [count.div_ceil(256) as u32, 1, 1],
-                        vec![src.read(), dst.write()],
-                    ))],
-                    &[(src, input.clone())],
-                    &[(dst, output)],
-                    3,
-                )
-            }
-        })
+            grid = count.div_ceil(256),
+            pp = patch * patch,
+            pxs = width / patch
+        );
+        let mut model = ModelSession::in_context(&self.context)?;
+        let src = model.allocate(input.bytes())?;
+        let dst = model.allocate(output.bytes())?;
+        // The generated kernel's scalar and memory extents are fixed above.
+        let kernel = unsafe { model.compile(&[(&source, Specialization::new("patchify"))])? }[0];
+        let definition = model.freeze(&self.context)?;
+        unsafe {
+            definition.fragment(
+                &[Command::Dispatch(Dispatch::indices(
+                    kernel,
+                    [0],
+                    [count.div_ceil(256) as u32, 1, 1],
+                    vec![src.read(), dst.write()],
+                ))],
+                &[(src, input.clone())],
+                &[(dst, output)],
+            )
+        }
     }
 
     /// Patchify a resident image batch without a host wait or readback.

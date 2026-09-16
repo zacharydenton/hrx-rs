@@ -3,9 +3,257 @@
 use hrx::{
     Error,
     execution::RuntimeOptions,
-    inference::{ModelContext, PreparedModel},
+    inference::{InferenceGraph, ModelContext, PreparedModel},
     tensor::{DType, TensorDesc},
 };
+
+#[test]
+#[ignore = "requires GPU and Loom compiler"]
+fn fragments_share_one_graph_without_intermediate_copies_or_allocations() -> hrx::Result<()> {
+    use hrx::{image::ImageOps, tensor::Layout};
+    let context = ModelContext::new(Default::default())?;
+    let ops = ImageOps::new(&context, 1)?;
+    let desc = TensorDesc::new(DType::U8, vec![1, 4, 4, 3])?.with_layout(Layout::Nhwc)?;
+    let normalized = TensorDesc::new(DType::F32, vec![1, 3, 4, 4])?.with_layout(Layout::Nchw)?;
+    let normalize = ops.normalize_rgb_fragment(&desc, [0.; 3], [1.; 3])?;
+    let patchify = ops.patchify_fragment(&normalized, 2)?;
+    assert_eq!(context.runtime().statistics().native_graphs_prepared, 0);
+    let plan = PreparedModel::prepare(&context, 2, |context| {
+        let input = context.allocate(desc.clone())?;
+        let mut graph = context.runtime().graph();
+        let normalized = normalize.record(&mut graph, std::slice::from_ref(&input))?;
+        let output = patchify.record(&mut graph, &normalized)?;
+        Ok(InferenceGraph {
+            inputs: vec![input],
+            outputs: output,
+            graph: graph.prepare()?,
+        })
+    })?;
+    assert_eq!(context.runtime().statistics().native_graphs_prepared, 2);
+    // Neither kernel depends on these builders or their definitions staying alive.
+    drop((ops, normalize, patchify));
+    let rgb: Vec<_> = (0..48).collect();
+    let mut expected = Vec::new();
+    for py in 0..2 {
+        for px in 0..2 {
+            for c in 0..3 {
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let value = rgb[((py * 2 + dy) * 4 + px * 2 + dx) * 3 + c] as f32 / 255.;
+                        expected.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+            }
+        }
+    }
+    let a = plan.submit_host(&[&rgb])?;
+    let b = plan.submit_host(&[&rgb])?;
+    assert!(matches!(plan.try_acquire(), Err(Error::Busy(_))));
+    assert_eq!(a.download()?.wait()?, vec![expected.clone()]);
+    assert_eq!(b.download()?.wait()?, vec![expected.clone()]);
+    let before = context.runtime().statistics();
+    for _ in 0..8 {
+        assert_eq!(
+            plan.submit_host(&[&rgb])?.download()?.wait()?,
+            vec![expected.clone()]
+        );
+    }
+    let after = context.runtime().statistics();
+    assert_eq!(after.allocations, before.allocations);
+    assert_eq!(after.native_graphs_prepared, before.native_graphs_prepared);
+    assert_eq!(after.device_copied_bytes, 0);
+    assert_eq!(after.submissions - before.submissions, 8 * 3); // upload, single compute graph, readback
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the GPU runtime"]
+fn fragment_binding_rejects_undersized_foreign_and_new_aliases() -> hrx::Result<()> {
+    use hrx::model::{Command, ModelSession};
+    let context = ModelContext::new(Default::default())?;
+    let mut model = ModelSession::in_context(&context)?;
+    let a = model.allocate(64)?;
+    let b = model.allocate(64)?;
+    let definition = model.freeze(&context)?;
+    let desc = TensorDesc::new(DType::U8, vec![32])?;
+    let fragment = unsafe {
+        definition.fragment(
+            &[Command::Fill {
+                region: a,
+                value: 7,
+            }],
+            &[(a, desc.clone())],
+            &[(a, desc.clone())],
+        )?
+    };
+    let input = context.allocate(desc.clone())?;
+    let mut graph = context.runtime().graph();
+    assert!(
+        fragment
+            .record(&mut graph, std::slice::from_ref(&input))
+            .is_err()
+    );
+    let foreign = ModelContext::new(Default::default())?;
+    assert!(
+        fragment
+            .record(&mut foreign.runtime().graph(), std::slice::from_ref(&input))
+            .is_err()
+    );
+    let desc = TensorDesc::new(DType::U8, vec![64])?;
+    let fragment = unsafe {
+        definition.fragment(
+            &[Command::Fill {
+                region: a,
+                value: 7,
+            }],
+            &[(a, desc.clone()), (b, desc.clone())],
+            &[(a, desc.clone())],
+        )?
+    };
+    let input = context.allocate(desc)?;
+    assert!(
+        fragment
+            .record(&mut graph, &[input.clone(), input])
+            .is_err()
+    );
+    // Rejected recording must not have appended even the otherwise-valid fill.
+    assert!(graph.prepare().is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the GPU runtime"]
+fn model_io_uses_sliced_scratch_without_hidden_copies() -> hrx::Result<()> {
+    use hrx::model::{Command, ModelSession};
+    let context = ModelContext::new(Default::default())?;
+    let mut session = ModelSession::in_context(&context)?;
+    let scratch = session.allocate(4096)?;
+    let input = scratch.slice(8, 64)?;
+    let output = scratch.slice(32, 64)?;
+    let fill = scratch.slice(40, 8)?;
+    let definition = session.freeze(&context)?;
+    let desc = TensorDesc::new(DType::U8, vec![64])?;
+    // Fill has no native kernel contract; overlapping IO is intentional.
+    let plan = unsafe {
+        definition.prepare(
+            &[Command::Fill {
+                region: fill,
+                value: 7,
+            }],
+            &[(input, desc.clone())],
+            &[(output, desc)],
+            2,
+        )?
+    };
+    let prepared = context.runtime().statistics();
+    assert_eq!(prepared.allocations, 2);
+    assert_eq!(prepared.live_bytes, 2 * 96);
+    let a = plan.submit_host(&[&[9; 64]])?;
+    let b = plan.submit_host(&[&[11; 64]])?;
+    for (result, value) in [(a, 9), (b, 11)] {
+        let mut expected = vec![0; 64];
+        expected[..40].fill(value);
+        expected[8..16].fill(7);
+        assert_eq!(result.download()?.wait()?, vec![expected]);
+    }
+    let warm = context.runtime().statistics();
+    assert_eq!(warm.device_copied_bytes, 0);
+    assert_eq!(warm.uploaded_bytes, 128);
+    assert_eq!(warm.downloaded_bytes, 128);
+    for _ in 0..10 {
+        plan.submit_host(&[&[5; 64]])?.download()?.wait()?;
+    }
+    let after = context.runtime().statistics();
+    assert_eq!(after.allocations, warm.allocations);
+    assert_eq!(after.native_graphs_prepared, warm.native_graphs_prepared);
+    assert_eq!(after.device_copied_bytes, 0);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the GPU runtime"]
+fn slot_factory_rejects_foreign_graphs_tensors_and_inconsistent_shapes() -> hrx::Result<()> {
+    let context = ModelContext::new(Default::default())?;
+    let foreign = ModelContext::new(Default::default())?;
+    for foreign_graph in [false, true] {
+        let result = PreparedModel::prepare(&context, 1, |context| {
+            let tensor_context = if foreign_graph { context } else { &foreign };
+            let graph_context = if foreign_graph { &foreign } else { context };
+            let tensor = tensor_context.allocate(TensorDesc::new(DType::U8, vec![32])?)?;
+            let buffer = graph_context.allocate(TensorDesc::new(DType::U8, vec![32])?)?;
+            let mut graph = graph_context.runtime().graph();
+            graph.fill(buffer.binding().unwrap(), 0)?;
+            Ok(InferenceGraph {
+                inputs: vec![],
+                outputs: vec![tensor],
+                graph: graph.prepare()?,
+            })
+        });
+        assert!(result.is_err());
+    }
+    let mut count = 0;
+    assert!(
+        PreparedModel::prepare(&context, 2, |context| {
+            count += 1;
+            let tensor = context.allocate(TensorDesc::new(DType::U8, vec![count])?)?;
+            let mut graph = context.runtime().graph();
+            graph.fill(tensor.binding().unwrap(), 0)?;
+            Ok(InferenceGraph {
+                inputs: vec![],
+                outputs: vec![tensor],
+                graph: graph.prepare()?,
+            })
+        })
+        .is_err()
+    );
+    let shared = context.allocate(TensorDesc::new(DType::U8, vec![32])?)?;
+    assert!(
+        PreparedModel::prepare(&context, 2, |context| {
+            let mut graph = context.runtime().graph();
+            graph.fill(shared.binding().unwrap(), 0)?;
+            Ok(InferenceGraph {
+                inputs: vec![],
+                outputs: vec![shared.clone()],
+                graph: graph.prepare()?,
+            })
+        })
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the GPU runtime"]
+fn lazy_staging_budget_failure_releases_slot_and_can_retry() -> hrx::Result<()> {
+    let manager = hrx::residency::ResidencyManager::new(128)?;
+    let budget = manager.budget();
+    let held = budget.reserve(64)?;
+    let context = ModelContext::new(RuntimeOptions {
+        memory_budget: Some(budget),
+        ..Default::default()
+    })?;
+    let plan = PreparedModel::prepare(&context, 1, |context| {
+        let input = context.allocate(TensorDesc::new(DType::U8, vec![32])?)?;
+        let output = context.allocate(input.desc().clone())?;
+        let mut graph = context.runtime().graph();
+        graph.copy(output.binding().unwrap(), input.binding().unwrap())?;
+        Ok(InferenceGraph {
+            inputs: vec![input],
+            outputs: vec![output],
+            graph: graph.prepare()?,
+        })
+    })?;
+    assert!(plan.submit_host(&[&[17; 32]]).is_err());
+    assert!(plan.is_idle());
+    assert_eq!(context.runtime().statistics().live_bytes, 64);
+    drop(held);
+    assert_eq!(
+        plan.submit_host(&[&[17; 32]])?.download()?.wait()?,
+        vec![vec![17; 32]]
+    );
+    assert_eq!(context.runtime().statistics().live_bytes, 128);
+    Ok(())
+}
 
 #[test]
 #[ignore = "requires GPU and Loom compiler"]
@@ -545,17 +793,17 @@ fn affine_rgb_preserves_sampling_and_replays_changed_matrices() -> hrx::Result<(
 fn inference_chaining_retains_slots_and_propagates_values() -> hrx::Result<()> {
     let context = ModelContext::new(RuntimeOptions::default())?;
     let desc = TensorDesc::new(DType::U8, vec![128])?;
-    let model = PreparedModel::prepare(
-        &context,
-        std::slice::from_ref(&desc),
-        std::slice::from_ref(&desc),
-        1,
-        |context, input, output| {
-            let mut graph = context.runtime().graph();
-            graph.copy(output[0].binding().unwrap(), input[0].binding().unwrap())?;
-            graph.prepare()
-        },
-    )?;
+    let model = PreparedModel::prepare(&context, 1, |context| {
+        let input = vec![context.allocate(desc.clone())?];
+        let output = vec![context.allocate(desc.clone())?];
+        let mut graph = context.runtime().graph();
+        graph.copy(output[0].binding().unwrap(), input[0].binding().unwrap())?;
+        Ok(InferenceGraph {
+            inputs: input,
+            outputs: output,
+            graph: graph.prepare()?,
+        })
+    })?;
     let bytes = (0..128).map(|n| n as u8).collect::<Vec<_>>();
     let input = context.upload(desc.clone(), &bytes)?;
     let first = model.submit(&[input])?;
@@ -581,6 +829,8 @@ fn inference_chaining_retains_slots_and_propagates_values() -> hrx::Result<()> {
     let submitted = model.submit(&[next])?;
     drop(submitted);
     drop(model.acquire_blocking()?);
+    // Host readback storage is lazy; warm it before checking replay resources.
+    model.submit_host(&[&[0; 128]])?.download()?.wait()?;
     let before = context.runtime().statistics();
     for value in 0..8 {
         let input = context.upload(TensorDesc::new(DType::U8, vec![128])?, &[value; 128])?;
@@ -600,17 +850,17 @@ fn slots_are_independent_and_reject_foreign_tensors() -> hrx::Result<()> {
     let context = ModelContext::new(RuntimeOptions::default())?;
     let foreign = ModelContext::new(RuntimeOptions::default())?;
     let desc = TensorDesc::new(DType::U8, vec![32])?;
-    let model = PreparedModel::prepare(
-        &context,
-        std::slice::from_ref(&desc),
-        std::slice::from_ref(&desc),
-        3,
-        |context, input, output| {
-            let mut graph = context.runtime().graph();
-            graph.copy(output[0].binding().unwrap(), input[0].binding().unwrap())?;
-            graph.prepare()
-        },
-    )?;
+    let model = PreparedModel::prepare(&context, 3, |context| {
+        let input = vec![context.allocate(desc.clone())?];
+        let output = vec![context.allocate(desc.clone())?];
+        let mut graph = context.runtime().graph();
+        graph.copy(output[0].binding().unwrap(), input[0].binding().unwrap())?;
+        Ok(InferenceGraph {
+            inputs: input,
+            outputs: output,
+            graph: graph.prepare()?,
+        })
+    })?;
     assert!(model.submit(&[foreign.allocate(desc.clone())?]).is_err());
     let mut pending = Vec::new();
     for value in 1..=3u8 {
@@ -648,18 +898,21 @@ fn host_staging_reuses_allocations_and_wakes_capacity_waiters() -> hrx::Result<(
     }
     let context = ModelContext::new(RuntimeOptions::default())?;
     let desc = TensorDesc::new(DType::U8, vec![32])?;
-    let model = PreparedModel::prepare(
-        &context,
-        std::slice::from_ref(&desc),
-        std::slice::from_ref(&desc),
-        1,
-        |context, input, output| {
-            let mut graph = context.runtime().graph();
-            graph.copy(output[0].binding().unwrap(), input[0].binding().unwrap())?;
-            graph.prepare()
-        },
-    )?;
+    let model = PreparedModel::prepare(&context, 1, |context| {
+        let input = vec![context.allocate(desc.clone())?];
+        let output = vec![context.allocate(desc.clone())?];
+        let mut graph = context.runtime().graph();
+        graph.copy(output[0].binding().unwrap(), input[0].binding().unwrap())?;
+        Ok(InferenceGraph {
+            inputs: input,
+            outputs: output,
+            graph: graph.prepare()?,
+        })
+    })?;
+    assert_eq!(context.runtime().statistics().allocations, 2);
+    model.submit_host(&[&[0; 32]])?.download()?.wait()?;
     let allocations = context.runtime().statistics().allocations;
+    assert_eq!(allocations, 4);
     context.runtime().start_trace(5)?;
     for value in 0..10 {
         let result = model.submit_host(&[&[value; 32]])?;
@@ -757,7 +1010,8 @@ fn cancelled_native_work_drains_before_slot_reuse() -> hrx::Result<()> {
     let (started, seen) = std::sync::mpsc::channel();
     let (release, gate) = std::sync::mpsc::channel();
     let mut resources = Some((started, gate, hrx::Device::open(0)?.stream()?));
-    let model = PreparedModel::prepare(&context, &[], &[desc], 1, |context, _, outputs| {
+    let model = PreparedModel::prepare(&context, 1, |context| {
+        let outputs = vec![context.allocate(desc.clone())?];
         let (started, gate, mut stream) = resources.take().unwrap();
         let mut first = true;
         let mut graph = context.runtime().graph();
@@ -782,7 +1036,11 @@ fn cancelled_native_work_drains_before_slot_reuse() -> hrx::Result<()> {
                 },
             )?;
         }
-        graph.prepare()
+        Ok(InferenceGraph {
+            inputs: vec![],
+            outputs,
+            graph: graph.prepare()?,
+        })
     })?;
     let result = model.submit_host(&[])?;
     seen.recv_timeout(std::time::Duration::from_secs(5))

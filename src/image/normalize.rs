@@ -9,6 +9,20 @@ impl ImageOps {
         mean: [f32; 3],
         std: [f32; 3],
     ) -> Result<Arc<PreparedModel>> {
+        self.normalize_plans.get_or_prepare(
+            (input.clone(), mean.map(f32::to_bits), std.map(f32::to_bits)),
+            || self.normalize_rgb_fragment(input, mean, std)?.prepare(3),
+        )
+    }
+
+    /// Recordable normalization with no slot pool or host staging. Connect its
+    /// output directly to a model fragment in a caller-owned graph.
+    pub fn normalize_rgb_fragment(
+        &self,
+        input: &TensorDesc,
+        mean: [f32; 3],
+        std: [f32; 3],
+    ) -> Result<ModelFragment> {
         if input.dtype() != DType::U8
             || input.layout() != Layout::Nhwc
             || !input.is_contiguous()
@@ -22,18 +36,15 @@ impl ImageOps {
                 "normalize requires nonempty NHWC RGB and finite means/positive deviations".into(),
             ));
         }
-        self.normalize_plans.get_or_prepare(
-            (input.clone(), mean.map(f32::to_bits), std.map(f32::to_bits)),
-            || {
-                let [batch, height, width, _]: [usize; 4] = input
-                    .shape()
-                    .try_into()
-                    .map_err(|_| Error::Message("expected NHWC input".into()))?;
-                let count = input.elements();
-                let output = TensorDesc::new(DType::F32, vec![batch, 3, height, width])?
-                    .with_layout(Layout::Nchw)?;
-                let source = format!(
-                    r#"
+        let [batch, height, width, _]: [usize; 4] = input
+            .shape()
+            .try_into()
+            .map_err(|_| Error::Message("expected NHWC input".into()))?;
+        let count = input.elements();
+        let output = TensorDesc::new(DType::F32, vec![batch, 3, height, width])?
+            .with_layout(Layout::Nchw)?;
+        let source = format!(
+            r#"
 amdgpu.target<gfx11-generic> @normalize_target {{subgroup_size = 32}}
 kernel.def target(@normalize_target) export("normalize_rgb") @normalize_rgb(%unused: index) {{
   %one = index.constant 1 : index
@@ -93,38 +104,34 @@ kernel.def target(@normalize_target) export("normalize_rgb") @normalize_rgb(%unu
   kernel.return
 }}
 "#,
-                    grid = count.div_ceil(256),
-                    plane = height * width,
-                    image_size = height * width * 3,
-                    m0 = mean[0],
-                    m1 = mean[1],
-                    m2 = mean[2],
-                    s0 = std[0],
-                    s1 = std[1],
-                    s2 = std[2]
-                );
-                let mut model = ModelSession::in_context(&self.context)?;
-                let src = model.allocate(input.bytes())?;
-                let dst = model.allocate(output.bytes())?;
-                // The generated source's accesses are bounded to these descriptors.
-                let kernel =
-                    unsafe { model.compile(&[(&source, Specialization::new("normalize_rgb"))])? }
-                        [0];
-                unsafe {
-                    model.freeze(&self.context)?.prepare(
-                        &[Command::Dispatch(Dispatch::indices(
-                            kernel,
-                            [0],
-                            [count.div_ceil(256) as u32, 1, 1],
-                            vec![src.read(), dst.write()],
-                        ))],
-                        &[(src, input.clone())],
-                        &[(dst, output)],
-                        3,
-                    )
-                }
-            },
-        )
+            grid = count.div_ceil(256),
+            plane = height * width,
+            image_size = height * width * 3,
+            m0 = mean[0],
+            m1 = mean[1],
+            m2 = mean[2],
+            s0 = std[0],
+            s1 = std[1],
+            s2 = std[2]
+        );
+        let mut model = ModelSession::in_context(&self.context)?;
+        let src = model.allocate(input.bytes())?;
+        let dst = model.allocate(output.bytes())?;
+        // The generated source's accesses are bounded to these descriptors.
+        let kernel =
+            unsafe { model.compile(&[(&source, Specialization::new("normalize_rgb"))])? }[0];
+        unsafe {
+            model.freeze(&self.context)?.fragment(
+                &[Command::Dispatch(Dispatch::indices(
+                    kernel,
+                    [0],
+                    [count.div_ceil(256) as u32, 1, 1],
+                    vec![src.read(), dst.write()],
+                ))],
+                &[(src, input.clone())],
+                &[(dst, output)],
+            )
+        }
     }
 
     /// Normalize resident RGB pixels and change layout without a host boundary.

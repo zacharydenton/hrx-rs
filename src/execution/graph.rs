@@ -69,6 +69,12 @@ pub struct Graph {
     entries: Vec<Entry>,
 }
 impl Graph {
+    pub(crate) fn validate_runtime(&self, runtime: &Runtime) -> Result<()> {
+        if !self.runtime.same_domain(runtime) {
+            return Err(Error::Message("graph belongs to another runtime".into()));
+        }
+        Ok(())
+    }
     /// Integrate owned native GPU execution into this graph's hazards and
     /// producer dependencies. The callback runs on a worker, never in `poll`.
     ///
