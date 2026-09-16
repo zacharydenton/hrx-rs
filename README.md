@@ -123,6 +123,15 @@ workspaces and returns results in request order; `Module::compile` is blocking,
 so a single-threaded caller never reaches that bound on its own. Compiler setup
 and source pins are in [patches/loom](patches/loom/README.md).
 
+Resident inference libraries can use `hrx::loom::model::ModelSession` instead
+of rebuilding the same buffer arena and graph cache. It compiles a trusted batch
+of embedded kernels, owns device-local or coherent allocations, infers graph
+dependencies from each binding's declared `Read`, `Write`, or `ReadWrite`
+access, reuses combined readback storage, and compares graph replay with direct
+dispatch. Regions and kernel IDs are session-scoped and checked. Compiling
+native source and recording its memory-access contract are explicit `unsafe`
+boundaries; model parsing and shape validation remain application concerns.
+
 Two different things are called the target, and they are chosen independently.
 The **profile** target is `hrx::Target` — the architecture a device reports and
 the one the compiler emits for. It is a bare architecture key such as `gfx1151`;
@@ -140,7 +149,7 @@ device. You do not need a system ROCm SDK or PyTorch installation: HRX supplies
 its own pinned user-space runtime, including HSA, and the Loom compiler.
 
 ```sh
-cargo install hrx-rs --version 0.4.0 --locked --features runner,npu
+cargo install hrx-rs --version 0.4.1 --locked --features runner,npu
 hrx prepare
 hrx doctor
 ```

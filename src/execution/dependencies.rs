@@ -1,10 +1,7 @@
 //! Interval frontiers keep only the ordering needed by subsequent accesses.
 use super::{Access, BufferView, graph::Use};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    ops::Range,
-    sync::Arc,
-};
+use crate::dependency_frontier::{Frontier as IntervalFrontier, Use as IntervalUse};
+use std::{collections::BTreeMap, ops::Range, sync::Arc};
 
 fn region(view: &BufferView) -> (usize, Range<usize>) {
     (
@@ -17,64 +14,21 @@ fn region(view: &BufferView) -> (usize, Range<usize>) {
     )
 }
 
-#[derive(Clone, Default)]
-struct Segment {
-    range: Range<usize>,
-    writer: Option<usize>,
-    readers: BTreeSet<usize>,
-}
-
 #[derive(Default)]
-pub(super) struct Frontier(BTreeMap<usize, Vec<Segment>>);
+pub(super) struct Frontier(IntervalFrontier);
 impl Frontier {
     pub fn dependencies(&mut self, node: usize, uses: &[Use]) -> Vec<usize> {
-        let mut dependencies = BTreeSet::new();
-        for usage in uses {
-            let (allocation, range) = region(&usage.view);
-            if range.is_empty() {
-                continue;
-            }
-            let segments = self.0.entry(allocation).or_default();
-            for point in [range.start, range.end] {
-                if let Some(i) = segments
-                    .iter()
-                    .position(|s| s.range.start < point && point < s.range.end)
-                {
-                    let mut right = segments[i].clone();
-                    right.range.start = point;
-                    segments[i].range.end = point;
-                    segments.insert(i + 1, right);
+        self.0.dependencies(
+            node,
+            uses.iter().map(|usage| {
+                let (allocation, range) = region(&usage.view);
+                IntervalUse {
+                    allocation,
+                    range,
+                    access: usage.access,
                 }
-            }
-            let mut position = range.start;
-            let mut i = segments.partition_point(|s| s.range.end <= position);
-            while position < range.end {
-                if i == segments.len() || segments[i].range.start > position {
-                    let end = segments
-                        .get(i)
-                        .map_or(range.end, |s| s.range.start.min(range.end));
-                    segments.insert(
-                        i,
-                        Segment {
-                            range: position..end,
-                            ..Default::default()
-                        },
-                    );
-                }
-                let segment = &mut segments[i];
-                dependencies.extend(segment.writer);
-                if usage.access.writes() {
-                    dependencies.append(&mut segment.readers);
-                    segment.writer = Some(node);
-                } else {
-                    segment.readers.insert(node);
-                }
-                position = segment.range.end;
-                i += 1;
-            }
-        }
-        dependencies.remove(&node);
-        dependencies.into_iter().collect()
+            }),
+        )
     }
 }
 

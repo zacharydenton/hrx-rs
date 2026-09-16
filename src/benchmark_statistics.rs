@@ -1,6 +1,10 @@
 //! Nearest-rank quantiles for sorted, nonempty benchmark samples.
-#![allow(dead_code)]
 
+/// Select a nearest-rank percentile from sorted, nonempty samples.
+///
+/// `percent` must be in `1..=100`. This helper intentionally asserts its
+/// preconditions: benchmark collection owns both sorting and sample counts.
+#[must_use]
 pub fn percentile(sorted: &[f64], percent: usize) -> f64 {
     assert!(!sorted.is_empty() && (1..=100).contains(&percent));
     sorted[(sorted.len() * percent).div_ceil(100) - 1]

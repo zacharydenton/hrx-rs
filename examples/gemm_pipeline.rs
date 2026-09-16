@@ -1,16 +1,14 @@
 //! Real GPU preprocessing -> BF16 NPU GEMM -> GPU f32 epilogue.
 //! Usage: gemm_pipeline <row-major-bf16.xclbin> <instructions.bin> M K N
 //! Artifacts must implement A[M,K] * B[K,N] -> C[M,N] f32, using MLIR_AIE.
-#[path = "../src/benchmark_statistics.rs"]
-mod percentiles;
 use hrx::{
     Result,
+    benchmark::percentile,
     execution::{
         Access, BindingContract, Buffer, ExecutableGraph, GpuKernel, KernelContract,
         MemoryPlacement, Runtime,
     },
 };
-use percentiles::percentile;
 use std::time::Instant;
 fn binding(bytes: usize, access: Access) -> BindingContract {
     BindingContract {
