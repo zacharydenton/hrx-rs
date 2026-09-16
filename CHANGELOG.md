@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.0 — 2026-09-16
+
+- Add validated model fragments that record into caller-owned execution graphs
+  with directly bound intermediate tensors and shared immutable weights.
+  Normalization, patchification, resize, affine sampling and similarity fitting
+  expose the same composition API.
+- Bind prepared inference slots to their actual model storage, including sliced
+  and in-place IO, without duplicate model input/output allocations or copies.
+  Validate runtime identity, consistent descriptors and independent slot IO.
+- Allocate host upload/readback staging lazily, reuse it across submissions and
+  allow retries after allocation-budget failures.
+
+Migration: `PreparedModel::prepare` takes a context, capacity and slot factory
+returning `InferenceGraph { inputs, outputs, graph }`. Allocate independent
+writable storage inside each factory call. No compatibility shim is provided.
+
+This release provides graph-composition foundations, not completed cross-model
+optimization or a general end-to-end performance guarantee.
+
 ## 0.6.0 — 2026-09-16
 
 - Add shared model contexts, checked owned device tensors, bounded prepared

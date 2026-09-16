@@ -45,6 +45,22 @@ impl ImageOps {
         width: usize,
         sampling: RgbSampling,
     ) -> Result<Arc<PreparedModel>> {
+        self.affine_plans
+            .get_or_prepare((input.clone(), crops, height, width, sampling), || {
+                self.affine_rgb_fragment(input, crops, height, width, sampling)?
+                    .prepare(3)
+            })
+    }
+
+    /// Recordable affine crop sampling for composition with model kernels.
+    pub fn affine_rgb_fragment(
+        &self,
+        input: &TensorDesc,
+        crops: usize,
+        height: usize,
+        width: usize,
+        sampling: RgbSampling,
+    ) -> Result<ModelFragment> {
         let shape = input.shape();
         if input.dtype() != DType::U8
             || input.layout() != Layout::Nhwc
@@ -70,55 +86,64 @@ impl ImageOps {
                 "affine dimensions exceed kernel indexing limits".into(),
             ));
         }
-        self.affine_plans
-            .get_or_prepare((input.clone(), crops, height, width, sampling), || {
-                let count = output.elements();
-                let mut source = include_str!("affine_rgb.loom").to_owned();
-                for (name, value) in [
-                    ("COUNT", count),
-                    ("LAST_OUTPUT", count - 1),
-                    ("INPUT", input.elements()),
-                    ("LAST_INPUT", input.elements() - 1),
-                    ("MATRICES", matrices.elements()),
-                    ("LAST_MATRIX", matrices.elements() - 1),
-                    ("GRID", count.div_ceil(256)),
-                    ("WIDTH", width),
-                    ("PIXELS", height * width),
-                    ("SOURCE_WIDTH", shape[2]),
-                    ("SOURCE_HEIGHT", shape[1]),
-                ] {
-                    source = source.replace(&format!("@{name}@"), &value.to_string());
+        let count = output.elements();
+        let mut source = include_str!("affine_rgb.loom").to_owned();
+        for (name, value) in [
+            ("COUNT", count),
+            ("LAST_OUTPUT", count - 1),
+            ("INPUT", input.elements()),
+            ("LAST_INPUT", input.elements() - 1),
+            ("MATRICES", matrices.elements()),
+            ("LAST_MATRIX", matrices.elements() - 1),
+            ("GRID", count.div_ceil(256)),
+            ("WIDTH", width),
+            ("PIXELS", height * width),
+            ("SOURCE_WIDTH", shape[2]),
+            ("SOURCE_HEIGHT", shape[1]),
+        ] {
+            source = source.replace(&format!("@{name}@"), &value.to_string());
+        }
+        source = source.replace(
+            "@REPLICATE@",
+            if sampling == RgbSampling::ReplicateHalfUp {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        source = source.replace(
+            "@WEIGHTED_VALUE@",
+            match sampling {
+                RgbSampling::BlackTiesEven => {
+                    "%vx = scalar.mulf %v, %wx : f32\n%vxy = scalar.mulf %vx, %wy : f32"
                 }
-                source = source.replace("@REPLICATE@", if sampling == RgbSampling::ReplicateHalfUp { "true" } else { "false" });
-                source = source.replace("@WEIGHTED_VALUE@", match sampling {
-                    RgbSampling::BlackTiesEven => "%vx = scalar.mulf %v, %wx : f32\n%vxy = scalar.mulf %vx, %wy : f32",
-                    RgbSampling::ReplicateHalfUp => "%weight = scalar.mulf %wx, %wy : f32\n%vxy = scalar.mulf %v, %weight : f32",
-                });
-                source = source.replace("@ROUND@", match sampling {
+                RgbSampling::ReplicateHalfUp => {
+                    "%weight = scalar.mulf %wx, %wy : f32\n%vxy = scalar.mulf %v, %weight : f32"
+                }
+            },
+        );
+        source = source.replace("@ROUND@", match sampling {
                     RgbSampling::BlackTiesEven => "%rounded = scalar.roundevenf %value : f32",
                     RgbSampling::ReplicateHalfUp => "%half = scalar.constant 0.5 : f32\n%shifted = scalar.addf %value, %half : f32\n%rounded = scalar.floorf %shifted : f32",
                 });
-                let mut model = ModelSession::in_context(&self.context)?;
-                let src = model.allocate(input.bytes())?;
-                let maps = model.allocate(matrices.bytes())?;
-                let dst = model.allocate(output.bytes())?;
-                // Kernel loads are guarded before conversion and bounded to these extents.
-                let kernel =
-                    unsafe { model.compile(&[(&source, Specialization::new("affine_rgb"))])? }[0];
-                unsafe {
-                    model.freeze(&self.context)?.prepare(
-                        &[Command::Dispatch(Dispatch::indices(
-                            kernel,
-                            [0],
-                            [count.div_ceil(256) as u32, 1, 1],
-                            vec![src.read(), maps.read(), dst.write()],
-                        ))],
-                        &[(src, input.clone()), (maps, matrices)],
-                        &[(dst, output)],
-                        3,
-                    )
-                }
-            })
+        let mut model = ModelSession::in_context(&self.context)?;
+        let src = model.allocate(input.bytes())?;
+        let maps = model.allocate(matrices.bytes())?;
+        let dst = model.allocate(output.bytes())?;
+        // Kernel loads are guarded before conversion and bounded to these extents.
+        let kernel = unsafe { model.compile(&[(&source, Specialization::new("affine_rgb"))])? }[0];
+        unsafe {
+            model.freeze(&self.context)?.fragment(
+                &[Command::Dispatch(Dispatch::indices(
+                    kernel,
+                    [0],
+                    [count.div_ceil(256) as u32, 1, 1],
+                    vec![src.read(), maps.read(), dst.write()],
+                ))],
+                &[(src, input.clone()), (maps, matrices)],
+                &[(dst, output)],
+            )
+        }
     }
 
     /// Sample resident RGB into resident crops without a host wait or readback.

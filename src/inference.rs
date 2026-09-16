@@ -271,11 +271,54 @@ impl Future for TensorReadback {
 struct Slot {
     inputs: Vec<DeviceTensor>,
     outputs: Vec<DeviceTensor>,
-    host_inputs: Vec<Option<Buffer>>,
-    host_outputs: Vec<Option<Buffer>>,
-    upload: Option<ExecutableGraph>,
-    download: Option<ExecutableGraph>,
+    upload: Mutex<Option<Arc<Transfer>>>,
+    download: Mutex<Option<Arc<Transfer>>>,
     graph: ExecutableGraph,
+}
+
+struct Transfer {
+    buffers: Vec<Option<Buffer>>,
+    graph: Option<ExecutableGraph>,
+}
+impl Transfer {
+    fn prepare(context: &ModelContext, tensors: &[DeviceTensor], upload: bool) -> Result<Self> {
+        let mut graph = context.runtime.graph();
+        let buffers = tensors
+            .iter()
+            .map(|tensor| {
+                let Some(device) = tensor.binding() else {
+                    return Ok(None);
+                };
+                let host = context
+                    .runtime
+                    .allocate(tensor.desc.bytes(), MemoryPlacement::HostVisible)?;
+                if upload {
+                    graph.copy(device, host.view())?;
+                } else {
+                    graph.copy(host.view(), device)?;
+                }
+                Ok(Some(host))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let graph = if buffers.iter().any(Option::is_some) {
+            Some(graph.prepare()?)
+        } else {
+            None
+        };
+        Ok(Self { buffers, graph })
+    }
+}
+
+/// One executable slot and its actual tensor bindings. Bindings may be slices
+/// of shared scratch or alias each other for in-place execution. No extra model
+/// input/output buffers are introduced by the inference pool.
+pub struct InferenceGraph {
+    /// Fixed-address inputs populated before execution.
+    pub inputs: Vec<DeviceTensor>,
+    /// Fixed-address outputs leased to the caller after submission.
+    pub outputs: Vec<DeviceTensor>,
+    /// The graph which reads inputs and produces outputs.
+    pub graph: ExecutableGraph,
 }
 #[derive(Default)]
 struct SlotState {
@@ -317,82 +360,55 @@ pub struct PreparedModel {
     pool: Arc<Pool>,
 }
 impl PreparedModel {
-    /// Build each slot once. The builder may capture shared immutable weights;
-    /// scratch allocated inside the builder is retained by the returned graph.
-    /// Input/output bindings must use the supplied slot tensors.
+    /// Build each slot once, including its actual input/output bindings. The
+    /// builder may share immutable weights, but must allocate independent
+    /// writable storage for each slot. Host staging is created on first use.
     pub fn prepare(
         context: &ModelContext,
-        inputs: &[TensorDesc],
-        outputs: &[TensorDesc],
         capacity: usize,
-        mut build: impl FnMut(
-            &ModelContext,
-            &[DeviceTensor],
-            &[DeviceTensor],
-        ) -> Result<ExecutableGraph>,
+        mut build: impl FnMut(&ModelContext) -> Result<InferenceGraph>,
     ) -> Result<Self> {
         if capacity == 0 {
             return Err(Error::Message("inference capacity must be nonzero".into()));
         }
-        let mut slots = Vec::with_capacity(capacity);
+        let mut slots: Vec<Slot> = Vec::with_capacity(capacity);
         for _ in 0..capacity {
-            let inputs = inputs
-                .iter()
-                .cloned()
-                .map(|desc| context.allocate(desc))
-                .collect::<Result<Vec<_>>>()?;
-            let outputs = outputs
-                .iter()
-                .cloned()
-                .map(|desc| context.allocate(desc))
-                .collect::<Result<Vec<_>>>()?;
-            let graph = build(context, &inputs, &outputs)?;
+            let InferenceGraph {
+                inputs,
+                outputs,
+                graph,
+            } = build(context)?;
             graph.validate_runtime(&context.runtime)?;
-            let mut upload = context.runtime.graph();
-            let mut download = context.runtime.graph();
-            let host_inputs = inputs
-                .iter()
-                .map(|input| {
-                    let Some(destination) = input.binding() else {
-                        return Ok(None);
-                    };
-                    let host = context
-                        .runtime
-                        .allocate(input.desc.bytes(), MemoryPlacement::HostVisible)?;
-                    upload.copy(destination, host.view())?;
-                    Ok(Some(host))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let host_outputs = outputs
-                .iter()
-                .map(|output| {
-                    let Some(source) = output.binding() else {
-                        return Ok(None);
-                    };
-                    let host = context
-                        .runtime
-                        .allocate(output.desc.bytes(), MemoryPlacement::HostVisible)?;
-                    download.copy(host.view(), source)?;
-                    Ok(Some(host))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let upload = if host_inputs.iter().any(Option::is_some) {
-                Some(upload.prepare()?)
-            } else {
-                None
-            };
-            let download = if host_outputs.iter().any(Option::is_some) {
-                Some(download.prepare()?)
-            } else {
-                None
-            };
+            for tensor in inputs.iter().chain(&outputs) {
+                context.validate(tensor)?;
+                tensor.producer.wait()?;
+                if let Some(view) = tensor.binding()
+                    && slots
+                        .iter()
+                        .flat_map(|slot| slot.inputs.iter().chain(&slot.outputs))
+                        .filter_map(DeviceTensor::binding)
+                        .any(|old| view.overlaps(&old))
+                {
+                    return Err(Error::Message("inference slots share writable IO".into()));
+                }
+            }
+            if let Some(first) = slots.first()
+                && (inputs
+                    .iter()
+                    .map(DeviceTensor::desc)
+                    .ne(first.inputs.iter().map(DeviceTensor::desc))
+                    || outputs
+                        .iter()
+                        .map(DeviceTensor::desc)
+                        .ne(first.outputs.iter().map(DeviceTensor::desc)))
+            {
+                return Err(Error::Message("inference slot descriptors differ".into()));
+            }
             slots.push(Slot {
                 inputs,
                 outputs,
-                host_inputs,
-                host_outputs,
-                upload,
-                download,
+                upload: Mutex::new(None),
+                download: Mutex::new(None),
                 graph,
             });
         }
@@ -562,12 +578,19 @@ impl ModelSlot {
                 "host model input byte count mismatch".into(),
             ));
         }
-        for (bytes, host) in inputs.iter().zip(&slot.host_inputs) {
+        let upload = crate::cached_init(&slot.upload, || {
+            Ok(Arc::new(Transfer::prepare(
+                &pool.context,
+                &slot.inputs,
+                true,
+            )?))
+        })?;
+        for (bytes, host) in inputs.iter().zip(&upload.buffers) {
             if let Some(host) = host {
                 host.map_write()?.copy_from_slice(bytes);
             }
         }
-        let dependencies = if let Some(upload) = &slot.upload {
+        let dependencies = if let Some(upload) = &upload.graph {
             let completion = upload.submit()?;
             pool.state.lock().unwrap_or_else(|e| e.into_inner()).slots[self.lease.index]
                 .completion = Some(completion.clone());
@@ -645,11 +668,18 @@ pub struct Inference {
     _lease: Arc<Lease>,
 }
 impl Inference {
-    /// Queue all outputs into this slot's preallocated host storage.
+    /// Queue all outputs into reusable host storage, allocated on first readback.
     pub fn download(self) -> Result<InferenceReadback> {
         let pool = &self._lease.pool;
         let slot = &pool.slots[self._lease.index];
-        let completion = if let Some(download) = &slot.download {
+        let transfer = crate::cached_init(&slot.download, || {
+            Ok(Arc::new(Transfer::prepare(
+                &pool.context,
+                &slot.outputs,
+                false,
+            )?))
+        })?;
+        let completion = if let Some(download) = &transfer.graph {
             download.submit_after(std::slice::from_ref(&self.completion))?
         } else {
             self.completion.clone()
@@ -659,6 +689,7 @@ impl Inference {
         Ok(InferenceReadback {
             completion,
             lease: self._lease,
+            transfer,
         })
     }
     /// Device outputs, available for dependent submission before completion.
@@ -680,6 +711,7 @@ impl Inference {
 pub struct InferenceReadback {
     completion: Completion,
     lease: Arc<Lease>,
+    transfer: Arc<Transfer>,
 }
 impl InferenceReadback {
     /// Completion of the final device-to-host copy.
@@ -703,7 +735,7 @@ impl InferenceReadback {
             return Err(Error::Message("model output byte count mismatch".into()));
         }
         self.completion.wait()?;
-        for (out, host) in outputs.iter_mut().zip(&slot.host_outputs) {
+        for (out, host) in outputs.iter_mut().zip(&self.transfer.buffers) {
             if let Some(host) = host {
                 out.copy_from_slice(&host.map_read()?);
             }
@@ -711,8 +743,8 @@ impl InferenceReadback {
         Ok(())
     }
     fn bytes(&self) -> Result<Vec<Vec<u8>>> {
-        self.lease.pool.slots[self.lease.index]
-            .host_outputs
+        self.transfer
+            .buffers
             .iter()
             .map(|host| {
                 host.as_ref()

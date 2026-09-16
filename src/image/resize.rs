@@ -108,6 +108,18 @@ impl ImageOps {
         input: &TensorDesc,
         resize: RgbResize,
     ) -> Result<Arc<PreparedModel>> {
+        self.resize_plans
+            .get_or_prepare((input.clone(), resize), || {
+                self.resize_rgb_fragment(input, resize)?.prepare(3)
+            })
+    }
+
+    /// Recordable resize/letterbox for direct composition with a model graph.
+    pub fn resize_rgb_fragment(
+        &self,
+        input: &TensorDesc,
+        resize: RgbResize,
+    ) -> Result<ModelFragment> {
         let shape = input.shape();
         let [left, top, width, height] = resize.region;
         if input.dtype() != DType::U8
@@ -134,91 +146,86 @@ impl ImageOps {
                 "resize exceeds kernel indexing limits".into(),
             ));
         }
-        self.resize_plans
-            .get_or_prepare((input.clone(), resize), || {
-                let mut model = ModelSession::in_context(&self.context)?;
-                let src = model.allocate(input.bytes())?;
-                let tmp = model.allocate(intermediate.bytes())?;
-                let dst = model.allocate(output.bytes())?;
-                let mut commands = Vec::new();
-                for (vertical, from, to, sh, sw, dh, dw, x, y, innerw, innerh, elements) in [
-                    (
-                        true,
-                        src,
-                        tmp,
-                        shape[1],
-                        shape[2],
-                        height,
-                        shape[2],
-                        0,
-                        0,
-                        shape[2],
-                        height,
-                        intermediate.elements(),
-                    ),
-                    (
-                        false,
-                        tmp,
-                        dst,
-                        height,
-                        shape[2],
-                        resize.height,
-                        resize.width,
-                        left,
-                        top,
-                        width,
-                        height,
-                        output.elements(),
-                    ),
-                ] {
-                    let axis = if vertical { innerh } else { innerw };
-                    let (bytes, precision) = coefficients(if vertical { sh } else { sw }, axis);
-                    let table = model.weight(&bytes)?;
-                    let mut source = include_str!("resize_rgb.loom")
-                        .replace("@VERTICAL@", if vertical { "true" } else { "false" });
-                    for (name, value) in [
-                        ("COUNT", elements),
-                        ("LAST", elements - 1),
-                        ("INPUT", shape[0] * sh * sw * 3),
-                        ("INPUT_LAST", shape[0] * sh * sw * 3 - 1),
-                        ("COEFFS", axis * 4),
-                        ("COEFFS_LAST", axis * 4 - 1),
-                        ("AXIS_LAST", if vertical { sh - 1 } else { sw - 1 }),
-                        ("GRID", elements.div_ceil(256)),
-                        ("SH", sh),
-                        ("SW", sw),
-                        ("DH", dh),
-                        ("DW", dw),
-                        ("LEFT", x),
-                        ("TOP", y),
-                        ("RIGHT", x + innerw),
-                        ("BOTTOM", y + innerh),
-                        ("PRECISION", precision),
-                        ("ROUND", 1 << (precision - 1)),
-                    ] {
-                        source = source.replace(&format!("@{name}@"), &value.to_string());
-                    }
-                    // All table entries are generated within the source extent;
-                    // output coordinates are guarded before addressing the table.
-                    let kernel =
-                        unsafe { model.compile(&[(&source, Specialization::new("resize_rgb"))])? }
-                            [0];
-                    commands.push(Command::Dispatch(Dispatch::indices(
-                        kernel,
-                        [0],
-                        [elements.div_ceil(256) as u32, 1, 1],
-                        vec![from.read(), table.read(), to.write()],
-                    )));
-                }
-                unsafe {
-                    model.freeze(&self.context)?.prepare(
-                        &commands,
-                        &[(src, input.clone())],
-                        &[(dst, output)],
-                        3,
-                    )
-                }
-            })
+        let mut model = ModelSession::in_context(&self.context)?;
+        let src = model.allocate(input.bytes())?;
+        let tmp = model.allocate(intermediate.bytes())?;
+        let dst = model.allocate(output.bytes())?;
+        let mut commands = Vec::new();
+        for (vertical, from, to, sh, sw, dh, dw, x, y, innerw, innerh, elements) in [
+            (
+                true,
+                src,
+                tmp,
+                shape[1],
+                shape[2],
+                height,
+                shape[2],
+                0,
+                0,
+                shape[2],
+                height,
+                intermediate.elements(),
+            ),
+            (
+                false,
+                tmp,
+                dst,
+                height,
+                shape[2],
+                resize.height,
+                resize.width,
+                left,
+                top,
+                width,
+                height,
+                output.elements(),
+            ),
+        ] {
+            let axis = if vertical { innerh } else { innerw };
+            let (bytes, precision) = coefficients(if vertical { sh } else { sw }, axis);
+            let table = model.weight(&bytes)?;
+            let mut source = include_str!("resize_rgb.loom")
+                .replace("@VERTICAL@", if vertical { "true" } else { "false" });
+            for (name, value) in [
+                ("COUNT", elements),
+                ("LAST", elements - 1),
+                ("INPUT", shape[0] * sh * sw * 3),
+                ("INPUT_LAST", shape[0] * sh * sw * 3 - 1),
+                ("COEFFS", axis * 4),
+                ("COEFFS_LAST", axis * 4 - 1),
+                ("AXIS_LAST", if vertical { sh - 1 } else { sw - 1 }),
+                ("GRID", elements.div_ceil(256)),
+                ("SH", sh),
+                ("SW", sw),
+                ("DH", dh),
+                ("DW", dw),
+                ("LEFT", x),
+                ("TOP", y),
+                ("RIGHT", x + innerw),
+                ("BOTTOM", y + innerh),
+                ("PRECISION", precision),
+                ("ROUND", 1 << (precision - 1)),
+            ] {
+                source = source.replace(&format!("@{name}@"), &value.to_string());
+            }
+            // All table entries are generated within the source extent;
+            // output coordinates are guarded before addressing the table.
+            let kernel =
+                unsafe { model.compile(&[(&source, Specialization::new("resize_rgb"))])? }[0];
+            commands.push(Command::Dispatch(Dispatch::indices(
+                kernel,
+                [0],
+                [elements.div_ceil(256) as u32, 1, 1],
+                vec![from.read(), table.read(), to.write()],
+            )));
+        }
+        unsafe {
+            model.freeze(&self.context)?.fragment(
+                &commands,
+                &[(src, input.clone())],
+                &[(dst, output)],
+            )
+        }
     }
 
     /// Resize a resident RGB batch; output padding is initialized to black on

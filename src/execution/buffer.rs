@@ -236,10 +236,13 @@ impl BufferView {
         self.retained.push(owner);
         self
     }
-    pub(super) fn overlaps(&self, other: &Self) -> bool {
+    pub(crate) fn overlaps(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.buffer.storage, &other.buffer.storage)
             && self.range.start < other.range.end
             && other.range.start < self.range.end
+    }
+    pub(crate) fn same_region(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.buffer.storage, &other.buffer.storage) && self.range == other.range
     }
     pub(super) fn conflicts(&self, other: &Self) -> bool {
         // Cache maintenance is allocation-wide in the initial shared-memory ABI.

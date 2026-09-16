@@ -55,6 +55,21 @@ impl ImageOps {
         points: &TensorDesc,
         template: &[[f32; 2]],
     ) -> Result<Arc<PreparedModel>> {
+        let key = (
+            points.clone(),
+            template.iter().flatten().map(|v| v.to_bits()).collect(),
+        );
+        self.similarity_plans.get_or_prepare(key, || {
+            self.similarity_2d_fragment(points, template)?.prepare(3)
+        })
+    }
+
+    /// Recordable fit producing forward matrices, inverse matrices and status.
+    pub fn similarity_2d_fragment(
+        &self,
+        points: &TensorDesc,
+        template: &[[f32; 2]],
+    ) -> Result<ModelFragment> {
         let shape = points.shape();
         if points.dtype() != DType::F32
             || points.layout() != Layout::General
@@ -70,24 +85,25 @@ impl ImageOps {
                 "similarity needs F32 [batch,points,2] and a finite template".into(),
             ));
         }
-        let key = (
-            points.clone(),
-            template.iter().flatten().map(|v| v.to_bits()).collect(),
-        );
-        self.similarity_plans.get_or_prepare(key, || {
-            let batch = shape[0];
-            let count = template.len();
-            let elements = points.bytes() / 4;
-            let matrices = TensorDesc::new(DType::F32, vec![batch, 2, 3])?;
-            let status = TensorDesc::new(DType::I32, vec![batch])?;
-            if matrices.elements() > i32::MAX as usize { return Err(Error::Message("similarity output too large".into())); }
-            let q = [0,1].map(|axis| template.iter().map(|p| p[axis]).sum::<f32>() / count as f32);
-            if !q.iter().all(|v| v.is_finite()) { return Err(Error::Message("template mean overflow".into())); }
-            let mut body = String::new();
-            for (i, point) in template.iter().enumerate() {
-                for (axis, letter) in [(0,"x"),(1,"y")] {
-                    let offset = i * points.strides()[1] + axis * points.strides()[2];
-                    writeln!(body, r#"
+        let batch = shape[0];
+        let count = template.len();
+        let elements = points.bytes() / 4;
+        let matrices = TensorDesc::new(DType::F32, vec![batch, 2, 3])?;
+        let status = TensorDesc::new(DType::I32, vec![batch])?;
+        if matrices.elements() > i32::MAX as usize {
+            return Err(Error::Message("similarity output too large".into()));
+        }
+        let q = [0, 1].map(|axis| template.iter().map(|p| p[axis]).sum::<f32>() / count as f32);
+        if !q.iter().all(|v| v.is_finite()) {
+            return Err(Error::Message("template mean overflow".into()));
+        }
+        let mut body = String::new();
+        for (i, point) in template.iter().enumerate() {
+            for (axis, letter) in [(0, "x"), (1, "y")] {
+                let offset = i * points.strides()[1] + axis * points.strides()[2];
+                writeln!(
+                    body,
+                    r#"
     %off{letter}{i} = index.constant {offset} : index
     %raw{letter}{i} = index.add %inputbase, %off{letter}{i} : index
     %at{letter}{i} = index.assume %raw{letter}{i} [range(%raw{letter}{i}, 0, {last})] : index
@@ -95,16 +111,27 @@ impl ImageOps {
     %abs{letter}{i} = scalar.absf %{letter}{i} : f32
     %finite{letter}{i} = scalar.cmpf ole, %abs{letter}{i}, %max : f32
     %sum{letter}{next} = scalar.addf %sum{letter}{i}, %{letter}{i} : f32
-"#, last=elements-1, next=i+1).unwrap();
-                }
-                writeln!(body, "    %xyfinite{i} = scalar.andi %finitex{i}, %finitey{i} : i1\n    %finite{next} = scalar.andi %finite{i}, %xyfinite{i} : i1",next=i+1).unwrap();
-                for (axis, letter) in [(0,"u"),(1,"v")] {
-                    writeln!(body, "    %{letter}{i} = scalar.constant {:.9e} : f32",point[axis]-q[axis]).unwrap();
-                }
+"#,
+                    last = elements - 1,
+                    next = i + 1
+                )
+                .unwrap();
             }
-            writeln!(body,"    %px = scalar.divf %sumx{count}, %n : f32\n    %py = scalar.divf %sumy{count}, %n : f32").unwrap();
-            for i in 0..count {
-                writeln!(body, r#"
+            writeln!(body, "    %xyfinite{i} = scalar.andi %finitex{i}, %finitey{i} : i1\n    %finite{next} = scalar.andi %finite{i}, %xyfinite{i} : i1",next=i+1).unwrap();
+            for (axis, letter) in [(0, "u"), (1, "v")] {
+                writeln!(
+                    body,
+                    "    %{letter}{i} = scalar.constant {:.9e} : f32",
+                    point[axis] - q[axis]
+                )
+                .unwrap();
+            }
+        }
+        writeln!(body,"    %px = scalar.divf %sumx{count}, %n : f32\n    %py = scalar.divf %sumy{count}, %n : f32").unwrap();
+        for i in 0..count {
+            writeln!(
+                body,
+                r#"
     %sx{i} = scalar.subf %x{i}, %px : f32
     %sy{i} = scalar.subf %y{i}, %py : f32
     %xx{i} = scalar.mulf %sx{i}, %sx{i} : f32
@@ -119,25 +146,55 @@ impl ImageOps {
     %yu{i} = scalar.mulf %sy{i}, %u{i} : f32
     %cross{i} = scalar.subf %xv{i}, %yu{i} : f32
     %cross{next}sum = scalar.addf %cross{i}sum, %cross{i} : f32
-"#,next=i+1).unwrap();
-            }
-            let mut source = include_str!("similarity_2d.loom").replace("@BODY@", &body);
-            for (name,value) in [("BATCH",batch),("BATCH_LAST",batch-1),("GRID",batch.div_ceil(64)),
-                ("INPUT",elements),("STRIDE",points.strides()[0]),("COUNT",count),
-                ("OUTPUT",batch*6),("OUTPUT_LAST",batch*6-1)] {
-                source=source.replace(&format!("@{name}@"),&value.to_string());
-            }
-            source=source.replace("@QX@", &format!("{:.9e}",q[0])).replace("@QY@", &format!("{:.9e}",q[1]));
-            let mut model = ModelSession::in_context(&self.context)?;
-            let input = model.allocate(points.bytes())?;
-            let forward = model.allocate(matrices.bytes())?;
-            let inverse = model.allocate(matrices.bytes())?;
-            let flags = model.allocate(status.bytes())?;
-            let kernel = unsafe { model.compile(&[(&source, Specialization::new("similarity_2d"))])? }[0];
-            unsafe { model.freeze(&self.context)?.prepare(&[Command::Dispatch(Dispatch::indices(
-                kernel,[0],[batch.div_ceil(64) as u32,1,1],vec![input.read(),forward.write(),inverse.write(),flags.write()]))],
-                &[(input,points.clone())],&[(forward,matrices.clone()),(inverse,matrices),(flags,status)],3) }
-        })
+"#,
+                next = i + 1
+            )
+            .unwrap();
+        }
+        let mut source = include_str!("similarity_2d.loom").replace("@BODY@", &body);
+        for (name, value) in [
+            ("BATCH", batch),
+            ("BATCH_LAST", batch - 1),
+            ("GRID", batch.div_ceil(64)),
+            ("INPUT", elements),
+            ("STRIDE", points.strides()[0]),
+            ("COUNT", count),
+            ("OUTPUT", batch * 6),
+            ("OUTPUT_LAST", batch * 6 - 1),
+        ] {
+            source = source.replace(&format!("@{name}@"), &value.to_string());
+        }
+        source = source
+            .replace("@QX@", &format!("{:.9e}", q[0]))
+            .replace("@QY@", &format!("{:.9e}", q[1]));
+        let mut model = ModelSession::in_context(&self.context)?;
+        let input = model.allocate(points.bytes())?;
+        let forward = model.allocate(matrices.bytes())?;
+        let inverse = model.allocate(matrices.bytes())?;
+        let flags = model.allocate(status.bytes())?;
+        let kernel =
+            unsafe { model.compile(&[(&source, Specialization::new("similarity_2d"))])? }[0];
+        unsafe {
+            model.freeze(&self.context)?.fragment(
+                &[Command::Dispatch(Dispatch::indices(
+                    kernel,
+                    [0],
+                    [batch.div_ceil(64) as u32, 1, 1],
+                    vec![
+                        input.read(),
+                        forward.write(),
+                        inverse.write(),
+                        flags.write(),
+                    ],
+                ))],
+                &[(input, points.clone())],
+                &[
+                    (forward, matrices.clone()),
+                    (inverse, matrices),
+                    (flags, status),
+                ],
+            )
+        }
     }
 
     /// Fit resident landmarks; no landmark or matrix readback is performed.

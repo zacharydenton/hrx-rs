@@ -1,5 +1,19 @@
 # Validation
 
+## Graph composition 0.7 qualification, 2026-09-16
+
+All-feature CPU and documentation tests, strict all-target Clippy, and 19
+inference hardware tests pass. Native GPU (14), coordinated execution (3), and
+heterogeneous NPU (3) tests pass; execution Miri checks pass 24 tests with three
+intentional-leak cases ignored. Composition tests check retained slots, alias
+validation, exact image-operation results, lazy staging retries, and warm replay
+without intermediate device copies, graph creation or device allocations.
+
+The broader end-to-end performance targets are not met or fully qualified.
+This release does not claim a general latency, throughput, startup or memory
+improvement across applications. Graph-wide scratch reuse and further native
+pipeline integration remain outside this release.
+
 ## Shared inference 0.6 qualification, 2026-09-16
 
 Rust 1.91 all-feature CPU tests and stable strict Clippy pass. GPU-only and NPU
