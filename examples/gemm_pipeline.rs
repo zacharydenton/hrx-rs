@@ -26,17 +26,12 @@ fn gpu_kernel(
     elements: usize,
     bindings: Vec<BindingContract>,
 ) -> Result<GpuKernel> {
-    let compiler = hrx::loom::Compiler::with_options(
-        None,
-        hrx::loom::CompilerOptions {
-            target: runtime.gpu()?.target().clone(),
-            ..Default::default()
-        },
-    )?;
+    let compiler = hrx::loom::Compiler::for_target(None, runtime.gpu()?.target())?;
     let module = compiler.module(source);
     let mut spec = hrx::loom::Specialization::new(symbol);
-    spec.config
-        .extend(config.iter().map(|(k, v)| (k.to_string(), v.clone())));
+    for (key, value) in config {
+        spec.set_config(*key, value.clone());
+    }
     let artifact = module.compile(&spec)?;
     let stream = hrx::gpu::Stream::open()?;
     let raw = unsafe { stream.load_artifact(&artifact) }?;

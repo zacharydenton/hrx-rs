@@ -207,12 +207,8 @@ fn prepared_binding_kernel_and_graph_match() -> hrx::Result<()> {
     let compiler = hrx::loom::Compiler::resolve(None)?;
     let module = compiler.module(include_str!("kernels/euler.loom"));
     let mut request = hrx::loom::Specialization::new("krea2_euler");
-    request
-        .config
-        .insert("krea2.euler.grid_x".into(), "1".into());
-    request
-        .config
-        .insert("krea2.euler.grid_y".into(), "1".into());
+    request.set_config("krea2.euler.grid_x", "1");
+    request.set_config("krea2.euler.grid_y", "1");
     let artifact = module.compile(&request)?;
     #[cfg(feature = "runner")]
     let path = artifact.path().to_path_buf();
@@ -500,22 +496,12 @@ fn a_kernel_cache_loads_once_and_builds_a_batch_together() -> hrx::Result<()> {
     let source = include_str!("kernels/euler.loom");
     let spec = |grid: &str| {
         let mut request = hrx::loom::Specialization::new("krea2_euler");
-        request
-            .config
-            .insert("krea2.euler.grid_x".into(), grid.into());
-        request
-            .config
-            .insert("krea2.euler.grid_y".into(), "1".into());
+        request.set_config("krea2.euler.grid_x", grid);
+        request.set_config("krea2.euler.grid_y", "1");
         request
     };
     let mut stream = Stream::open()?;
-    let kernels = hrx::loom::Kernels::new(hrx::loom::Compiler::shared(
-        None,
-        hrx::loom::CompilerOptions {
-            target: stream.target().clone(),
-            ..Default::default()
-        },
-    )?);
+    let kernels = hrx::loom::Kernels::new(hrx::loom::Compiler::for_stream(None, &stream)?);
     assert!(kernels.is_empty());
 
     // Safety: a checked-in Loom source compiled by this crate's own compiler.
@@ -566,13 +552,7 @@ fn a_kernel_cache_loads_once_and_builds_a_batch_together() -> hrx::Result<()> {
 
     // A second cache over the same compiler still gets its own kernels, and the
     // compiler itself is the same one, not a second resolve of the library.
-    let shared = hrx::loom::Compiler::shared(
-        None,
-        hrx::loom::CompilerOptions {
-            target: stream.target().clone(),
-            ..Default::default()
-        },
-    )?;
+    let shared = hrx::loom::Compiler::for_stream(None, &stream)?;
     assert_eq!(shared.identity(), kernels.compiler().identity());
 
     stream.synchronize()?;
@@ -586,22 +566,16 @@ fn keyed_kernel_hits_skip_the_factory_and_allocate_nothing() -> hrx::Result<()> 
     let source = include_str!("kernels/euler.loom");
     let spec = || {
         let mut spec = hrx::loom::Specialization::new("krea2_euler");
-        spec.config.insert("krea2.euler.grid_x".into(), "1".into());
-        spec.config.insert("krea2.euler.grid_y".into(), "1".into());
+        spec.set_config("krea2.euler.grid_x", "1");
+        spec.set_config("krea2.euler.grid_y", "1");
         spec
     };
     let reports = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let count = reports.clone();
-    let kernels = hrx::loom::Kernels::new(hrx::loom::Compiler::shared(
-        None,
-        hrx::loom::CompilerOptions {
-            target: stream.target().clone(),
-            ..Default::default()
-        },
-    )?)
-    .reporting(move |_| {
-        count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    });
+    let kernels = hrx::loom::Kernels::new(hrx::loom::Compiler::for_stream(None, &stream)?)
+        .reporting(move |_| {
+            count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
     let keyed = kernels.clone().keyed();
     // Failed factories must leave the key available for a retry.
     let error = unsafe {

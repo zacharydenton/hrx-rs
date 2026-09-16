@@ -2,18 +2,26 @@
 //!
 //! Native libraries are verified and loaded on first use. See [`bundle`] for
 //! offline setup.
+mod access_graph;
+pub mod artifacts;
 #[path = "benchmark_statistics.rs"]
 pub mod benchmark;
+mod buffer_pool;
 pub mod bundle;
 mod dependency_frontier;
 mod runtime;
 #[allow(dead_code)]
 mod sys;
 mod target;
+pub use access_graph::{AccessGraph, AccessView};
+pub use buffer_pool::{BufferPool, PooledBuffer};
 pub use runtime::*;
 /// Coordinated GPU/NPU execution with inferred memory dependencies.
 pub mod execution;
-pub use execution::{Completion, Runtime};
+#[cfg(feature = "loom")]
+#[path = "loom/model.rs"]
+pub mod model;
+pub use execution::{Access, Completion, Runtime};
 /// Low-level GPU execution. Kernel dispatch and external memory access require
 /// the caller to establish their safety and synchronization contracts.
 pub mod gpu {

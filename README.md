@@ -89,7 +89,7 @@ Requires Rust 1.88 or later.
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.4", features = ["npu"] }
+hrx = { package = "hrx-rs", version = "0.5", features = ["npu"] }
 ```
 
 ```rust,no_run
@@ -121,14 +121,21 @@ and GPU resource use determine whether execution overlaps. Loading kernels,
 dispatching them, and sharing buffers across streams are unsafe: callers must
 validate code, arguments, memory access, and synchronization.
 
-`hrx::loom::Compiler` compiles Loom in process and caches artifacts. Select the
-compiler target from `Device::target()` when compiling for a GPU.
+When dependencies follow buffer hazards rather than an application-specific
+schedule, use `Stream::access_graph`. Each dispatch binding declares
+`read()`, `write()`, or `read_write()` and HRX infers the minimal byte-range
+frontier. `BufferPool` provides bounded best-fit reuse for temporary device
+allocations; a returned `PooledBuffer` recycles its allocation on drop.
+
+`hrx::loom::Compiler` compiles Loom in process and caches artifacts.
+`Compiler::for_stream` and `Compiler::for_target` select and share the matching
+compiler profile.
 `Compiler::compile_all` runs a batch across `CompilerOptions::workers`
 workspaces and returns results in request order; `Module::compile` is blocking,
 so a single-threaded caller never reaches that bound on its own. Compiler setup
 and source pins are in [patches/loom](patches/loom/README.md).
 
-Resident inference libraries can use `hrx::loom::model::ModelSession` instead
+Resident inference libraries can use `hrx::model::ModelSession` instead
 of rebuilding the same buffer arena and graph cache. It compiles a trusted batch
 of embedded kernels, owns device-local or coherent allocations, infers graph
 dependencies from each binding's declared `Read`, `Write`, or `ReadWrite`
@@ -136,6 +143,14 @@ access, reuses combined readback storage, and compares graph replay with direct
 dispatch. Regions and kernel IDs are session-scoped and checked. Compiling
 native source and recording its memory-access contract are explicit `unsafe`
 boundaries; model parsing and shape validation remain application concerns.
+
+`hrx::artifacts` contains the common model-file boundary. `hf::Resolver` checks
+the standard Hugging Face cache before downloading and supports pinned revisions,
+offline operation, progress policy, and SHA-256 verification. `onnx::Model`
+provides owned graph indexes and checked attributes/tensor decoding without
+exposing protobuf types. `safetensors::FileView` reads or memory maps a file,
+indexes checked tensor ranges, and provides page-advice hooks for large models.
+These dependencies are always available; they are not split behind features.
 
 Two different things are called the target, and they are chosen independently.
 The **profile** target is `hrx::Target` — the architecture a device reports and
@@ -154,7 +169,7 @@ device. You do not need a system ROCm SDK or PyTorch installation: HRX supplies
 its own pinned user-space runtime, including HSA, and the Loom compiler.
 
 ```sh
-cargo install hrx-rs --version 0.4.1 --locked --features runner,npu
+cargo install hrx-rs --version 0.5.0 --locked --features runner,npu
 hrx prepare
 hrx doctor
 ```

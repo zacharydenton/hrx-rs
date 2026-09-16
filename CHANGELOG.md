@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.0 — 2026-09-16
+
+- Add `artifacts::hf` for local-first Hugging Face resolution with offline,
+  progress, revision, and checksum policy; add owned and memory-mapped
+  `artifacts::safetensors` indexing; and add checked `artifacts::onnx` model,
+  node, tensor, shape, axis, stride, and broadcast inspection.
+- Move the resident inference API to `hrx::model` and remove the old
+  `hrx::loom::model` path. `Specialization` fields are private and configured
+  through builders and accessors; no compatibility re-exports are retained.
+- Add `AccessGraph` for byte-range dependency inference in low-level GPU graphs,
+  a bounded RAII `BufferPool`, reusable `ScratchPlanner`, offset transfer and
+  zeroed-allocation helpers, and shared compiler selection by stream or target.
+- Add reusable benchmark distributions and stage timing, including cumulative
+  stage totals. ArcFace, SCRFD, DINOv3, Faceswap, H3, Krea2, hrxdb, and Consum's
+  native AI crate now consume the shared artifact, memory, compiler, and timing
+  facilities instead of carrying their own implementations.
+
+Migration: import resident inference from `hrx::model`; construct and inspect
+`Specialization` with `new`, `set_config`, `replace_config`, `set_symbol`,
+`set_report`, `configuration`, `symbol`, and `report_requested`. ONNX and
+SafeTensors parser types are intentionally not exposed.
+
 ## 0.4.1 — 2026-09-16
 
 - Add `loom::model::ModelSession`, hoisting the resident buffer/kernel/graph

@@ -4,8 +4,8 @@ use std::{fs, num::NonZeroUsize};
 const SOURCE: &str = include_str!("kernels/euler.loom");
 fn spec() -> Specialization {
     let mut s = Specialization::new("krea2_euler");
-    s.config.insert("krea2.euler.grid_x".into(), "1".into());
-    s.config.insert("krea2.euler.grid_y".into(), "1".into());
+    s.set_config("krea2.euler.grid_x", "1");
+    s.set_config("krea2.euler.grid_y", "1");
     s
 }
 #[test]
@@ -18,7 +18,7 @@ fn index_reuse_cache_repair_and_diagnostics() -> hrx::Result<()> {
     let c = Compiler::resolve(None)?;
     let m = c.module(SOURCE);
     let mut request = spec();
-    request.report = true;
+    request.set_report(true);
     let a = m.compile(&request)?;
     assert!(a.bytes().starts_with(b"\x7fELF"));
     assert!(a.report().is_some());
@@ -32,13 +32,11 @@ fn index_reuse_cache_repair_and_diagnostics() -> hrx::Result<()> {
         c.module(&format!("{SOURCE}\n")).key(&request)?
     );
     let mut other = request.clone();
-    other.config.insert("krea2.euler.grid_x".into(), "2".into());
+    other.set_config("krea2.euler.grid_x", "2");
     assert_ne!(m.key(&request)?, m.key(&other)?);
     assert_ne!(a.path(), m.compile(&other)?.path());
     let mut invalid = request.clone();
-    invalid
-        .config
-        .insert("krea2.euler.grid_x".into(), "invalid".into());
+    invalid.set_config("krea2.euler.grid_x", "invalid");
     let e = m.compile(&invalid).unwrap_err().to_string();
     assert!(e.contains("Loom compilation failed"), "{e}");
     assert!(m.compile(&Specialization::new("missing")).is_err());
@@ -68,8 +66,7 @@ fn concurrent_specializations_use_exclusive_workspaces() -> hrx::Result<()> {
                 let m = &m;
                 scope.spawn(move || {
                     let mut s = spec();
-                    s.config
-                        .insert("krea2.euler.grid_x".into(), (i % 4 + 1).to_string());
+                    s.set_config("krea2.euler.grid_x", (i % 4 + 1).to_string());
                     let a = m.compile(&s).unwrap();
                     assert_eq!(a.bytes(), m.compile(&s).unwrap().bytes());
                 })
@@ -140,10 +137,9 @@ fn compile_all_returns_request_order_and_reports_failures_individually() -> hrx:
             let mut s = spec();
             // One request names an export that does not exist.
             if i == 3 {
-                s.symbol = "missing_export".into();
+                s.set_symbol("missing_export");
             } else {
-                s.config
-                    .insert("krea2.euler.grid_x".into(), (i + 1).to_string());
+                s.set_config("krea2.euler.grid_x", (i + 1).to_string());
             }
             s
         })
@@ -161,7 +157,7 @@ fn compile_all_returns_request_order_and_reports_failures_individually() -> hrx:
         let artifact = result.as_ref().expect("independent request succeeds");
         assert!(artifact.bytes().starts_with(b"\x7fELF"));
         // Request order is preserved: slot i holds slot i's specialization.
-        assert_eq!(artifact.symbol(), specs[i].symbol);
+        assert_eq!(artifact.symbol(), specs[i].symbol());
         assert_eq!(artifact.bytes(), m.compile(&specs[i])?.bytes());
     }
     // Distinct configurations really produced distinct artifacts.
