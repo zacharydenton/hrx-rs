@@ -541,6 +541,17 @@ impl Device {
         let (_, target) = open_device(index)?;
         Ok(Self { index, target })
     }
+    /// Open a device only when it reports the architecture required by a workload.
+    pub fn open_for(index: i32, expected: &str) -> Result<Self> {
+        let device = Self::open(index)?;
+        if device.target.as_str() != expected {
+            return Err(Error::Message(format!(
+                "workload requires {expected}, found {}",
+                device.target.as_str()
+            )));
+        }
+        Ok(device)
+    }
     /// Architecture reported by the selected device.
     pub fn target(&self) -> &Target {
         &self.target
@@ -655,6 +666,14 @@ impl Stream {
             _device: self.inner.clone(),
         })
     }
+    /// Allocate device-local storage and enqueue a zero fill over its requested size.
+    pub fn allocate_zeroed(&self, bytes: usize) -> Result<Buffer> {
+        let buffer = self.allocate(bytes)?;
+        if bytes != 0 {
+            self.fill(buffer.try_slice(0, bytes)?, 0)?;
+        }
+        Ok(buffer)
+    }
     /// Import host memory the caller owns as a device-visible buffer, without copying.
     ///
     /// On an APU the GPU and the NPU address the same physical pages, so importing one
@@ -729,6 +748,10 @@ impl Stream {
             )
         }
     }
+    /// Synchronously upload at a checked byte offset into an allocation.
+    pub fn upload_blocking_at(&mut self, dst: &Buffer, offset: usize, bytes: &[u8]) -> Result<()> {
+        self.upload_blocking(dst.try_slice(offset, bytes.len())?, bytes)
+    }
     /// Drain all pending work before a synchronous read and reclaim staging.
     pub fn read_blocking(&mut self, src: View<'_>, bytes: &mut [u8]) -> Result<()> {
         self.owns(src.owner)?;
@@ -749,6 +772,15 @@ impl Stream {
                 "hrx_synchronous_d2h",
             )
         }
+    }
+    /// Synchronously read at a checked byte offset from an allocation.
+    pub fn read_blocking_at(
+        &mut self,
+        src: &Buffer,
+        offset: usize,
+        bytes: &mut [u8],
+    ) -> Result<()> {
+        self.read_blocking(src.try_slice(offset, bytes.len())?, bytes)
     }
     /// Queue a byte-pattern fill over a nonempty view owned by this stream.
     pub fn fill(&self, dst: View<'_>, value: u8) -> Result<()> {
@@ -859,6 +891,10 @@ impl Stream {
                 "enqueue upload",
             )
         }
+    }
+    /// Enqueue an upload at a checked byte offset into an allocation.
+    pub fn upload_at(&mut self, dst: &Buffer, offset: usize, bytes: &[u8]) -> Result<()> {
+        self.upload(dst.try_slice(offset, bytes.len())?, bytes)
     }
     /// Allocate a host-local, device-visible buffer.
     ///

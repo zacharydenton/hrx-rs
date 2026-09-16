@@ -76,8 +76,8 @@ fn keyed_pending_hits_preserve_batch_building() -> hrx::Result<()> {
     let cache = hrx::loom::Kernels::new(compiler).keyed();
     let request = || {
         let mut spec = hrx::loom::Specialization::new("krea2_euler");
-        spec.config.insert("krea2.euler.grid_x".into(), "1".into());
-        spec.config.insert("krea2.euler.grid_y".into(), "1".into());
+        spec.set_config("krea2.euler.grid_x", "1");
+        spec.set_config("krea2.euler.grid_y", "1");
         Ok((include_str!("kernels/euler.loom"), spec))
     };
     let first = unsafe { cache.request_or_insert_with(&stream, 0, |_| request()) }?;
@@ -120,8 +120,8 @@ fn direct_requests_publish_once_to_the_pending_batch() -> hrx::Result<()> {
         reported.fetch_add(1, Ordering::Relaxed);
     });
     let mut spec = hrx::loom::Specialization::new("krea2_euler");
-    spec.config.insert("krea2.euler.grid_x".into(), "1".into());
-    spec.config.insert("krea2.euler.grid_y".into(), "1".into());
+    spec.set_config("krea2.euler.grid_x", "1");
+    spec.set_config("krea2.euler.grid_y", "1");
     let source = include_str!("kernels/euler.loom");
     let pending = cache.request(source, &spec)?;
     unsafe { cache.get(&stream, source, &spec) }?;

@@ -9,8 +9,6 @@
     clippy::all
 )]
 mod ffi;
-/// Resident compiled-kernel sessions with reusable buffers and graphs.
-pub mod model;
 mod native;
 use crate::{
     Error, Result,
@@ -89,6 +87,21 @@ impl Default for CompilerOptions {
         }
     }
 }
+impl CompilerOptions {
+    /// Default compiler limits for an explicit device target.
+    #[must_use]
+    pub fn for_target(target: &crate::Target) -> Self {
+        Self {
+            target: target.clone(),
+            ..Self::default()
+        }
+    }
+    /// Default compiler limits targeting the device behind `stream`.
+    #[must_use]
+    pub fn for_stream(stream: &crate::Stream) -> Self {
+        Self::for_target(stream.target())
+    }
+}
 struct Inner {
     // Indexes are released before prepared compiler state when the session ends.
     modules: Mutex<HashMap<String, Arc<ModuleData>>>,
@@ -125,6 +138,14 @@ impl Compiler {
     /// To upgrade a loaded library, select a new path or restart the process.
     pub fn resolve(library: Option<&Path>) -> Result<Self> {
         Self::with_options(library, CompilerOptions::default())
+    }
+    /// Resolve the shared compiler configured for a stream's actual device target.
+    pub fn for_stream(library: Option<&Path>, stream: &crate::Stream) -> Result<Self> {
+        Self::shared(library, CompilerOptions::for_stream(stream))
+    }
+    /// Resolve the shared compiler configured for an explicit device target.
+    pub fn for_target(library: Option<&Path>, target: &crate::Target) -> Result<Self> {
+        Self::shared(library, CompilerOptions::for_target(target))
     }
     /// The compiler for this library, target and limits, resolved once per process.
     ///
@@ -378,11 +399,11 @@ pub struct Module {
 #[derive(Clone, Debug, Default)]
 pub struct Specialization {
     /// Export/root symbol to compile.
-    pub symbol: String,
+    symbol: String,
     /// Fully qualified configuration keys and Loom value spellings.
-    pub config: BTreeMap<String, String>,
+    config: BTreeMap<String, String>,
     /// Request a native resource manifest in the resulting artifact.
-    pub report: bool,
+    report: bool,
 }
 impl Specialization {
     /// Select an export with no configuration overrides.
@@ -391,6 +412,53 @@ impl Specialization {
             symbol: symbol.into(),
             ..Self::default()
         }
+    }
+    /// Set one fully-qualified Loom configuration value.
+    #[must_use]
+    pub fn with_config(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.config.insert(key.into(), value.into());
+        self
+    }
+    /// Set one fully-qualified Loom configuration value in place.
+    pub fn set_config(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
+        self.config.insert(key.into(), value.into());
+        self
+    }
+    /// Select an export/root symbol in place.
+    pub fn set_symbol(&mut self, symbol: impl Into<String>) -> &mut Self {
+        self.symbol = symbol.into();
+        self
+    }
+    /// Replace all fully-qualified Loom configuration values.
+    pub fn replace_config(&mut self, config: BTreeMap<String, String>) -> &mut Self {
+        self.config = config;
+        self
+    }
+    /// Request or suppress the compiler resource report.
+    #[must_use]
+    pub fn with_report(mut self, report: bool) -> Self {
+        self.report = report;
+        self
+    }
+    /// Request or suppress the compiler resource report in place.
+    pub fn set_report(&mut self, report: bool) -> &mut Self {
+        self.report = report;
+        self
+    }
+    /// Export/root symbol selected by this specialization.
+    #[must_use]
+    pub fn symbol(&self) -> &str {
+        &self.symbol
+    }
+    /// Fully-qualified compiler configuration.
+    #[must_use]
+    pub fn configuration(&self) -> &BTreeMap<String, String> {
+        &self.config
+    }
+    /// Whether a compiler resource report was requested.
+    #[must_use]
+    pub fn report_requested(&self) -> bool {
+        self.report
     }
     fn validate(&self) -> Result<()> {
         let valid = |s: &str| {
@@ -607,8 +675,8 @@ mod tests {
 
     fn euler_spec() -> Specialization {
         let mut spec = Specialization::new("krea2_euler");
-        spec.config.insert("krea2.euler.grid_x".into(), "1".into());
-        spec.config.insert("krea2.euler.grid_y".into(), "1".into());
+        spec.set_config("krea2.euler.grid_x", "1");
+        spec.set_config("krea2.euler.grid_y", "1");
         spec
     }
 
@@ -657,9 +725,7 @@ mod tests {
         let spec = euler_spec();
         let pending = kernels.request(source, &spec)?;
         let mut other_spec = spec.clone();
-        other_spec
-            .config
-            .insert("krea2.euler.grid_x".into(), "2".into());
+        other_spec.set_config("krea2.euler.grid_x", "2");
         let other_key = kernels.compiler().module(source).key(&other_spec)?;
         let outcome = kernels.0.build_with(1, |_| {
             // Another caller requests both the active kernel and a new one
@@ -797,8 +863,8 @@ mod tests {
         assert!(compiler.0.modules.lock().unwrap().is_empty());
         assert_eq!(first.identity(), first_id);
         let mut spec = Specialization::new("krea2_euler");
-        spec.config.insert("krea2.euler.grid_x".into(), "1".into());
-        spec.config.insert("krea2.euler.grid_y".into(), "1".into());
+        spec.set_config("krea2.euler.grid_x", "1");
+        spec.set_config("krea2.euler.grid_y", "1");
         assert!(!first.compile(&spec)?.bytes().is_empty());
         Ok(())
     }

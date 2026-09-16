@@ -216,7 +216,7 @@ fn dispatch(args: &[String]) -> Result<()> {
                 let (k, v) = arg
                     .split_once('=')
                     .ok_or_else(|| Error::Message("config must be key=value".into()))?;
-                request.config.insert(k.into(), v.into());
+                request.set_config(k, v);
             }
             println!("{}", module.compile(&request)?.path().display());
         }

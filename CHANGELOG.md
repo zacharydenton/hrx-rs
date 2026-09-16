@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0 — 2026-09-16
+
+Migration: import resident inference from `hrx::model`; construct and inspect
+`Specialization` with `new`, `set_config`, `replace_config`, `set_symbol`,
+`set_report`, `configuration`, `symbol`, and `report_requested`. ONNX and
+SafeTensors parser types are intentionally not exposed.
+
 ## 0.4.1 — 2026-09-16
 
 - Add `loom::model::ModelSession`, hoisting the resident buffer/kernel/graph

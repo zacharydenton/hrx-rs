@@ -73,17 +73,11 @@ fn main() -> Result<()> {
     assert_eq!(check, [0x3c; 16]);
     drop(weights);
 
-    let compiler = hrx::loom::Compiler::with_options(
-        None,
-        hrx::loom::CompilerOptions {
-            target: stream.target().clone(),
-            ..Default::default()
-        },
-    )?;
+    let compiler = hrx::loom::Compiler::for_stream(None, &stream)?;
     let module = compiler.module(include_str!("../tests/kernels/euler.loom"));
     let mut spec = hrx::loom::Specialization::new("krea2_euler");
-    spec.config.insert("krea2.euler.grid_x".into(), "1".into());
-    spec.config.insert("krea2.euler.grid_y".into(), "1".into());
+    spec.set_config("krea2.euler.grid_x", "1");
+    spec.set_config("krea2.euler.grid_y", "1");
     let artifact = module.compile(&spec)?;
     // This repository owns the source; use its exact dimensions and scalar layout.
     let kernel = unsafe { stream.load_artifact(&artifact)? };

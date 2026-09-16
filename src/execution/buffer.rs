@@ -32,6 +32,7 @@ pub(super) struct HostState {
 pub(super) enum Engine {
     Host,
     Gpu,
+    #[cfg_attr(not(feature = "npu"), allow(dead_code))]
     Npu,
 }
 pub(super) struct Visibility {

@@ -60,21 +60,11 @@ fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
             },
         )
     }?;
-    let compiler = hrx::loom::Compiler::with_options(
-        None,
-        hrx::loom::CompilerOptions {
-            target: runtime.gpu()?.target().clone(),
-            ..Default::default()
-        },
-    )?;
+    let compiler = hrx::loom::Compiler::for_target(None, runtime.gpu()?.target())?;
     let module = compiler.module(include_str!("kernels/euler.loom"));
     let mut specialization = hrx::loom::Specialization::new("krea2_euler");
-    specialization
-        .config
-        .insert("krea2.euler.grid_x".into(), (elements / 256).to_string());
-    specialization
-        .config
-        .insert("krea2.euler.grid_y".into(), "1".into());
+    specialization.set_config("krea2.euler.grid_x", (elements / 256).to_string());
+    specialization.set_config("krea2.euler.grid_y", "1");
     let artifact = module.compile(&specialization)?;
     let stream = hrx::gpu::Stream::open()?;
     let raw = unsafe { stream.load_artifact(&artifact) }?;

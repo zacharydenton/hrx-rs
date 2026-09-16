@@ -6,8 +6,8 @@
 //! shape validation and kernel construction remain with the caller.
 //!
 //! ```no_run
-//! use hrx::loom::{
-//!     Specialization,
+//! use hrx::{
+//!     loom::Specialization,
 //!     model::{Command, Dispatch, ModelSession},
 //! };
 //!
@@ -33,15 +33,13 @@
 //! }
 //! ```
 
-use super::{Compiler, CompilerOptions, Kernels, Specialization};
-pub use crate::execution::Access;
+use crate::loom::{Compiler, CompilerOptions, Kernels, Specialization};
 use crate::{
-    Buffer, Constants, Device, Error, GraphExec, Kernel, Node, Result, Stream, Target,
-    benchmark::percentile,
-    dependency_frontier::{Frontier, Use},
+    Access, Buffer, Constants, Device, Error, GraphExec, Kernel, Result, Stream, Target,
+    benchmark::Distribution,
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::atomic::{AtomicU64, Ordering},
     time::Instant,
 };
@@ -263,24 +261,18 @@ impl ModelSession {
     /// Open a device and its shared Loom compiler using the device's actual target.
     pub fn open(index: i32) -> Result<Self> {
         let device = Device::open(index)?;
-        let options = CompilerOptions {
-            target: device.target().clone(),
-            ..CompilerOptions::default()
-        };
+        let stream = device.stream()?;
+        let options = CompilerOptions::for_stream(&stream);
         let compiler = Compiler::shared(None, options)?;
-        Self::with_compiler(device, compiler)
+        Self::with_stream(stream, compiler)
     }
 
     /// Open a device only when it reports the architecture validated by a model.
     pub fn open_for(index: i32, expected_target: &str) -> Result<Self> {
-        let session = Self::open(index)?;
-        if session.target().as_str() != expected_target {
-            return Err(Error::Message(format!(
-                "model kernels require {expected_target}, found {}",
-                session.target().as_str()
-            )));
-        }
-        Ok(session)
+        let device = Device::open_for(index, expected_target)?;
+        let stream = device.stream()?;
+        let compiler = Compiler::for_stream(None, &stream)?;
+        Self::with_stream(stream, compiler)
     }
 
     /// Create a session with an explicitly selected compiler.
@@ -295,7 +287,17 @@ impl ModelSession {
                 device.target().as_str()
             )));
         }
-        let stream = device.stream()?;
+        Self::with_stream(device.stream()?, compiler)
+    }
+
+    fn with_stream(stream: Stream, compiler: Compiler) -> Result<Self> {
+        if compiler.target() != stream.target() {
+            return Err(Error::Message(format!(
+                "compiler target {} does not match device target {}",
+                compiler.target().as_str(),
+                stream.target().as_str()
+            )));
+        }
         Ok(Self {
             id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             stream,
@@ -408,18 +410,11 @@ impl ModelSession {
             )));
         }
         let prepared = self.prepare(commands)?;
-        let mut graph = self.stream.graph()?;
-        let mut frontier = Frontier::default();
-        let mut nodes: Vec<Node> = Vec::with_capacity(prepared.len());
-        for (index, command) in prepared.iter().enumerate() {
-            let dependencies = frontier.dependencies(index, command.uses());
-            let after = dependencies
-                .into_iter()
-                .map(|dependency| nodes[dependency])
-                .collect::<Vec<_>>();
-            let node = match command {
+        let mut graph = self.stream.access_graph()?;
+        for command in &prepared {
+            match command {
                 PreparedCommand::Fill { region, value } => {
-                    graph.fill(&after, self.view(*region)?, *value)?
+                    graph.fill(self.view(*region)?, *value)?;
                 }
                 PreparedCommand::Dispatch {
                     kernel,
@@ -428,21 +423,22 @@ impl ModelSession {
                     bindings,
                 } => {
                     let kernel = self.kernel(*kernel)?;
-                    let views = self.views(bindings)?;
+                    let views = bindings
+                        .iter()
+                        .map(|binding| Ok(self.view(binding.region)?.access(binding.access)))
+                        .collect::<Result<Vec<_>>>()?;
                     // Safety: required from this method's caller for this dispatch.
                     unsafe {
                         graph.dispatch(
-                            &after,
                             kernel,
                             *grid,
                             kernel.info().workgroup_size,
                             constants,
                             &views,
                         )?
-                    }
+                    };
                 }
-            };
-            nodes.push(node);
+            }
         }
         let executable = graph.finish()?;
         self.graphs.insert(
@@ -647,8 +643,8 @@ impl ModelSession {
         let [graph, direct] = times;
         Ok(ForwardTimings {
             samples,
-            graph: Distribution::from_samples(graph),
-            direct: Distribution::from_samples(direct),
+            graph: Distribution::from_samples(graph)?,
+            direct: Distribution::from_samples(direct)?,
         })
     }
 
@@ -692,7 +688,7 @@ impl ModelSession {
                 self.synchronize()?;
                 times.push(start.elapsed().as_secs_f64() * 1_000.0);
             }
-            distributions.push(Distribution::from_samples(times));
+            distributions.push(Distribution::from_samples(times)?);
         }
         Ok(distributions)
     }
@@ -817,25 +813,119 @@ impl ModelSession {
     }
 }
 
-impl PreparedCommand {
-    fn uses(&self) -> Vec<Use> {
-        match self {
-            Self::Fill { region, .. } => vec![Use::new(*region, Access::Write)],
-            Self::Dispatch { bindings, .. } => bindings
-                .iter()
-                .map(|binding| Use::new(binding.region, binding.access))
-                .collect(),
+#[derive(Clone, Copy, Debug)]
+struct ScratchLifetime {
+    bytes: usize,
+    first: usize,
+    last: usize,
+}
+
+/// Plans best-fit reuse of temporary allocations from their inclusive lifetimes.
+#[derive(Clone, Debug, Default)]
+pub struct ScratchPlanner<K> {
+    values: BTreeMap<K, ScratchLifetime>,
+}
+
+impl<K: Clone + Ord> ScratchPlanner<K> {
+    /// Create an empty planner.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            values: BTreeMap::new(),
         }
+    }
+
+    /// Add a value alive from `first` through `last`, inclusive.
+    pub fn insert(&mut self, key: K, bytes: usize, first: usize, last: usize) -> Result<()> {
+        if bytes == 0 {
+            return Err(Error::Message("scratch values must be nonempty".into()));
+        }
+        if first > last {
+            return Err(Error::Message(
+                "scratch lifetime ends before it begins".into(),
+            ));
+        }
+        if self
+            .values
+            .insert(key, ScratchLifetime { bytes, first, last })
+            .is_some()
+        {
+            return Err(Error::Message("duplicate scratch value".into()));
+        }
+        Ok(())
+    }
+
+    /// Assign values to reusable slots, preferring the smallest fitting free slot.
+    pub fn finish(self) -> ScratchPlan<K> {
+        let mut values = self.values.into_iter().collect::<Vec<_>>();
+        values.sort_by(|(left_key, left), (right_key, right)| {
+            (left.first, std::cmp::Reverse(left.bytes), left_key).cmp(&(
+                right.first,
+                std::cmp::Reverse(right.bytes),
+                right_key,
+            ))
+        });
+        let mut active = Vec::<(usize, usize)>::new();
+        let mut free = BTreeSet::<usize>::new();
+        let mut slots = Vec::<usize>::new();
+        let mut assignments = BTreeMap::new();
+        for (key, lifetime) in values {
+            active.retain(|&(last, slot)| {
+                if last < lifetime.first {
+                    free.insert(slot);
+                    false
+                } else {
+                    true
+                }
+            });
+            let slot = free
+                .iter()
+                .copied()
+                .filter(|&slot| slots[slot] >= lifetime.bytes)
+                .min_by_key(|&slot| slots[slot])
+                .map_or_else(
+                    || {
+                        slots.push(lifetime.bytes);
+                        slots.len() - 1
+                    },
+                    |slot| {
+                        free.remove(&slot);
+                        slot
+                    },
+                );
+            assignments.insert(key, slot);
+            active.push((lifetime.last, slot));
+        }
+        ScratchPlan { assignments, slots }
     }
 }
 
-impl Use {
-    fn new(region: Region, access: Access) -> Self {
-        Self {
-            allocation: region.allocation,
-            range: region.offset..region.offset + region.bytes,
-            access,
-        }
+/// Allocation sizes and value-to-slot assignments produced by [`ScratchPlanner`].
+#[derive(Clone, Debug)]
+pub struct ScratchPlan<K> {
+    assignments: BTreeMap<K, usize>,
+    slots: Vec<usize>,
+}
+
+impl<K: Ord> ScratchPlan<K> {
+    /// Reusable allocation sizes, indexed by slot.
+    #[must_use]
+    pub fn slots(&self) -> &[usize] {
+        &self.slots
+    }
+
+    /// Slot assigned to a value.
+    pub fn slot(&self, key: &K) -> Result<usize> {
+        self.assignments
+            .get(key)
+            .copied()
+            .ok_or_else(|| Error::Message("scratch value was not planned".into()))
+    }
+
+    /// All assignments in key order.
+    #[must_use]
+    pub fn assignments(&self) -> &BTreeMap<K, usize> {
+        &self.assignments
     }
 }
 
@@ -848,25 +938,6 @@ pub struct ForwardTimings {
     pub graph: Distribution,
     /// Equivalent direct stream dispatch timings.
     pub direct: Distribution,
-}
-
-/// Millisecond distribution measured by the host around submission and completion.
-#[derive(Clone, Copy, Debug, serde::Serialize)]
-pub struct Distribution {
-    /// Nearest-rank 50th percentile.
-    pub median_ms: f64,
-    /// Nearest-rank 95th percentile.
-    pub p95_ms: f64,
-}
-
-impl Distribution {
-    fn from_samples(mut samples: Vec<f64>) -> Self {
-        samples.sort_by(f64::total_cmp);
-        Self {
-            median_ms: percentile(&samples, 50),
-            p95_ms: percentile(&samples, 95),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -895,8 +966,21 @@ mod tests {
 
     #[test]
     fn distributions_use_nearest_rank_quantiles() {
-        let distribution = Distribution::from_samples((1..=100).map(f64::from).collect());
+        let distribution = Distribution::from_samples((1..=100).map(f64::from).collect()).unwrap();
         assert_eq!(distribution.median_ms, 50.0);
         assert_eq!(distribution.p95_ms, 95.0);
+    }
+
+    #[test]
+    fn scratch_slots_reuse_only_after_the_last_use() {
+        let mut planner = ScratchPlanner::new();
+        planner.insert("a", 8, 0, 1).unwrap();
+        planner.insert("b", 16, 1, 2).unwrap();
+        planner.insert("c", 4, 2, 3).unwrap();
+        planner.insert("d", 7, 3, 3).unwrap();
+        let plan = planner.finish();
+        assert_ne!(plan.slot(&"a").unwrap(), plan.slot(&"b").unwrap());
+        assert_eq!(plan.slot(&"a").unwrap(), plan.slot(&"c").unwrap());
+        assert_eq!(plan.slot(&"b").unwrap(), plan.slot(&"d").unwrap());
     }
 }
