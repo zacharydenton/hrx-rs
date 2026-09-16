@@ -44,6 +44,10 @@ use std::{
     time::Instant,
 };
 
+#[path = "model/definition.rs"]
+mod definition;
+pub use definition::ModelDefinition;
+
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A checked byte region in one allocation owned by a [`ModelSession`].
@@ -239,6 +243,7 @@ enum Placement {
 struct Allocation {
     buffer: Buffer,
     placement: Placement,
+    immutable: bool,
 }
 
 /// A resident model's exclusive stream, storage, kernels and reusable graphs.
@@ -258,6 +263,17 @@ pub struct ModelSession {
 }
 
 impl ModelSession {
+    /// Prepare on a shared context's GPU, compiler and allocation budget.
+    /// The native loading stream charges weights, scratch and staging before
+    /// allocation; freezing into the same context does not charge weights twice.
+    pub fn in_context(context: &crate::inference::ModelContext) -> Result<Self> {
+        let mut stream = Device::open(context.runtime().gpu()?.index())?.stream()?;
+        if let Some(budget) = context.runtime().memory_budget() {
+            stream = stream.with_memory_budget(budget.clone());
+        }
+        Self::with_stream(stream, context.compiler()?)
+    }
+
     /// Open a device and its shared Loom compiler using the device's actual target.
     pub fn open(index: i32) -> Result<Self> {
         let device = Device::open(index)?;
@@ -333,7 +349,11 @@ impl ModelSession {
             Placement::Shared => self.stream.allocate_shared(bytes)?,
         };
         let allocation = self.allocations.len();
-        self.allocations.push(Allocation { buffer, placement });
+        self.allocations.push(Allocation {
+            buffer,
+            placement,
+            immutable: false,
+        });
         Ok(Region {
             session: self.id,
             allocation,
@@ -346,6 +366,7 @@ impl ModelSession {
     pub fn weight(&mut self, bytes: &[u8]) -> Result<Region> {
         let region = self.allocate(bytes.len())?;
         self.upload(region, bytes)?;
+        self.allocations[region.allocation].immutable = true;
         Ok(region)
     }
 

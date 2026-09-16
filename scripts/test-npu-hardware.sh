@@ -9,7 +9,7 @@ work_dir="${HRX_NPU_WORK:-$repo_dir/artifacts/npu-validation}"
 mkdir -p "$work_dir"
 work_dir="$(cd "$work_dir" && pwd)"
 cd "$repo_dir"
-base_dir="$(cargo run --quiet --features runner --bin hrx -- prepare)"
+base_dir="$(cargo run --quiet --bin hrx -- prepare)"
 python3 scripts/build-interop-overlay.py "$HRX_NATIVE_BUILD" "$work_dir/runtime"
 python3 - "$base_dir" "$work_dir/runtime" <<'PY'
 from pathlib import Path
@@ -23,9 +23,9 @@ PY
 bash scripts/build-npu-shim.sh "$work_dir/npu-runtime"
 export HRX_RUNTIME_DIR="$work_dir/runtime"
 export HRX_NPU_RUNTIME_DIR="$work_dir/npu-runtime"
-HRX_TEST_NPU_DIR="$(cargo run --quiet --release --features npu-compile --example compile_npu -- "$HRX_NPU_TOOLCHAIN" 262144)"
+HRX_TEST_NPU_DIR="$(cargo run --quiet --release --features npu --example compile_npu -- "$HRX_NPU_TOOLCHAIN" 262144)"
 export HRX_TEST_NPU_DIR
-cargo run --quiet --features runner,npu --bin hrx -- doctor
+cargo run --quiet --features npu --bin hrx -- doctor
 cargo test --release --all-features -- --ignored --test-threads=1
 
 if [[ "${HRX_QUALIFY_PERFORMANCE:-0}" == 1 ]]; then

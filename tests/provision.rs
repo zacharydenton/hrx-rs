@@ -113,7 +113,6 @@ fn unchecked_manifests_are_rejected_before_any_installation_io() {
     manifest.archive_sha256 = "../escaped".into();
     assert!(prepare(&manifest, &dir.path().join("uncreated"), false).is_err());
 }
-#[cfg(feature = "runner")]
 #[test]
 fn separate_processes_provision_the_same_cache() {
     let dir = tempfile::tempdir().unwrap();
@@ -199,7 +198,7 @@ fn separate_processes_provision_the_same_cache() {
     );
 }
 
-#[cfg(all(feature = "runner", feature = "npu"))]
+#[cfg(feature = "npu")]
 #[test]
 fn prepare_reports_gpu_directory_when_npu_provisioning_fails() {
     for offline in [false, true] {

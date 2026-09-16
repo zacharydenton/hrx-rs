@@ -29,6 +29,97 @@ unsafe impl std::alloc::GlobalAlloc for CountAllocations {
 static ALLOCATOR: CountAllocations = CountAllocations;
 
 #[test]
+#[ignore = "requires XDNA2 and HRX_TEST_NPU_DIR passthrough artifacts"]
+fn npu_allocations_and_instruction_leases_respect_shared_budgets() -> Result<()> {
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("HRX_TEST_NPU_DIR")
+            .ok_or_else(|| hrx::Error::Message("set HRX_TEST_NPU_DIR".into()))?,
+    );
+    let instructions = std::fs::read(directory.join("x.bin"))?;
+    let manager = hrx::residency::ResidencyManager::new(instructions.len() + 4096)?;
+    let runtime = Runtime::with_options(hrx::execution::RuntimeOptions {
+        memory_budget: Some(manager.budget()),
+        ..Default::default()
+    })?;
+    let contract = || KernelContract {
+        bindings: [
+            (1 << 20, Access::Read),
+            (4096, Access::Read),
+            (1 << 20, Access::Write),
+        ]
+        .into_iter()
+        .map(|(bytes, access)| BindingContract {
+            bytes,
+            access,
+            alignment: 4,
+            layout: "bf16 contiguous".into(),
+        })
+        .collect(),
+        constants: vec![],
+    };
+    let program = unsafe { runtime.npu(0)?.load_program(directory.join("x.xclbin")) }?;
+    let kernel = unsafe { program.kernel(&instructions, contract()) }?;
+    assert_eq!(manager.statistics().reserved_bytes, instructions.len());
+    let buffer = runtime.allocate(4096, MemoryPlacement::NpuLocal(program.clone()))?;
+    assert_eq!(
+        manager.statistics().reserved_bytes,
+        instructions.len() + 4096
+    );
+    assert!(
+        runtime
+            .allocate(1, MemoryPlacement::NpuLocal(program.clone()))
+            .is_err()
+    );
+    assert!(matches!(
+        unsafe { program.kernel(&instructions, contract()) },
+        Err(hrx::Error::Busy(_))
+    ));
+    // The process-wide image cache must not inherit another runtime's budget.
+    let tiny = hrx::residency::ResidencyManager::new(instructions.len() - 1)?;
+    let other = Runtime::with_options(hrx::execution::RuntimeOptions {
+        memory_budget: Some(tiny.budget()),
+        ..Default::default()
+    })?;
+    let other_program = unsafe { other.npu(0)?.load_program(directory.join("x.xclbin")) }?;
+    assert!(unsafe { other_program.kernel(&instructions, contract()) }.is_err());
+    assert_eq!(tiny.statistics().reserved_bytes, 0);
+    let retained_kernel = kernel.clone();
+    drop((kernel, program, buffer, runtime, other_program, other));
+    assert_eq!(manager.statistics().reserved_bytes, instructions.len());
+    drop(retained_kernel);
+    assert_eq!(manager.statistics().reserved_bytes, 0);
+
+    // Direct native clients use the same ceiling. A sub-BO retains the whole
+    // allocation after both its root wrapper and context owner are dropped.
+    let context =
+        unsafe { hrx::npu::raw::Context::new(0, directory.join("x.xclbin").to_str().unwrap()) }
+            .map_err(hrx::Error::Message)?
+            .with_memory_budget(manager.budget());
+    let group = context.group_id(3).map_err(hrx::Error::Message)?;
+    let root = context
+        .alloc_bo(
+            instructions.len() + 4096,
+            hrx::npu::raw::BoKind::HostOnly,
+            group,
+        )
+        .map_err(hrx::Error::Message)?;
+    assert!(
+        context
+            .alloc_bo(1, hrx::npu::raw::BoKind::HostOnly, group)
+            .is_err()
+    );
+    let view = root.sub(1024, 1024).map_err(hrx::Error::Message)?;
+    drop((root, context));
+    assert_eq!(
+        manager.statistics().reserved_bytes,
+        instructions.len() + 4096
+    );
+    drop(view);
+    assert_eq!(manager.statistics().reserved_bytes, 0);
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires gfx1151, XDNA2, shared ABI 1, and HRX_TEST_NPU_DIR passthrough artifacts"]
 fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
     let directory =

@@ -3,7 +3,6 @@
 //! Programs are explicitly trusted native code. Buffers and execution are managed
 //! through [`crate::execution`]; the [`raw`] API requires external synchronization.
 
-#[cfg(feature = "npu-compile")]
 pub mod compiler;
 pub mod provision;
 pub mod raw;
@@ -36,6 +35,7 @@ fn load_shim_from(directory: &Path) -> Result<libloading::Library> {
 #[derive(Clone)]
 pub struct NpuProgram {
     pub(crate) inner: Arc<ProgramInner>,
+    pub(crate) budget: Option<crate::residency::MemoryBudget>,
 }
 pub(crate) struct ProgramInner {
     pub context: raw::Context,
@@ -62,7 +62,10 @@ impl NpuProgram {
             .get(&(device, identity.clone()))
             .and_then(std::sync::Weak::upgrade)
         {
-            return Ok(Self { inner });
+            return Ok(Self {
+                inner,
+                budget: None,
+            });
         }
         programs.retain(|_, program| program.strong_count() != 0);
         let path_str = path
@@ -78,13 +81,18 @@ impl NpuProgram {
             identity: identity.clone(),
         });
         programs.insert((device, identity), Arc::downgrade(&inner));
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            budget: None,
+        })
     }
     /// Content identity of the resident xclbin.
     pub fn identity(&self) -> &str {
         &self.inner.identity
     }
     /// Bind a fixed instruction specialization to this image and contract.
+    /// Instructions inherit the loading runtime's optional allocation budget;
+    /// native runs retain that charge until completion or quarantine teardown.
     /// # Safety
     /// Instructions must match this exact image and target. All accesses must
     /// remain within the contract, with the declared read/write modes, for every
@@ -106,11 +114,17 @@ impl NpuProgram {
             ));
         }
         let context = &self.inner.context;
+        let reservation = self
+            .budget
+            .as_ref()
+            .map(|budget| budget.reserve(instructions.len()))
+            .transpose()?;
         let insts = context
-            .alloc_bo(
+            .alloc_bo_reserved(
                 instructions.len(),
                 raw::BoKind::Cacheable,
                 context.group_id(1).map_err(Error::Message)?,
+                reservation,
             )
             .map_err(Error::Message)?;
         insts.write(instructions).map_err(Error::Message)?;

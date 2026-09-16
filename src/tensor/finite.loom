@@ -1,0 +1,47 @@
+amdgpu.target<gfx11-generic> @finite_target {subgroup_size = 32}
+kernel.def target(@finite_target) export("finite") @finite(%unused: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 64 : index
+  %grid = index.constant @GRID@ : index
+  kernel.launch.config workgroups(%grid, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%unused: index, %input: buffer, %output: buffer) {
+  %off = index.constant 0 : offset
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %chunk = index.constant 256 : index
+  %threads = index.constant 64 : index
+  %count = index.constant @INPUT@ : index
+  %outcount = index.constant @OUTPUT@ : index
+  %lane = kernel.workitem.id<x> : index
+  %group = kernel.workgroup.id<x> : index
+  %base = index.mul %group, %threads : index
+  %raw = index.add %base, %lane : index
+  %ig = buffer.assume.memory_space<global> %input : buffer
+  %og = buffer.assume.memory_space<global> %output : buffer
+  %src = buffer.view %ig[%off] : buffer -> view<@INPUT@x@TYPE@>
+  %dst = buffer.view %og[%off] : buffer -> view<@OUTPUT@xi32>
+  %valid = index.cmp ult, %raw, %outcount : index
+  scf.if %valid {
+    %i = index.assume %raw [range(%raw, 0, @LAST_OUTPUT@)] : index
+    %begin = index.mul %i, %chunk : index
+    %fzero = scalar.constant 0.0 : f32
+    %fone = scalar.constant 1.0 : f32
+    %flag = scf.for %j = [%zero to %chunk step %one](%flag0 = %fzero : f32) -> (f32) {
+      %addr = index.add %begin, %j : index
+      %inside = index.cmp ult, %addr, %count : index
+      %next = scf.if %inside -> (f32) {
+        %at = index.assume %addr [range(%addr, 0, @LAST_INPUT@)] : index
+        %value = view.load %src[%at] : view<@INPUT@x@TYPE@> -> @TYPE@
+        @CHECK@
+        %updated = scalar.maxnumf %flag0, %bad : f32
+        scf.yield %updated : f32
+      } else {
+        scf.yield %flag0 : f32
+      }
+      scf.yield %next : f32
+    }
+    %integer = scalar.fptoui %flag : f32 to i32
+    view.store %integer, %dst[%i] : i32, view<@OUTPUT@xi32>
+  }
+  kernel.return
+}

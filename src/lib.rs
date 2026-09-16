@@ -9,16 +9,21 @@ pub mod benchmark;
 mod buffer_pool;
 pub mod bundle;
 mod dependency_frontier;
+pub mod image;
+pub mod inference;
+pub mod jobs;
+pub mod plan_cache;
+pub mod residency;
 mod runtime;
 #[allow(dead_code)]
 mod sys;
 mod target;
+pub mod tensor;
 pub use access_graph::{AccessGraph, AccessView};
 pub use buffer_pool::{BufferPool, PooledBuffer};
 pub use runtime::*;
 /// Coordinated GPU/NPU execution with inferred memory dependencies.
 pub mod execution;
-#[cfg(feature = "loom")]
 #[path = "loom/model.rs"]
 pub mod model;
 pub use execution::{Access, Completion, Runtime};
@@ -28,7 +33,6 @@ pub mod gpu {
     pub use crate::runtime::*;
 }
 pub use target::{TARGET_FAMILY, TARGET_KEY, Target};
-#[cfg(feature = "loom")]
 pub mod loom;
 #[cfg(feature = "npu")]
 pub mod npu;
@@ -79,7 +83,6 @@ pub enum Error {
     #[error("{0}")]
     Message(String),
     /// Structured diagnostics from a failed Loom compiler invocation.
-    #[cfg(feature = "loom")]
     #[error("Loom compilation failed: {message}")]
     Compile {
         /// Rendered diagnostic summary.
@@ -97,7 +100,6 @@ pub enum Error {
     #[error("{0}")]
     Library(#[from] libloading::Error),
     /// A network provisioning failure.
-    #[cfg(feature = "download")]
     #[error("{0}")]
     Download(#[source] Box<ureq::Error>),
     /// A native HRX status, including its machine-readable code.
@@ -132,7 +134,6 @@ impl Error {
 /// The result of an HRX operation.
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[cfg(feature = "runner")]
 pub mod runner;
 
 // Initialization failures remain retryable; only a successful value is memoized.

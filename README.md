@@ -65,13 +65,13 @@ that an application can index with hrxdb.
 The coordinated API is `hrx::execution`: owned shared buffers, checked kernel
 contracts, inferred dependencies, reusable GPU/NPU graphs, and completion handles
 that support blocking waits and Rust `Future`. `hrx::gpu` exposes the existing
-low-level GPU API. Enable `npu` for XDNA2 execution and `npu-compile` for integrated
-IRON/AIE compilation; neither feature needs native tools during Cargo builds.
+low-level GPU API. Enable `npu` for XDNA2 execution and integrated IRON/AIE
+compilation; Cargo builds need no native tools.
 
-`execution::Runtime` currently runs at most one region per engine at a time,
-even across independent graphs. GPU and NPU regions can overlap, but GPU regions
-are serialized. Increasing `RuntimeOptions::max_submissions` raises queue capacity
-only; per-engine execution depth is not configurable. The low-level
+`execution::Runtime` runs at most one region per upload, compute, download and
+NPU lane, even across independent graphs. Independent lanes can overlap when
+the hardware permits; memory hazards remain ordered across every lane.
+Increasing `RuntimeOptions::max_submissions` raises queue capacity only. The low-level
 `gpu::Stream::graph` API can use up to eight native workstreams.
 
 See [the GPU/NPU guide](docs/GPU-NPU.md) for the trust boundary, host mapping guards,
@@ -80,11 +80,11 @@ The published GPU and NPU bundles include the matching shared-memory runtime.
 
 ## Use from Rust
 
-Requires Rust 1.88 or later.
+Requires Rust 1.91 or later.
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.5", features = ["npu"] }
+hrx = { package = "hrx-rs", version = "0.6.0", features = ["npu"] }
 ```
 
 ```rust,no_run
@@ -139,6 +139,53 @@ dispatch. Regions and kernel IDs are session-scoped and checked. Compiling
 native source and recording its memory-access contract are explicit `unsafe`
 boundaries; model parsing and shape validation remain application concerns.
 
+For shared-context pipelines, `hrx::inference::ModelContext` owns the allocation,
+compiler and scheduling domain. `ModelSession::freeze` produces immutable shared
+weights/code; `ModelDefinition::prepare` creates bounded private inference slots.
+Owned `DeviceTensor` views carry checked metadata, producer completions and slot
+leases, so downstream consumers cannot observe recycled output storage.
+
+Shared operations need not all execute on the GPU. `TensorOps::gather_rows`
+accepts checked host-selected indices while keeping complete rows on-device.
+It preserves dtype bits, duplicates and order, uses bounded power-of-two shape
+caches, and retains private output slots through returned tensor views. This
+supports CPU sorting/selection between GPU stages without a full tensor readback.
+`PreparedModel` supports device submissions, reusable host staging, capacity
+futures and explicit readback. Upload, compute and download lanes share hazard
+tracking. `Graph::gpu_scoped` integrates owned native clients at an audited boundary.
+For stream-bound models with borrowed inputs and progress callbacks,
+`execution::NativeSession` reserves the shared compute lane on the calling thread.
+Its stage boundary fences errors and panics, quarantines owners on uncertain
+completion, and records host-observed latency without copying host inputs.
+It uses private storage; tracked-buffer integrations use `Graph::gpu_scoped`.
+It does not turn a synchronous stage into asynchronous inference or split that
+stage's native transfers onto separate lanes.
+
+`hrx::image` provides resident RGB normalization, patchification, and FP32 affine
+RGB sampling with black borders and ties-to-even byte rounding. Affine plans
+accept one resident image and runtime inverse matrices for multiple crops;
+prepared plans and private slots are reused across changing matrices.
+`PlanCache` bounds concurrent shape preparation with idle-only LRU eviction;
+the opt-in `ResidencyManager` adds declared byte budgets and persistent pins.
+`load_budgeted` caches units whose native allocations hold their own charges,
+allowing private workspace growth while leased and idle-only LRU eviction.
+Passing its `budget()` to `RuntimeOptions::memory_budget` charges tracked weights,
+scratch and transfer staging against the same ceiling before allocation. Aliases,
+queued work and quarantined storage retain those charges. Native storage outside
+the coordinated runtime is covered when its stream uses `with_memory_budget`.
+NPU kernels loaded through that runtime also charge their instruction buffers.
+Direct NPU clients can use `raw::Context::with_memory_budget` for owned BOs;
+zero-copy imports remain the backing owner's responsibility, and sub-BOs retain
+the root charge without double counting.
+`ModelSession::in_context` applies that policy during native loading as well;
+freezing into the same budget does not charge weights twice. Otherwise adopted
+buffers are charged only at adoption. Do not declare the same bytes twice in a
+cached resource and its budgeted allocations. Requested buffer extents exclude
+native allocator rounding and compiler/code-object memory.
+Runtime statistics include transfer bytes and live/peak tracked memory. Optional
+bounded traces and completion profiles measure **host-observed latency**, not GPU
+timestamps.
+
 `hrx::artifacts` contains the common model-file boundary. `hf::Resolver` checks
 the standard Hugging Face cache before downloading and supports pinned revisions,
 offline operation, progress policy, and SHA-256 verification. `onnx::Model`
@@ -163,8 +210,10 @@ the system C/C++ runtimes and `libatomic`, and access to `/dev/kfd` and the rend
 device. You do not need a system ROCm SDK or PyTorch installation: HRX supplies
 its own pinned user-space runtime, including HSA, and the Loom compiler.
 
+Install the CLI, including optional NPU support:
+
 ```sh
-cargo install hrx-rs --version 0.5.0 --locked --features runner,npu
+cargo install hrx-rs --version 0.6.0 --locked --features npu
 hrx prepare
 hrx doctor
 ```
@@ -210,8 +259,11 @@ could distinguish, and two models that compile the same kernel compile it once.
 read for DAYS (default 30), by access time, so entries written by any release are
 dated the same way.
 
-Default features are `download` and `loom`. Enable `runner` for the `hrx` CLI,
-whose `run` subcommand launches a compiled kernel and dumps its buffers.
+The only optional Cargo feature is `npu`, enabling NPU execution, compilation,
+and cross-device probes. GPU execution, Loom compilation, downloads and the
+`hrx` CLI are always available; native libraries still load only on first use.
+`HRX_OFFLINE=1` controls offline provisioning independently of Cargo features.
+The CLI's `run` subcommand launches a compiled kernel and dumps its buffers.
 `Stream` is the execution API; dispatch takes explicit `Constants`.
 
 ## Development

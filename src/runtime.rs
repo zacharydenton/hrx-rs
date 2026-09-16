@@ -129,6 +129,8 @@ impl Stream {
                 scratch: std::collections::BTreeMap::new(),
                 scratch_bytes: 0,
                 scratch_limit: 256 * 1024 * 1024,
+                budget: None,
+                budget_uses: std::cell::RefCell::new(BudgetUses::default()),
             })
         }
     }
@@ -192,6 +194,26 @@ pub struct Buffer {
     bytes: usize,
     /// Keeps the device alive: releasing a buffer after its device is gone would be a use-after-free.
     _device: std::sync::Arc<Inner>,
+    reservation: Option<std::sync::Arc<crate::residency::MemoryReservation>>,
+}
+
+#[derive(Default)]
+struct BudgetUses(
+    std::collections::HashMap<usize, std::sync::Arc<crate::residency::MemoryReservation>>,
+);
+impl BudgetUses {
+    fn retain(&mut self, views: &[View<'_>]) {
+        for view in views {
+            if let Some(reservation) = &view.owner.reservation {
+                self.0
+                    .entry(std::sync::Arc::as_ptr(reservation) as usize)
+                    .or_insert_with(|| reservation.clone());
+            }
+        }
+    }
+    fn clear(&mut self) {
+        self.0.clear();
+    }
 }
 
 // Safety: moving/releasing an allocation uses native atomic reference counts.
@@ -251,6 +273,11 @@ impl<'a> View<'a> {
 }
 
 impl Buffer {
+    pub(crate) fn charged_to(&self, budget: &crate::residency::MemoryBudget) -> bool {
+        self.reservation
+            .as_ref()
+            .is_some_and(|r| budget.contains(r))
+    }
     pub(crate) fn device_id(&self) -> usize {
         self._device.device as usize
     }
@@ -578,8 +605,37 @@ pub struct Stream {
     scratch: std::collections::BTreeMap<usize, Vec<Buffer>>,
     scratch_bytes: usize,
     scratch_limit: usize,
+    budget: Option<crate::residency::MemoryBudget>,
+    // Native commands may retain storage after the Rust buffer is dropped.
+    // Their charges survive until this stream is drained, including uses of
+    // buffers allocated by another stream or imported into a tracked runtime.
+    budget_uses: std::cell::RefCell<BudgetUses>,
 }
 impl Stream {
+    /// Charge subsequent allocations (including native upload/readback staging)
+    /// against a shared residency ceiling. Existing allocations are unchanged.
+    /// Charges remain with buffers, queued uses and recorded graphs, and leak
+    /// with quarantined native storage after an uncertain failure. The ceiling
+    /// covers requested extents, not native allocator rounding or code objects.
+    pub fn with_memory_budget(mut self, budget: crate::residency::MemoryBudget) -> Self {
+        self.budget = Some(budget);
+        self
+    }
+
+    /// Allocation ceiling for this stream, including transfer staging.
+    pub fn memory_budget(&self) -> Option<&crate::residency::MemoryBudget> {
+        self.budget.as_ref()
+    }
+
+    fn reserve(
+        &self,
+        bytes: usize,
+    ) -> Result<Option<std::sync::Arc<crate::residency::MemoryReservation>>> {
+        self.budget
+            .as_ref()
+            .map(|budget| budget.reserve(bytes.max(1)).map(std::sync::Arc::new))
+            .transpose()
+    }
     /// Architecture reported by this stream's device.
     pub fn target(&self) -> &Target {
         &self.inner.target
@@ -643,6 +699,7 @@ impl Stream {
     }
     /// Allocate storage owned by this stream; zero bytes is rounded to one.
     pub fn allocate(&self, bytes: usize) -> Result<Buffer> {
+        let reservation = self.reserve(bytes)?;
         let mut buffer = std::ptr::null_mut();
         unsafe {
             check(
@@ -664,6 +721,7 @@ impl Stream {
             raw: buffer,
             bytes: bytes.max(1),
             _device: self.inner.clone(),
+            reservation,
         })
     }
     /// Allocate device-local storage and enqueue a zero fill over its requested size.
@@ -691,6 +749,7 @@ impl Stream {
         pointer: *mut std::ffi::c_void,
         bytes: usize,
     ) -> Result<Buffer> {
+        let reservation = self.reserve(bytes)?;
         let mut buffer = std::ptr::null_mut();
         unsafe {
             check(
@@ -717,6 +776,7 @@ impl Stream {
             raw: buffer,
             bytes,
             _device: self.inner.clone(),
+            reservation,
         })
     }
 
@@ -724,6 +784,7 @@ impl Stream {
     pub fn synchronize(&mut self) -> Result<()> {
         self.synchronize_native()?;
         self.reclaim_staging();
+        self.budget_uses.get_mut().clear();
         Ok(())
     }
     /// Drain pending work, then upload bytes at the start of a view and wait for completion.
@@ -788,6 +849,7 @@ impl Stream {
         if dst.is_empty() {
             return Err(Error::Message("empty stream fill".into()));
         }
+        self.budget_uses.borrow_mut().retain(&[dst]);
         unsafe {
             check(
                 sys::hrx_stream_fill_buffer(
@@ -811,6 +873,7 @@ impl Stream {
                 "stream copy requires equal nonempty spans".into(),
             ));
         }
+        self.budget_uses.borrow_mut().retain(&[dst, src]);
         unsafe {
             check(
                 sys::hrx_stream_copy_buffer(
@@ -869,6 +932,7 @@ impl Stream {
             self.allocate_host(bytes.len())?
         };
         let raw = staging.raw;
+        self.budget_uses.get_mut().retain(&[dst, staging.binding()]);
         unsafe {
             let mut pointer = std::ptr::null_mut();
             check(
@@ -906,6 +970,7 @@ impl Stream {
     }
 
     fn allocate_host(&self, bytes: usize) -> Result<Buffer> {
+        let reservation = self.reserve(bytes)?;
         let mut raw = std::ptr::null_mut();
         unsafe {
             check(
@@ -929,6 +994,7 @@ impl Stream {
             raw,
             bytes,
             _device: self.inner.clone(),
+            reservation,
         })
     }
     fn reclaim_staging(&mut self) {
@@ -976,7 +1042,6 @@ impl Stream {
     ///
     /// # Safety
     /// The artifact must be trusted native code, as for [`Stream::load`].
-    #[cfg(feature = "loom")]
     pub unsafe fn load_artifact(&self, artifact: &crate::loom::Artifact) -> Result<Kernel> {
         if artifact.target() != self.inner.target.as_str() {
             return Err(Error::Message(
@@ -1035,6 +1100,7 @@ impl Stream {
             workgroup_size: block,
             subgroup_size: sys::SUBGROUP_SIZE_FROM_EXECUTABLE,
         };
+        self.budget_uses.borrow_mut().retain(bindings);
         unsafe {
             check(
                 sys::hrx_stream_dispatch(
@@ -1153,6 +1219,7 @@ impl Submission<'_> {
         }
         if done {
             self.stream.reclaim_staging();
+            self.stream.budget_uses.get_mut().clear();
         }
         Ok(done)
     }
@@ -1266,9 +1333,12 @@ macro_rules! scalars {
 scalars!(u32 => 4, i32 => 4, f32 => 4, u64 => 8, i64 => 8, f64 => 8);
 impl Drop for Stream {
     fn drop(&mut self) {
-        if !self.staging.is_empty() && self.synchronize_native().is_err() {
+        if (!self.staging.is_empty() || !self.budget_uses.get_mut().0.is_empty())
+            && self.synchronize_native().is_err()
+        {
             // A failed wait provides no proof that mapped staging is idle.
             std::mem::forget(std::mem::take(&mut self.staging));
+            std::mem::forget(std::mem::take(self.budget_uses.get_mut()));
         }
     }
 }
@@ -1318,6 +1388,7 @@ pub struct Graph<'a> {
     nodes: Vec<sys::GraphNode>,
     inner: std::sync::Arc<Inner>,
     _resources: std::marker::PhantomData<(&'a Buffer, &'a Kernel)>,
+    budget_uses: BudgetUses,
 }
 impl Stream {
     /// Begin recording while borrowing this stream and the recorded resources.
@@ -1343,6 +1414,7 @@ impl Stream {
             nodes: Vec::new(),
             inner: self.inner.clone(),
             _resources: std::marker::PhantomData,
+            budget_uses: BudgetUses::default(),
         })
     }
     /// Replay an instantiated graph on its original stream.
@@ -1445,6 +1517,7 @@ impl<'a> Graph<'a> {
         if dst.is_empty() {
             return Err(Error::Message("empty graph fill".into()));
         }
+        self.budget_uses.retain(&[dst]);
         let attrs = sys::GraphFill {
             dst: dst.raw,
             pattern: pattern.into(),
@@ -1476,6 +1549,7 @@ impl<'a> Graph<'a> {
                 "graph copy requires equal nonempty spans".into(),
             ));
         }
+        self.budget_uses.retain(&[dst, src]);
         let attrs = sys::GraphCopy {
             src: src.raw,
             dst: dst.raw,
@@ -1531,6 +1605,7 @@ impl<'a> Graph<'a> {
         // graph.c copies constants and binding descriptors into its arena, but
         // those descriptors only borrow HAL resources until instantiation. Thus
         // buffers/kernels borrow for recording, while constants borrow for this call.
+        self.budget_uses.retain(bindings);
         let attrs = sys::GraphKernel {
             executable: kernel.executable.raw,
             ordinal: kernel.ordinal,
@@ -1581,7 +1656,7 @@ impl<'a> Graph<'a> {
     }
     /// Instantiate the recording, retaining native resources independently of its
     /// borrows. A cyclic graph is rejected here.
-    pub fn finish(self) -> Result<GraphExec> {
+    pub fn finish(mut self) -> Result<GraphExec> {
         let mut raw = std::ptr::null_mut();
         unsafe {
             check(
@@ -1593,6 +1668,7 @@ impl<'a> Graph<'a> {
             raw,
             inner: self.inner.clone(),
             completion: GraphCompletion::Idle,
+            budget_uses: std::mem::take(&mut self.budget_uses),
         })
     }
 }
@@ -1612,6 +1688,7 @@ pub struct GraphExec {
     raw: sys::GraphExec,
     inner: std::sync::Arc<Inner>,
     completion: GraphCompletion,
+    budget_uses: BudgetUses,
 }
 
 enum GraphCompletion {
@@ -1651,6 +1728,8 @@ impl Drop for GraphExec {
         };
         if drained {
             unsafe { sys::hrx_graph_exec_release(self.raw) };
+        } else {
+            std::mem::forget(std::mem::take(&mut self.budget_uses));
         }
     }
 }
@@ -1667,6 +1746,9 @@ impl Stream {
         self.owns(source.owner)?;
         let buffer = self.allocate_host(source.len())?;
         let raw = buffer.raw;
+        self.budget_uses
+            .get_mut()
+            .retain(&[source, buffer.binding()]);
         unsafe {
             if !source.is_empty() {
                 check(

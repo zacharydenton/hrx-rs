@@ -3,6 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// outside this accounting domain. Reads are snapshots, not global barriers.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Statistics {
+    /// Native GPU executable graphs instantiated by coordinated graph preparation.
+    pub native_graphs_prepared: u64,
+    /// Lazily created direct-copy streams, at most one per GPU lane.
+    pub copy_streams_created: u64,
     /// Successfully allocated tracked buffers.
     pub allocations: u64,
     /// Shared dma-buf imports created during allocation.
@@ -13,6 +17,12 @@ pub struct Statistics {
     pub completions: u64,
     /// Explicit copy bytes executed by graph nodes.
     pub copied_bytes: u64,
+    /// Copy bytes completed on the upload lane.
+    pub uploaded_bytes: u64,
+    /// Copy bytes completed on the download lane.
+    pub downloaded_bytes: u64,
+    /// Copy bytes completed on the compute lane.
+    pub device_copied_bytes: u64,
     /// Byte extents passed to cross-engine cache maintenance.
     pub cache_maintenance_bytes: u64,
     /// Bytes whose tracked allocations are still retained.
@@ -22,11 +32,14 @@ pub struct Statistics {
 }
 #[derive(Default)]
 pub(super) struct Counters {
+    pub native_graphs_prepared: AtomicU64,
+    pub copy_streams_created: AtomicU64,
     pub allocations: AtomicU64,
     pub imports: AtomicU64,
     pub submissions: AtomicU64,
     pub completions: AtomicU64,
     pub copied_bytes: AtomicU64,
+    pub lane_copy_bytes: [AtomicU64; 3],
     pub cache_maintenance_bytes: AtomicU64,
     pub live_bytes: AtomicU64,
     pub peak_bytes: AtomicU64,
@@ -34,11 +47,16 @@ pub(super) struct Counters {
 impl Counters {
     pub fn snapshot(&self) -> Statistics {
         Statistics {
+            native_graphs_prepared: self.native_graphs_prepared.load(Ordering::Relaxed),
+            copy_streams_created: self.copy_streams_created.load(Ordering::Relaxed),
             allocations: self.allocations.load(Ordering::Relaxed),
             imports: self.imports.load(Ordering::Relaxed),
             submissions: self.submissions.load(Ordering::Relaxed),
             completions: self.completions.load(Ordering::Relaxed),
             copied_bytes: self.copied_bytes.load(Ordering::Relaxed),
+            uploaded_bytes: self.lane_copy_bytes[0].load(Ordering::Relaxed),
+            device_copied_bytes: self.lane_copy_bytes[1].load(Ordering::Relaxed),
+            downloaded_bytes: self.lane_copy_bytes[2].load(Ordering::Relaxed),
             cache_maintenance_bytes: self.cache_maintenance_bytes.load(Ordering::Relaxed),
             live_bytes: self.live_bytes.load(Ordering::Relaxed),
             peak_bytes: self.peak_bytes.load(Ordering::Relaxed),

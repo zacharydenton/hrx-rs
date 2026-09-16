@@ -24,10 +24,10 @@ jobs:
             curl --fail --location --proto '=https' "$BUNDLE_MIRROR" --output "$RUNNER_TEMP/hrx-manifest.json"
             export HRX_BUNDLE_MANIFEST="$RUNNER_TEMP/hrx-manifest.json"
           fi
-          cargo +stable run --locked --features runner --bin hrx -- prepare
+          cargo +stable run --locked --bin hrx -- prepare
           export HRX_OFFLINE=1
-          cargo +stable run --locked --features runner --bin hrx -- info
-          cargo +stable test --locked --features runner -- --ignored --test-threads=1
+          cargo +stable run --locked --bin hrx -- info
+          cargo +stable test --locked -- --ignored --test-threads=1
 
   npu:
     if: ${{ vars.HRX_NATIVE_BUILD != '' && vars.HRX_NPU_TOOLCHAIN != '' }}
@@ -57,10 +57,10 @@ jobs:
           set -euo pipefail
           export XDG_CACHE_HOME="$RUNNER_TEMP/hrx-published-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           unset HRX_RUNTIME_DIR HRX_NPU_RUNTIME_DIR HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST HRX_NPU_BUNDLE_MANIFEST HRX_OFFLINE
-          cargo run --locked --features runner,npu --bin hrx -- prepare
+          cargo run --locked --features npu --bin hrx -- prepare
           export HRX_OFFLINE=1
-          export HRX_TEST_NPU_DIR="$(cargo run --locked --release --features npu-compile --example compile_npu -- "$HRX_NPU_TOOLCHAIN" 262144)"
-          cargo run --locked --features runner,npu --bin hrx -- doctor
+          export HRX_TEST_NPU_DIR="$(cargo run --locked --release --features npu --example compile_npu -- "$HRX_NPU_TOOLCHAIN" 262144)"
+          cargo run --locked --features npu --bin hrx -- doctor
           cargo test --locked --all-features --test heterogeneous --test coordinated -- --ignored --test-threads=1
 
   consumers:

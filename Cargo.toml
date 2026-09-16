@@ -1,8 +1,8 @@
 [package]
 name = "hrx-rs"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.91"
 license = "MIT AND Apache-2.0 AND (Apache-2.0 WITH LLVM-exception)"
 description = "Owned GPU and NPU execution with Loom and IRON compilation"
 repository = "https://github.com/zacharydenton/hrx-rs"
@@ -21,16 +21,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 name = "hrx"
 
 [features]
-default = ["download", "loom"]
-download = ["dep:ureq"]
-loom = []
-runner = ["loom"]
-# Low-level cross-device probes; XRT is loaded only at runtime.
-npu-probe = ["npu"]
-# The shared-memory NPU API.
+# NPU execution, compilation and cross-device probes. XRT loads on first use.
 npu = []
-# Compile IRON/AIE projects in a pinned external toolchain.
-npu-compile = ["npu"]
 
 [dependencies]
 thiserror = "2"
@@ -42,7 +34,7 @@ serde_json = "1"
 tempfile = "3"
 tar = "0.4"
 flate2 = "1"
-ureq = { version = "3", optional = true }
+ureq = "3"
 hf-hub = { version = "1.0", default-features = false, features = ["blocking", "rustls-tls"] }
 onnx-protobuf = "0.2.3"
 # onnx-protobuf 0.2.3 generated bindings require this runtime version.
@@ -52,11 +44,11 @@ memmap2 = "0.9"
 
 [[example]]
 name = "unified_probe"
-required-features = ["npu-probe"]
+required-features = ["npu"]
 
 [[example]]
 name = "dmabuf_probe"
-required-features = ["npu-probe"]
+required-features = ["npu"]
 
 [[example]]
 name = "shared_roundtrip"
@@ -73,7 +65,6 @@ required-features = ["npu"]
 [[bin]]
 name = "hrx"
 path = "src/bin/hrx.rs"
-required-features = ["runner"]
 
 [lints.clippy]
 large_stack_arrays = "warn"
@@ -83,25 +74,13 @@ match_wildcard_for_single_variants = "warn"
 missing_docs = "warn"
 
 [[example]]
-name = "stream_bench"
-required-features = ["loom"]
-
-[[test]]
-name = "gpu"
-required-features = ["loom"]
-
-[[test]]
-name = "embedding"
-required-features = ["loom"]
-
-[[example]]
 name = "compile_npu"
-required-features = ["npu-compile"]
+required-features = ["npu"]
 
 [[test]]
 name = "heterogeneous"
-required-features = ["npu", "loom"]
+required-features = ["npu"]
 
 [[example]]
 name = "gemm_pipeline"
-required-features = ["npu", "loom"]
+required-features = ["npu"]

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.0 — 2026-09-16
+
+- Add shared model contexts, checked owned device tensors, bounded prepared
+  inference slots, producer dependencies, reusable image/tensor operations,
+  shape-plan caching, and budgeted idle-LRU model residency. Native GPU and NPU
+  allocations can share the same ceiling and retain charges through queued work.
+- Schedule upload, compute and download independently with cross-lane memory
+  hazards; add bounded host-observed execution tracing and inference job pools.
+- Add `execution::NativeSession` for synchronous stream-bound models with
+  borrowed inputs/callbacks: bounded compute-lane admission, completion fences
+  on errors/panics, and full-owner quarantine when completion is uncertain.
+
+- Raise the supported Rust minimum to 1.91, matching the current Hugging Face/Xet
+  dependency graph; the previous 1.88 claim no longer builds with the lockfile.
+
+- Keep `npu` as the only optional Cargo feature. GPU execution, Loom compilation,
+  downloads and the CLI are unconditional; NPU compilation and probes use `npu`.
+  Remove the `loom`, `download`, `runner`, `npu-compile` and `npu-probe` flags
+  without aliases. Native libraries remain lazily loaded and offline policy is
+  unchanged.
+
 ## 0.5.1 — 2026-09-16
 
 - Accept zero-length dimensions in ONNX initializers and tensor attributes.
@@ -10,6 +31,21 @@
   tensor attributes, malformed dimensions/data, and scalars.
 
 ## 0.5.0 — 2026-09-16
+
+- Add `artifacts::hf` for local-first Hugging Face resolution with offline,
+  progress, revision, and checksum policy; add owned and memory-mapped
+  `artifacts::safetensors` indexing; and add checked `artifacts::onnx` model,
+  node, tensor, shape, axis, stride, and broadcast inspection.
+- Move the resident inference API to `hrx::model` and remove the old
+  `hrx::loom::model` path. `Specialization` fields are private and configured
+  through builders and accessors; no compatibility re-exports are retained.
+- Add `AccessGraph` for byte-range dependency inference in low-level GPU graphs,
+  a bounded RAII `BufferPool`, reusable `ScratchPlanner`, offset transfer and
+  zeroed-allocation helpers, and shared compiler selection by stream or target.
+- Add reusable benchmark distributions and stage timing, including cumulative
+  stage totals. ArcFace, SCRFD, DINOv3, H3, Krea2, and hrxdb now consume the shared
+  artifact, memory, compiler, and timing facilities instead of carrying their
+  own implementations.
 
 Migration: import resident inference from `hrx::model`; construct and inspect
 `Specialization` with `new`, `set_config`, `replace_config`, `set_symbol`,

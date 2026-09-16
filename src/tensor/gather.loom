@@ -1,0 +1,40 @@
+// Bit-preserving row gather: dtype-independent byte copies with checked indices.
+amdgpu.target<gfx11-generic> @target {subgroup_size = 32}
+kernel.def target(@target) export("gather") @gather(%unused:index) {
+  %one=index.constant 1 : index
+  %threads=index.constant 256 : index
+  %grid=index.constant @GRID@ : index
+  kernel.launch.config workgroups(%grid,%one,%one) workgroup_size(%threads,%one,%one) : index
+} launch(%unused:index,%input:buffer,%indices:buffer,%output:buffer) {
+  %off=index.constant 0 : offset
+  %threads=index.constant 256 : index
+  %rowbytes=index.constant @ROW_BYTES@ : index
+  %count=index.constant @OUTPUT@ : index
+  %zero=index.constant 0 : index
+  %rows=index.constant @ROWS@ : index
+  %lane=kernel.workitem.id<x> : index
+  %group=kernel.workgroup.id<x> : index
+  %base=index.mul %group,%threads : index
+  %raw=index.add %base,%lane : index
+  %src=buffer.view %input[%off] : buffer -> view<@INPUT@xi8>
+  %ids=buffer.view %indices[%off] : buffer -> view<@BUCKET@xi32>
+  %dst=buffer.view %output[%off] : buffer -> view<@OUTPUT@xi8>
+  %valid=index.cmp ult,%raw,%count : index
+  scf.if %valid {
+    %i=index.assume %raw [range(%raw,0,@LAST_OUTPUT@)] : index
+    %rowraw=index.div %i,%rowbytes : index
+    %row=index.assume %rowraw [range(%rowraw,0,@LAST_INDEX@)] : index
+    %column=index.rem %i,%rowbytes : index
+    %id32=view.load %ids[%row] : view<@BUCKET@xi32> -> i32
+    %idraw=index.cast %id32 : i32 to index
+    %inside=index.cmp ult,%idraw,%rows : index
+    %safe=scf.select %inside,%idraw,%zero : index
+    %id=index.assume %safe [range(%safe,0,@LAST_ROW@)] : index
+    %start=index.mul %id,%rowbytes : index
+    %address=index.add %start,%column : index
+    %at=index.assume %address [range(%address,0,@LAST_INPUT@)] : index
+    %value=view.load %src[%at] : view<@INPUT@xi8> -> i8
+    view.store %value,%dst[%i] : i8,view<@OUTPUT@xi8>
+  }
+  kernel.return
+}

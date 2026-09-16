@@ -1,0 +1,130 @@
+amdgpu.target<gfx11-generic> @similarity_target {subgroup_size = 32}
+kernel.def target(@similarity_target) export("similarity_2d") @similarity_2d(%unused: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 64 : index
+  %grid = index.constant @GRID@ : index
+  kernel.launch.config workgroups(%grid, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%unused: index, %input: buffer, %forward: buffer, %inverse: buffer, %status: buffer) {
+  %off = index.constant 0 : offset
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %two = index.constant 2 : index
+  %three = index.constant 3 : index
+  %four = index.constant 4 : index
+  %five = index.constant 5 : index
+  %six = index.constant 6 : index
+  %batch = index.constant @BATCH@ : index
+  %stride = index.constant @STRIDE@ : index
+  %threads = index.constant 64 : index
+  %lane = kernel.workitem.id<x> : index
+  %group = kernel.workgroup.id<x> : index
+  %base = index.mul %group, %threads : index
+  %raw = index.add %base, %lane : index
+  %ig = buffer.assume.memory_space<global> %input : buffer
+  %fg = buffer.assume.memory_space<global> %forward : buffer
+  %vg = buffer.assume.memory_space<global> %inverse : buffer
+  %sg = buffer.assume.memory_space<global> %status : buffer
+  %src = buffer.view %ig[%off] : buffer -> view<@INPUT@xf32>
+  %dst = buffer.view %fg[%off] : buffer -> view<@OUTPUT@xf32>
+  %inv = buffer.view %vg[%off] : buffer -> view<@OUTPUT@xf32>
+  %flags = buffer.view %sg[%off] : buffer -> view<@BATCH@xi32>
+  %valid = index.cmp ult, %raw, %batch : index
+  scf.if %valid {
+    %i = index.assume %raw [range(%raw, 0, @BATCH_LAST@)] : index
+    %inputbase = index.mul %i, %stride : index
+    %max = scalar.constant 3.402823466e38 : f32
+    %fzero = scalar.constant 0.0 : f32
+    %sumx0 = scalar.constant 0.0 : f32
+    %sumy0 = scalar.constant 0.0 : f32
+    %den0 = scalar.constant 0.0 : f32
+    %dot0sum = scalar.constant 0.0 : f32
+    %cross0sum = scalar.constant 0.0 : f32
+    %finite0 = scalar.constant true : i1
+    %n = scalar.constant @COUNT@.0 : f32
+    %qx = scalar.constant @QX@ : f32
+    %qy = scalar.constant @QY@ : f32
+@BODY@
+    %a = scalar.divf %dot@COUNT@sum, %den@COUNT@ : f32
+    %b = scalar.divf %cross@COUNT@sum, %den@COUNT@ : f32
+    %nb = scalar.negf %b : f32
+    %apx = scalar.mulf %a, %px : f32
+    %bpy = scalar.mulf %b, %py : f32
+    %bpx = scalar.mulf %b, %px : f32
+    %apy = scalar.mulf %a, %py : f32
+    %tx0 = scalar.subf %qx, %apx : f32
+    %tx = scalar.addf %tx0, %bpy : f32
+    %ty0 = scalar.subf %qy, %bpx : f32
+    %ty = scalar.subf %ty0, %apy : f32
+    %aa = scalar.mulf %a, %a : f32
+    %bb = scalar.mulf %b, %b : f32
+    %det = scalar.addf %aa, %bb : f32
+    %ia = scalar.divf %a, %det : f32
+    %ib = scalar.divf %b, %det : f32
+    %inb = scalar.negf %ib : f32
+    %na = scalar.negf %ia : f32
+    %itx0 = scalar.mulf %na, %tx : f32
+    %itx1 = scalar.mulf %ib, %ty : f32
+    %itx = scalar.subf %itx0, %itx1 : f32
+    %ity0 = scalar.mulf %ib, %tx : f32
+    %ity1 = scalar.mulf %ia, %ty : f32
+    %ity = scalar.subf %ity0, %ity1 : f32
+    %epsilon = scalar.constant 1.0e-20 : f32
+    %nonsingular = scalar.cmpf ogt, %det, %epsilon : f32
+    %finitedet = scalar.cmpf ole, %det, %max : f32
+    %atx = scalar.absf %tx : f32
+    %aty = scalar.absf %ty : f32
+    %aitx = scalar.absf %itx : f32
+    %aity = scalar.absf %ity : f32
+    %txok = scalar.cmpf ole, %atx, %max : f32
+    %tyok = scalar.cmpf ole, %aty, %max : f32
+    %itxok = scalar.cmpf ole, %aitx, %max : f32
+    %ityok = scalar.cmpf ole, %aity, %max : f32
+    %ok0 = scalar.andi %finite@COUNT@, %nonsingular : i1
+    %ok1 = scalar.andi %ok0, %finitedet : i1
+    %ok2 = scalar.andi %ok1, %txok : i1
+    %ok3 = scalar.andi %ok2, %tyok : i1
+    %ok4 = scalar.andi %ok3, %itxok : i1
+    %ok = scalar.andi %ok4, %ityok : i1
+    %izero = scalar.constant 0 : i32
+    %ione = scalar.constant 1 : i32
+    %flag = scf.select %ok, %izero, %ione : i32
+    view.store %flag, %flags[%i] : i32, view<@BATCH@xi32>
+    %nanbits = scalar.constant 2143289344 : i32
+    %nan = scalar.bitcast %nanbits : i32 to f32
+    %ma = scf.select %ok, %a, %nan : f32
+    %mb = scf.select %ok, %b, %nan : f32
+    %mnb = scf.select %ok, %nb, %nan : f32
+    %mtx = scf.select %ok, %tx, %nan : f32
+    %mty = scf.select %ok, %ty, %nan : f32
+    %mia = scf.select %ok, %ia, %nan : f32
+    %mib = scf.select %ok, %ib, %nan : f32
+    %minb = scf.select %ok, %inb, %nan : f32
+    %mitx = scf.select %ok, %itx, %nan : f32
+    %mity = scf.select %ok, %ity, %nan : f32
+    %o0r = index.mul %i, %six : index
+    %o1r = index.add %o0r, %one : index
+    %o2r = index.add %o0r, %two : index
+    %o3r = index.add %o0r, %three : index
+    %o4r = index.add %o0r, %four : index
+    %o5r = index.add %o0r, %five : index
+    %o0 = index.assume %o0r [range(%o0r, 0, @OUTPUT_LAST@)] : index
+    %o1 = index.assume %o1r [range(%o1r, 0, @OUTPUT_LAST@)] : index
+    %o2 = index.assume %o2r [range(%o2r, 0, @OUTPUT_LAST@)] : index
+    %o3 = index.assume %o3r [range(%o3r, 0, @OUTPUT_LAST@)] : index
+    %o4 = index.assume %o4r [range(%o4r, 0, @OUTPUT_LAST@)] : index
+    %o5 = index.assume %o5r [range(%o5r, 0, @OUTPUT_LAST@)] : index
+    view.store %ma, %dst[%o0] : f32, view<@OUTPUT@xf32>
+    view.store %mnb, %dst[%o1] : f32, view<@OUTPUT@xf32>
+    view.store %mtx, %dst[%o2] : f32, view<@OUTPUT@xf32>
+    view.store %mb, %dst[%o3] : f32, view<@OUTPUT@xf32>
+    view.store %ma, %dst[%o4] : f32, view<@OUTPUT@xf32>
+    view.store %mty, %dst[%o5] : f32, view<@OUTPUT@xf32>
+    view.store %mia, %inv[%o0] : f32, view<@OUTPUT@xf32>
+    view.store %mib, %inv[%o1] : f32, view<@OUTPUT@xf32>
+    view.store %mitx, %inv[%o2] : f32, view<@OUTPUT@xf32>
+    view.store %minb, %inv[%o3] : f32, view<@OUTPUT@xf32>
+    view.store %mia, %inv[%o4] : f32, view<@OUTPUT@xf32>
+    view.store %mity, %inv[%o5] : f32, view<@OUTPUT@xf32>
+  }
+  kernel.return
+}

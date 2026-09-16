@@ -8,10 +8,10 @@ API can promise.
 
 ## Routes tested
 
-`examples/unified_probe.rs` and `examples/dmabuf_probe.rs`, both behind `--features npu-probe`:
+`examples/unified_probe.rs` and `examples/dmabuf_probe.rs`, both behind `--features npu`:
 
 ```bash
-cargo build --release --features npu-probe --example dmabuf_probe
+cargo build --release --features npu --example dmabuf_probe
 ./target/release/examples/dmabuf_probe ~/code/dinov3-xdna2/build/matmul/4096x1024/x.xclbin
 ```
 

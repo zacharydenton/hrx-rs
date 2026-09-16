@@ -37,9 +37,14 @@ pub(super) fn summarize(uses: impl IntoIterator<Item = Use>) -> Vec<Use> {
     let mut allocations = BTreeMap::<usize, (BufferView, BTreeMap<usize, (i64, i64)>)>::new();
     for usage in uses {
         let (id, range) = region(&usage.view);
-        let (_, events) = allocations
+        let (root, events) = allocations
             .entry(id)
             .or_insert_with(|| (usage.view.clone(), BTreeMap::new()));
+        for owner in &usage.view.retained {
+            if !root.retained.iter().any(|old| Arc::ptr_eq(old, owner)) {
+                root.retained.push(owner.clone());
+            }
+        }
         let read = i64::from(usage.access != Access::Write);
         let write = i64::from(usage.access.writes());
         let start = events.entry(range.start).or_default();
@@ -70,6 +75,7 @@ pub(super) fn summarize(uses: impl IntoIterator<Item = Use>) -> Vec<Use> {
                         view: BufferView {
                             buffer: root.buffer.clone(),
                             range: previous..position,
+                            retained: root.retained.clone(),
                         },
                         access,
                     });
