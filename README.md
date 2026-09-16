@@ -78,6 +78,10 @@ See [the GPU/NPU guide](docs/GPU-NPU.md) for the trust boundary, host mapping gu
 shared native runtime setup, compiler pinning, and runnable hardware validation.
 The published GPU and NPU bundles include the matching shared-memory runtime.
 
+The [single-image Rust vision benchmark](benchmarks/vision/README.md) runs DINOv3,
+SCRFD and ArcFace in one shared HRX context, reporting end-to-end and per-stage
+median/p95 latency, raw samples and checked outputs.
+
 ## Use from Rust
 
 Requires Rust 1.91 or later.

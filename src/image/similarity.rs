@@ -171,7 +171,7 @@ impl ImageOps {
         let input = model.allocate(points.bytes())?;
         let forward = model.allocate(matrices.bytes())?;
         let inverse = model.allocate(matrices.bytes())?;
-        let flags = model.allocate(status.bytes())?;
+        let flags = model.allocate_shared(status.bytes())?;
         let kernel =
             unsafe { model.compile(&[(&source, Specialization::new("similarity_2d"))])? }[0];
         unsafe {

@@ -1,0 +1,22 @@
+[package]
+name = "hrx-vision-bench"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.91"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+fast_image_resize = "=5.1.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hrx = { package = "hrx-rs", path = "../.." }
+dinov3-hrx = { path = "../../../dinov3-hrx" }
+scrfd-hrx = { path = "../../../scrfd-hrx" }
+arcface-hrx = { path = "../../../arcface-hrx" }
+
+[patch.crates-io]
+hrx-rs = { path = "../.." }

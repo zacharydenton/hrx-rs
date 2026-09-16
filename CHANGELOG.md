@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 — 2026-09-16
+## 0.7.0 — 2026-09-17
 
 - Add validated model fragments that record into caller-owned execution graphs
   with directly bound intermediate tensors and shared immutable weights.
@@ -11,6 +11,11 @@
   Validate runtime identity, consistent descriptors and independent slot IO.
 - Allocate host upload/readback staging lazily, reuse it across submissions and
   allow retries after allocation-budget failures.
+- Preserve host-visible storage in model fragments and map host-visible IO
+  directly, including sliced tensors. Only device-local IO needs transfer
+  staging; guarded host access retains allocation-wide synchronization.
+- Add a standalone single-image DINOv3/SCRFD/ArcFace benchmark with stage
+  timings, replay checks, runtime counters and machine-readable results.
 
 Migration: `PreparedModel::prepare` takes a context, capacity and slot factory
 returning `InferenceGraph { inputs, outputs, graph }`. Allocate independent

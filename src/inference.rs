@@ -2,7 +2,7 @@
 
 use crate::{
     Completion, Error, Result, Runtime,
-    execution::{Buffer, ExecutableGraph, MemoryPlacement, RuntimeOptions},
+    execution::{Buffer, BufferView, ExecutableGraph, MemoryPlacement, RuntimeOptions},
     loom::Compiler,
     tensor::{DeviceTensor, TensorDesc},
 };
@@ -39,14 +39,19 @@ impl ModelContext {
     }
     /// Allocate initialized device storage. Empty tensors allocate nothing.
     pub fn allocate(&self, desc: TensorDesc) -> Result<DeviceTensor> {
+        self.allocate_with(desc, MemoryPlacement::GpuLocal)
+    }
+    /// Allocate a tensor with explicit storage placement. Host-visible IO can
+    /// be submitted and read back directly without transfer staging or copies.
+    pub fn allocate_with(
+        &self,
+        desc: TensorDesc,
+        placement: MemoryPlacement,
+    ) -> Result<DeviceTensor> {
         let view = if desc.is_empty() {
             None
         } else {
-            Some(
-                self.runtime
-                    .allocate(desc.bytes(), MemoryPlacement::GpuLocal)?
-                    .view(),
-            )
+            Some(self.runtime.allocate(desc.bytes(), placement)?.view())
         };
         Ok(DeviceTensor {
             runtime: self.runtime.clone(),
@@ -277,18 +282,22 @@ struct Slot {
 }
 
 struct Transfer {
-    buffers: Vec<Option<Buffer>>,
+    buffers: Vec<Option<BufferView>>,
     graph: Option<ExecutableGraph>,
 }
 impl Transfer {
     fn prepare(context: &ModelContext, tensors: &[DeviceTensor], upload: bool) -> Result<Self> {
         let mut graph = context.runtime.graph();
+        let mut copied = false;
         let buffers = tensors
             .iter()
             .map(|tensor| {
                 let Some(device) = tensor.binding() else {
                     return Ok(None);
                 };
+                if device.is_host_visible() {
+                    return Ok(Some(device));
+                }
                 let host = context
                     .runtime
                     .allocate(tensor.desc.bytes(), MemoryPlacement::HostVisible)?;
@@ -297,14 +306,11 @@ impl Transfer {
                 } else {
                     graph.copy(host.view(), device)?;
                 }
-                Ok(Some(host))
+                copied = true;
+                Ok(Some(host.view()))
             })
             .collect::<Result<Vec<_>>>()?;
-        let graph = if buffers.iter().any(Option::is_some) {
-            Some(graph.prepare()?)
-        } else {
-            None
-        };
+        let graph = if copied { Some(graph.prepare()?) } else { None };
         Ok(Self { buffers, graph })
     }
 }
