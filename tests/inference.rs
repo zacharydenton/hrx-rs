@@ -87,8 +87,8 @@ fn rgb_views_roundtrip_batches_and_reject_invalid_shapes() -> hrx::Result<()> {
                     context.runtime().statistics().downloaded_bytes - before,
                     desc.bytes() as u64 * 4
                 );
-                for (actual, expected) in bytes.chunks_exact(4).zip(&rgb) {
-                    let value = f32::from_le_bytes(actual.try_into().unwrap());
+                for (actual, expected) in bytes.as_chunks::<4>().0.iter().zip(&rgb) {
+                    let value = f32::from_le_bytes(*actual);
                     if encoding == RgbEncoding::Symmetric {
                         assert_eq!(value, f32::from(*expected));
                     } else {
@@ -302,10 +302,12 @@ fn similarity_fitting_checks_geometry_and_accepts_detection_row_views() -> hrx::
             .zip([expected, invert_affine(expected)?])
         {
             for (actual, expected) in bytes[i * 24..][..24]
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .zip(expected.iter().flatten())
             {
-                let actual = f32::from_le_bytes(actual.try_into().unwrap());
+                let actual = f32::from_le_bytes(*actual);
                 assert!(
                     (actual - expected).abs() <= 1e-5 * expected.abs().max(1.),
                     "face {i}: {actual} vs {expected}"
