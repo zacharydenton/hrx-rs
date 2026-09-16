@@ -368,8 +368,10 @@ impl Tensor {
             }
             self.protobuf
                 .raw_data
-                .chunks_exact(4)
-                .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("four bytes")))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| f32::from_le_bytes(*bytes))
                 .collect()
         };
         if values.len() != count || values.iter().any(|value| !value.is_finite()) {
@@ -406,8 +408,10 @@ impl Tensor {
             }
             self.protobuf
                 .raw_data
-                .chunks_exact(8)
-                .map(|bytes| i64::from_le_bytes(bytes.try_into().expect("eight bytes")))
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|bytes| i64::from_le_bytes(*bytes))
                 .collect()
         };
         if values.len() != count {
@@ -477,8 +481,10 @@ impl TensorView<'_> {
             }
             self.protobuf
                 .raw_data
-                .chunks_exact(4)
-                .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("four bytes")))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| f32::from_le_bytes(*bytes))
                 .collect()
         };
         if values.len() != count || values.iter().any(|value| !value.is_finite()) {
@@ -510,8 +516,10 @@ impl TensorView<'_> {
             }
             self.protobuf
                 .raw_data
-                .chunks_exact(8)
-                .map(|bytes| i64::from_le_bytes(bytes.try_into().expect("eight bytes")))
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|bytes| i64::from_le_bytes(*bytes))
                 .collect()
         };
         if values.len() != count {
