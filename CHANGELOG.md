@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1 — 2026-09-16
+
+- Accept zero-length dimensions in ONNX initializers and tensor attributes.
+  This restores INSwapper loading: its unused Resize ROI initializer has shape
+  `[0]`. Negative dimensions and inconsistent tensor data remain errors, and
+  rank-zero tensors retain scalar semantics.
+- Add serialized ONNX regression coverage for empty float32/int64 tensors,
+  tensor attributes, malformed dimensions/data, and scalars.
+
 ## 0.5.0 — 2026-09-16
 
 - Add `artifacts::hf` for local-first Hugging Face resolution with offline,

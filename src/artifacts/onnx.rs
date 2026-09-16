@@ -321,18 +321,18 @@ impl Tensor {
         &self.protobuf.name
     }
 
-    /// Positive dimensions converted to `usize`.
+    /// Non-negative dimensions converted to `usize`.
+    ///
+    /// Zero denotes an empty tensor, as used by INSwapper for an unused
+    /// optional Resize ROI. A rank-zero shape denotes a scalar.
     pub fn shape(&self) -> Result<Vec<usize>> {
         self.protobuf
             .dims
             .iter()
             .map(|&dimension| {
-                usize::try_from(dimension)
-                    .ok()
-                    .filter(|&dimension| dimension > 0)
-                    .ok_or_else(|| {
-                        Error::Message(format!("{} has an invalid dimension", self.name()))
-                    })
+                usize::try_from(dimension).ok().ok_or_else(|| {
+                    Error::Message(format!("{} has an invalid dimension", self.name()))
+                })
             })
             .collect()
     }
@@ -430,18 +430,18 @@ impl TensorView<'_> {
         &self.protobuf.name
     }
 
-    /// Positive dimensions converted to `usize`.
+    /// Non-negative dimensions converted to `usize`.
+    ///
+    /// Zero denotes an empty tensor, as used by INSwapper for an unused
+    /// optional Resize ROI. A rank-zero shape denotes a scalar.
     pub fn shape(&self) -> Result<Vec<usize>> {
         self.protobuf
             .dims
             .iter()
             .map(|&dimension| {
-                usize::try_from(dimension)
-                    .ok()
-                    .filter(|&dimension| dimension > 0)
-                    .ok_or_else(|| {
-                        Error::Message(format!("{} has an invalid dimension", self.name()))
-                    })
+                usize::try_from(dimension).ok().ok_or_else(|| {
+                    Error::Message(format!("{} has an invalid dimension", self.name()))
+                })
             })
             .collect()
     }
@@ -615,6 +615,99 @@ pub fn broadcast_index(index: usize, output: &[usize], input: &[usize]) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn roundtrip_tensor(tensor: TensorProto) -> Model {
+        let model = ModelProto {
+            graph: Some(GraphProto {
+                initializer: vec![tensor.clone()],
+                node: vec![NodeProto {
+                    op_type: "Constant".into(),
+                    output: vec!["constant".into()],
+                    attribute: vec![AttributeProto {
+                        name: "value".into(),
+                        t: Some(tensor).into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .into(),
+            ..Default::default()
+        };
+        Model::from_bytes(&model.write_to_bytes().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn empty_initializers_and_tensor_attributes_decode() {
+        for dims in [vec![0], vec![2, 0, 3]] {
+            for data_type in [1, 7] {
+                let model = roundtrip_tensor(TensorProto {
+                    name: "onnx::Resize_787".into(),
+                    dims: dims.clone(),
+                    data_type,
+                    ..Default::default()
+                });
+                let tensor = model.initializer("onnx::Resize_787").unwrap();
+                let expected: Vec<usize> = dims.iter().map(|&dim| dim as usize).collect();
+                assert_eq!(tensor.shape().unwrap(), expected);
+                assert_eq!(tensor.count().unwrap(), 0);
+                if data_type == 1 {
+                    assert!(tensor.f32s().unwrap().is_empty());
+                    assert!(tensor.f64s().unwrap().is_empty());
+                } else {
+                    assert!(tensor.i64s().unwrap().is_empty());
+                }
+                for view in [tensor.view(), model.nodes()[0].tensor("value").unwrap()] {
+                    assert_eq!(view.shape().unwrap(), expected);
+                    assert_eq!(view.count().unwrap(), 0);
+                    if data_type == 1 {
+                        assert!(view.f32s().unwrap().is_empty());
+                    } else {
+                        assert!(view.i64s().unwrap().is_empty());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zero_dimensions_do_not_relax_data_or_negative_dimension_checks() {
+        for dims in [vec![0], vec![-1], vec![0, -1]] {
+            let model = roundtrip_tensor(TensorProto {
+                name: "invalid".into(),
+                dims: dims.clone(),
+                data_type: 1,
+                float_data: vec![1.0],
+                ..Default::default()
+            });
+            let tensor = model.initializer("invalid").unwrap();
+            assert!(tensor.f32s().is_err());
+            assert!(tensor.view().f32s().is_err());
+            if dims.contains(&-1) {
+                assert!(tensor.shape().is_err());
+                assert!(tensor.view().shape().is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn rank_zero_tensors_remain_scalars() {
+        let model = roundtrip_tensor(TensorProto {
+            name: "scalar".into(),
+            data_type: 1,
+            float_data: vec![2.5],
+            ..Default::default()
+        });
+        let tensor = model.initializer("scalar").unwrap();
+        assert!(tensor.shape().unwrap().is_empty());
+        assert_eq!(tensor.count().unwrap(), 1);
+        assert_eq!(tensor.f32s().unwrap(), [2.5]);
+        let view = model.nodes()[0].tensor("value").unwrap();
+        assert!(view.shape().unwrap().is_empty());
+        assert_eq!(view.count().unwrap(), 1);
+        assert_eq!(view.f32s().unwrap(), [2.5]);
+    }
 
     #[test]
     fn axes_and_broadcasts_are_checked() {
