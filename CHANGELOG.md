@@ -8,12 +8,10 @@
   with checked extents, explicit sampling contracts and reusable graph bindings.
 - Add direct host-slot publication callbacks, avoiding capacity-sized temporary
   buffers for variable-length packed inputs.
-- Add batched vision composition with caller-defined downscaling, resident
-  landmark gathering/alignment, bounded shape caches and lazy source storage.
 - Expose directly bound row-gather fragments for resident cross-model graphs.
-- Add an unpublished `hrx-vision` integration crate and use its shared-image,
-  two-phase DINO/SCRFD/ArcFace graph in the vision benchmark by default. Keep
-  CPU face selection explicit and expose resident final tensors to callers.
+- Remove the model-specific vision pipeline and Rust benchmark crates so this
+  repository has no Cargo dependencies on downstream model crates. Model
+  composition belongs in downstream applications using the generic runtime APIs.
 
 ## 0.7.0 — 2026-09-17
 

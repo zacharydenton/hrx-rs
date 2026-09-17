@@ -34,7 +34,9 @@ Native licenses, source provenance, and rebuild instructions are documented in
 ## Project showcase
 
 These projects use HRX and Loom on AMD Strix Halo for local generation,
-computer vision, and vector search.
+computer vision, and vector search. They depend on HRX; HRX has no Cargo
+dependencies on these model crates. Model-specific pipelines and benchmarks
+belong in downstream applications.
 
 | Project | What it does |
 | --- | --- |
@@ -77,14 +79,6 @@ Increasing `RuntimeOptions::max_submissions` raises queue capacity only. The low
 See [the GPU/NPU guide](docs/GPU-NPU.md) for the trust boundary, host mapping guards,
 shared native runtime setup, compiler pinning, and runnable hardware validation.
 The published GPU and NPU bundles include the matching shared-memory runtime.
-
-The [single-image Rust vision benchmark](benchmarks/vision/README.md) runs DINOv3,
-SCRFD and ArcFace in one shared HRX context, reporting end-to-end and per-stage
-median/p95 latency, raw samples and checked outputs.
-Its default [resident composition](pipelines/vision/README.md) publishes RGB
-once, keeps landmarks and crops on the GPU, and composes model graphs around
-an explicit CPU face-selection boundary. `--pipeline host` retains the separate
-host-API baseline for comparisons.
 
 ## Use from Rust
 
