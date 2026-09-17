@@ -1,5 +1,15 @@
 # Validation
 
+## Runtime composition 0.7.1 qualification, 2026-09-17
+
+All-feature CPU and documentation tests pass on Rust 1.91. Stable strict
+all-target Clippy and Rustdoc, formatting, and both feature configurations pass.
+All 24 inference hardware tests pass on gfx1151, including graph-local private
+scratch reuse, packed RGB geometry validation, direct host publication, and
+resident row gathering. Model-specific integration crates and benchmarks have
+been removed; the runtime has no Cargo dependencies on downstream model crates.
+These checks do not qualify downstream model accuracy or application throughput.
+
 ## Graph composition 0.7 qualification, 2026-09-16
 
 All-feature CPU and documentation tests, strict all-target Clippy, and 19

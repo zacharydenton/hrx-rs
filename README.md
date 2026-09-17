@@ -91,7 +91,7 @@ Requires Rust 1.91 or later.
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.7.0", features = ["npu"] }
+hrx = { package = "hrx-rs", version = "0.7.1", features = ["npu"] }
 ```
 
 ```rust,no_run
@@ -238,7 +238,7 @@ its own pinned user-space runtime, including HSA, and the Loom compiler.
 Install the CLI, including optional NPU support:
 
 ```sh
-cargo install hrx-rs --version 0.7.0 --locked --features npu
+cargo install hrx-rs --version 0.7.1 --locked --features npu
 hrx prepare
 hrx doctor
 ```

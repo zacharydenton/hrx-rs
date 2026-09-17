@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 — 2026-09-17
 
 - Add audited graph-local private scratch reuse. Model IO and weights remain
   distinct; hazards order workspace reuse and separate slots remain independent.
