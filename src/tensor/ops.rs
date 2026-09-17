@@ -3,7 +3,7 @@ use crate::{
     Error, Result,
     inference::{Inference, ModelContext, PreparedModel},
     loom::Specialization,
-    model::{Command, Dispatch, ModelSession},
+    model::{Command, Dispatch, ModelFragment, ModelSession},
     plan_cache::PlanCache,
 };
 use std::sync::Arc;
@@ -15,6 +15,80 @@ pub struct TensorOps {
     gather: PlanCache<(TensorDesc, usize), PreparedModel>,
 }
 impl TensorOps {
+    /// Recordable row gather with directly bound source and U32 `[rows]`
+    /// indices. Output is host-visible so final records can be mapped without
+    /// a copy; GPU consumers can bind it directly. Out-of-range indices select
+    /// row zero, so callers must validate indices before publication.
+    pub fn gather_rows_fragment(&self, input: &TensorDesc, rows: usize) -> Result<ModelFragment> {
+        self.gather_fragment(input, rows, true)
+    }
+    fn gather_fragment(
+        &self,
+        input: &TensorDesc,
+        rows: usize,
+        mapped: bool,
+    ) -> Result<ModelFragment> {
+        if input.shape().len() != 2
+            || !input.is_contiguous()
+            || input.is_empty()
+            || input.bytes() > i32::MAX as usize
+            || rows == 0
+        {
+            return Err(Error::Message(
+                "gather requires nonempty contiguous rows".into(),
+            ));
+        }
+        let output = TensorDesc::new(input.dtype(), vec![rows, input.shape()[1]])?
+            .with_layout(input.layout())?;
+        if output.bytes() > i32::MAX as usize {
+            return Err(Error::Message(
+                "gather exceeds kernel indexing limits".into(),
+            ));
+        }
+        let ids_desc = TensorDesc::new(DType::U32, vec![rows])?;
+        if ids_desc.bytes() > i32::MAX as usize {
+            return Err(Error::Message(
+                "gather index storage exceeds kernel limits".into(),
+            ));
+        }
+        let mut model = ModelSession::in_context(&self.context)?;
+        let source = model.allocate(input.bytes())?;
+        let ids = model.allocate(ids_desc.bytes())?;
+        let destination = if mapped {
+            model.allocate_shared(output.bytes())?
+        } else {
+            model.allocate(output.bytes())?
+        };
+        let mut code = include_str!("gather.loom").to_owned();
+        for (name, value) in [
+            ("INPUT", input.bytes()),
+            ("LAST_INPUT", input.bytes() - 1),
+            ("ROWS", input.shape()[0]),
+            ("LAST_ROW", input.shape()[0] - 1),
+            ("ROW_BYTES", input.shape()[1] * input.dtype().bytes()),
+            ("BUCKET", rows),
+            ("LAST_INDEX", rows - 1),
+            ("OUTPUT", output.bytes()),
+            ("LAST_OUTPUT", output.bytes() - 1),
+            ("GRID", output.bytes().div_ceil(256)),
+        ] {
+            code = code.replace(&format!("@{name}@"), &value.to_string());
+        }
+        // The embedded kernel checks indices and bounds every byte access.
+        let kernel = unsafe { model.compile(&[(&code, Specialization::new("gather"))])? }[0];
+        unsafe {
+            model.freeze(&self.context)?.fragment(
+                &[Command::Dispatch(Dispatch::indices(
+                    kernel,
+                    [0],
+                    [output.bytes().div_ceil(256) as u32, 1, 1],
+                    vec![source.read(), ids.read(), destination.write()],
+                ))],
+                &[(source, input.clone()), (ids, ids_desc)],
+                &[(destination, output)],
+            )
+        }
+    }
     /// Create lazy bounded caches, evicting only unleased and drained plans.
     pub fn new(context: &ModelContext, capacity: usize) -> Result<Self> {
         Ok(Self {
@@ -49,49 +123,8 @@ impl TensorOps {
             .len()
             .checked_next_power_of_two()
             .ok_or_else(|| Error::Message("gather size overflow".into()))?;
-        let padded = TensorDesc::new(desc.dtype(), vec![bucket, desc.shape()[1]])?
-            .with_layout(desc.layout())?;
-        if padded.bytes() > i32::MAX as usize {
-            return Err(Error::Message(
-                "gather exceeds kernel indexing limits".into(),
-            ));
-        }
         let plan = self.gather.get_or_prepare((desc.clone(), bucket), || {
-            let mut model = ModelSession::in_context(&self.context)?;
-            let source = model.allocate(desc.bytes())?;
-            let ids_desc = TensorDesc::new(DType::U32, vec![bucket])?;
-            let ids = model.allocate(ids_desc.bytes())?;
-            let destination = model.allocate(padded.bytes())?;
-            let mut code = include_str!("gather.loom").to_owned();
-            for (name, value) in [
-                ("INPUT", desc.bytes()),
-                ("LAST_INPUT", desc.bytes() - 1),
-                ("ROWS", desc.shape()[0]),
-                ("LAST_ROW", desc.shape()[0] - 1),
-                ("ROW_BYTES", desc.shape()[1] * desc.dtype().bytes()),
-                ("BUCKET", bucket),
-                ("LAST_INDEX", bucket - 1),
-                ("OUTPUT", padded.bytes()),
-                ("LAST_OUTPUT", padded.bytes() - 1),
-                ("GRID", padded.bytes().div_ceil(256)),
-            ] {
-                code = code.replace(&format!("@{name}@"), &value.to_string());
-            }
-            // Indices are checked by the host and bounded again in the kernel.
-            let kernel = unsafe { model.compile(&[(&code, Specialization::new("gather"))])? }[0];
-            unsafe {
-                model.freeze(&self.context)?.prepare(
-                    &[Command::Dispatch(Dispatch::indices(
-                        kernel,
-                        [0],
-                        [padded.bytes().div_ceil(256) as u32, 1, 1],
-                        vec![source.read(), ids.read(), destination.write()],
-                    ))],
-                    &[(source, desc.clone()), (ids, ids_desc)],
-                    &[(destination, padded.clone())],
-                    3,
-                )
-            }
+            self.gather_fragment(desc, bucket, false)?.prepare(3)
         })?;
         let bytes: Vec<_> = indices
             .iter()

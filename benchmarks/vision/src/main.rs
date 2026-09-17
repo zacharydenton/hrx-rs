@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use fast_image_resize::{
     FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer,
     images::{CroppedImageMut, Image, ImageRef},
@@ -7,7 +7,15 @@ use fast_image_resize::{
 use hrx::{benchmark::Distribution, inference::ModelContext};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::PathBuf, time::Instant};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Instant};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+enum PipelineMode {
+    #[default]
+    Resident,
+    Host,
+}
 
 #[derive(Parser)]
 #[command(about = "Single-image DINOv3 → SCRFD → ArcFace end-to-end benchmark")]
@@ -29,6 +37,9 @@ struct Args {
     /// Emit the complete report, samples and outputs as JSON instead of a table.
     #[arg(long)]
     json: bool,
+    /// Resident composed graphs (default), or the separate host API baseline.
+    #[arg(long, value_enum, default_value_t = PipelineMode::Resident)]
+    pipeline: PipelineMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -56,8 +67,10 @@ struct Pipeline {
     context: ModelContext,
     dino: dinov3_hrx::DINOv3,
     detector: scrfd_hrx::Scrfd,
-    recognizer: arcface_hrx::ArcFace,
+    recognizer: Arc<arcface_hrx::ArcFace>,
     resizer: Resizer,
+    resident: Option<hrx_vision::ResidentVision>,
+    mode: PipelineMode,
 }
 
 fn timed<T>(
@@ -151,19 +164,64 @@ impl Pipeline {
             Ok(image::load_from_memory(encoded)?.into_rgb8())
         })?;
         let (width, height) = image.dimensions();
-        let (pixels, mask) = timed(&mut milliseconds, "dino_preprocess", || {
-            dino_input(&image, width, height, &mut self.resizer)
-        })?;
-        let descriptors = timed(&mut milliseconds, "dino", || {
-            self.dino.describe_rgb(&pixels, &mask)
-        })?;
-        let faces = self.faces(&image, &mut milliseconds)?;
+        let (descriptors, faces) = match self.mode {
+            PipelineMode::Host => {
+                let (pixels, mask) = timed(&mut milliseconds, "dino_preprocess", || {
+                    dino_input(&image, width, height, &mut self.resizer)
+                })?;
+                let descriptors = timed(&mut milliseconds, "dino", || {
+                    self.dino.describe_rgb(&pixels, &mask)
+                })?;
+                (descriptors, self.faces(&image, &mut milliseconds)?)
+            }
+            PipelineMode::Resident => timed(&mut milliseconds, "resident", || {
+                if self.resident.is_none() {
+                    self.resident = Some(hrx_vision::ResidentVision::new(
+                        &self.context,
+                        &self.dino,
+                        &self.detector,
+                        self.recognizer.clone(),
+                        width as usize,
+                        height as usize,
+                    )?);
+                }
+                let output = self
+                    .resident
+                    .as_ref()
+                    .unwrap()
+                    .analyze(&image)?
+                    .readback()?;
+                ensure!(
+                    output.detections.len() == output.embeddings.len(),
+                    "face count mismatch"
+                );
+                let faces = output
+                    .detections
+                    .into_iter()
+                    .zip(output.embeddings)
+                    .map(|(d, embedding)| Face {
+                        bbox: d.bbox,
+                        score: d.score,
+                        landmarks: d.landmarks,
+                        embedding: embedding.to_vec(),
+                    })
+                    .collect();
+                Ok((output.descriptors.expect("DINO enabled"), faces))
+            })?,
+        };
         milliseconds.insert("total", start.elapsed().as_secs_f64() * 1000.);
         let after = self.context.runtime().statistics();
         ensure!(
             descriptors.len() == 2 * dinov3_hrx::HIDDEN
                 && descriptors.iter().all(|v| v.is_finite()),
             "invalid DINO descriptors"
+        );
+        ensure!(
+            faces
+                .iter()
+                .all(|face| face.embedding.len() == arcface_hrx::EMBEDDING
+                    && face.embedding.iter().all(|v| v.is_finite())),
+            "invalid face embeddings"
         );
         Ok((
             Outputs {
@@ -215,8 +273,10 @@ fn main() -> Result<()> {
         context,
         dino,
         detector,
-        recognizer,
+        recognizer: Arc::new(recognizer),
         resizer: Resizer::new(),
+        resident: None,
+        mode: args.pipeline,
     };
     let (reference, first_run) = pipeline.run(&encoded)?;
     ensure!(
@@ -256,7 +316,8 @@ fn main() -> Result<()> {
             })
         });
     let report = serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
+        "pipeline": args.pipeline,
         "image": args.image, "image_sha256": format!("{:x}", Sha256::digest(&encoded)),
         "device": args.device, "target": target,
         "cpu_affinity": cpu_affinity,
@@ -278,15 +339,7 @@ fn main() -> Result<()> {
             args.samples
         );
         println!("{:<18} {:>12} {:>12}", "stage", "median ms", "p95 ms");
-        for name in [
-            "decode",
-            "dino_preprocess",
-            "dino",
-            "scrfd",
-            "arcface",
-            "total",
-        ] {
-            let d = &distributions[name];
+        for (name, d) in &distributions {
             println!("{name:<18} {:>12.3} {:>12.3}", d.median_ms, d.p95_ms);
         }
         if reference.faces.is_empty() {
@@ -303,6 +356,77 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires gfx1151 and cached DINO/SCRFD/ArcFace models"]
+    fn resident_pipeline_matches_host_and_replays_without_transfers() -> Result<()> {
+        let context = ModelContext::new(Default::default())?;
+        let dino = dinov3_hrx::DINOv3::load_in(dinov3_hrx::hub::weights(true)?, &context, 1)?;
+        let detector = scrfd_hrx::Scrfd::load_in(scrfd_hrx::hub::weights(true)?, &context, 1)?;
+        let recognizer = Arc::new(arcface_hrx::ArcFace::load_in(
+            arcface_hrx::hub::weights(true)?,
+            &context,
+            32,
+        )?);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../scrfd-hrx/tests/fixtures/t1.png");
+        let photo = image::open(path)?.into_rgb8();
+        let black = image::RgbImage::new(photo.width(), photo.height());
+        let flipped = image::imageops::flip_horizontal(&photo);
+        let resident = hrx_vision::ResidentVision::new(
+            &context,
+            &dino,
+            &detector,
+            recognizer.clone(),
+            photo.width() as usize,
+            photo.height() as usize,
+        )?;
+        for image in [&photo, &black, &flipped, &photo] {
+            let (pixels, mask) =
+                dino_input(image, image.width(), image.height(), &mut Resizer::new())?;
+            let descriptor = dino.describe_rgb(&pixels, &mask)?;
+            let detections = detector.detect(
+                scrfd_hrx::Image {
+                    rgb: image,
+                    width: image.width() as usize,
+                    height: image.height() as usize,
+                },
+                Default::default(),
+            )?;
+            let landmarks = detections.iter().map(|d| d.landmarks).collect::<Vec<_>>();
+            let embeddings = recognizer.embed(
+                image,
+                image.width() as usize,
+                image.height() as usize,
+                &landmarks,
+            )?;
+            let held = resident.analyze(image)?;
+            assert!(
+                resident.analyze(image).is_err(),
+                "retained descriptors must backpressure reuse"
+            );
+            let actual = held.readback()?;
+            assert_eq!(actual.descriptors.as_ref().unwrap(), &descriptor);
+            assert_eq!(
+                serde_json::to_value(&actual.detections)?,
+                serde_json::to_value(&detections)?
+            );
+            assert_eq!(actual.embeddings, embeddings);
+            let before = context.runtime().statistics();
+            let again = resident.analyze(image)?.readback()?;
+            let after = context.runtime().statistics();
+            assert_eq!(again.descriptors, actual.descriptors);
+            assert_eq!(again.embeddings, actual.embeddings);
+            assert_eq!(after.allocations, before.allocations);
+            assert_eq!(after.copied_bytes, before.copied_bytes);
+            assert_eq!(after.native_graphs_prepared, before.native_graphs_prepared);
+            assert_eq!(
+                after.submissions - before.submissions,
+                if detections.is_empty() { 1 } else { 2 }
+            );
+        }
+        Ok(())
+    }
     #[test]
     fn letterbox_masks_patch_centers_and_preserves_rgb() -> Result<()> {
         for (width, height, kept) in [(224, 224, 196), (224, 112, 98), (112, 224, 98)] {

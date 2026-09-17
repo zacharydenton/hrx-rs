@@ -657,15 +657,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "document-features"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
-dependencies = [
- "litrs",
-]
-
-[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -706,18 +697,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "fast_image_resize"
-version = "5.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d372ab3252d8f162d858d675a3d88a8c33ba24a6238837c50c8851911c7e89cd"
-dependencies = [
- "cfg-if",
- "document-features",
- "num-traits",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1098,25 +1077,8 @@ dependencies = [
  "arcface-hrx",
  "dinov3-hrx",
  "hrx-rs",
- "scrfd-hrx",
-]
-
-[[package]]
-name = "hrx-vision-bench"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "arcface-hrx",
- "clap",
- "dinov3-hrx",
- "fast_image_resize",
- "hrx-rs",
- "hrx-vision",
  "image",
  "scrfd-hrx",
- "serde",
- "serde_json",
- "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1561,12 +1523,6 @@ name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
-
-[[package]]
-name = "litrs"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "log"

@@ -67,6 +67,9 @@ struct Entry {
 pub struct Graph {
     runtime: Runtime,
     entries: Vec<Entry>,
+    // Private fragment temporaries only. No exposed IO or model weights enter
+    // this pool; access hazards order a later fragment's reuse after all readers.
+    fragment_scratch: Vec<(bool, BufferView)>,
 }
 impl Graph {
     pub(crate) fn validate_runtime(&self, runtime: &Runtime) -> Result<()> {
@@ -111,7 +114,42 @@ impl Graph {
         Self {
             runtime,
             entries: Vec::new(),
+            fragment_scratch: Vec::new(),
         }
+    }
+
+    pub(crate) fn fragment_scratch(
+        &mut self,
+        requests: &[(usize, bool)],
+    ) -> Result<Vec<BufferView>> {
+        let mut used = Vec::with_capacity(requests.len());
+        let mut result = Vec::with_capacity(requests.len());
+        for &(bytes, host_visible) in requests {
+            let best = self
+                .fragment_scratch
+                .iter()
+                .enumerate()
+                .filter(|(index, (host, view))| {
+                    !used.contains(index) && *host == host_visible && view.len() >= bytes
+                })
+                .min_by_key(|(_, (_, view))| view.len())
+                .map(|(index, _)| index);
+            let index = if let Some(index) = best {
+                index
+            } else {
+                let placement = if host_visible {
+                    super::MemoryPlacement::HostVisible
+                } else {
+                    super::MemoryPlacement::GpuLocal
+                };
+                let view = self.runtime.allocate(bytes, placement)?.view();
+                self.fragment_scratch.push((host_visible, view));
+                self.fragment_scratch.len() - 1
+            };
+            used.push(index);
+            result.push(self.fragment_scratch[index].1.slice(0..bytes)?);
+        }
+        Ok(result)
     }
     fn push(&mut self, operation: Description, uses: Vec<Use>) -> Result<Node> {
         for binding in &uses {

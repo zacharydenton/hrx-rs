@@ -61,14 +61,45 @@ impl ImageOps {
         width: usize,
         sampling: RgbSampling,
     ) -> Result<ModelFragment> {
+        self.affine_fragment(input, crops, height, width, sampling, false)
+    }
+
+    /// Sample crops from differently sized RGB images in one packed byte buffer.
+    /// Inputs are U8 `[bytes]`, F32 `[crops,2,3]` inverse matrices, and U32
+    /// `[crops,3]` records `(byte_offset, width, height)`. Repeated records sample
+    /// several faces from one image without duplicating its pixels. Geometry is
+    /// runtime data: changing image sizes does not compile another graph.
+    /// Axes must be 1..=32767. Invalid records produce black; source reads are
+    /// bounded to the byte buffer.
+    pub fn affine_packed_rgb_fragment(
+        &self,
+        input: &TensorDesc,
+        crops: usize,
+        height: usize,
+        width: usize,
+        sampling: RgbSampling,
+    ) -> Result<ModelFragment> {
+        self.affine_fragment(input, crops, height, width, sampling, true)
+    }
+
+    fn affine_fragment(
+        &self,
+        input: &TensorDesc,
+        crops: usize,
+        height: usize,
+        width: usize,
+        sampling: RgbSampling,
+        packed: bool,
+    ) -> Result<ModelFragment> {
         let shape = input.shape();
         if input.dtype() != DType::U8
-            || input.layout() != Layout::Nhwc
+            || if packed {
+                input.layout() != Layout::General || shape.len() != 1
+            } else {
+                input.layout() != Layout::Nhwc || shape.len() != 4 || shape[0] != 1 || shape[3] != 3
+            }
             || !input.is_contiguous()
             || input.is_empty()
-            || shape.len() != 4
-            || shape[0] != 1
-            || shape[3] != 3
             || input.elements() > i32::MAX as usize
             || crops == 0
             || height == 0
@@ -88,6 +119,15 @@ impl ImageOps {
         }
         let count = output.elements();
         let mut source = include_str!("affine_rgb.loom").to_owned();
+        source = source.replace(
+            "@GEOMETRY_ARG@",
+            if packed { ", %geometry: buffer" } else { "" },
+        );
+        source = source.replace("@GEOMETRY@", if packed {
+            include_str!("affine_packed_geometry.loom")
+        } else {
+            "%sw = index.constant @SOURCE_WIDTH@ : index\n%fw = scalar.constant @SOURCE_WIDTH@.0 : f32\n%fh = scalar.constant @SOURCE_HEIGHT@.0 : f32\n%source_offset = index.constant 0 : index\n%geometry_ok = scalar.constant true : i1"
+        });
         for (name, value) in [
             ("COUNT", count),
             ("LAST_OUTPUT", count - 1),
@@ -98,8 +138,16 @@ impl ImageOps {
             ("GRID", count.div_ceil(256)),
             ("WIDTH", width),
             ("PIXELS", height * width),
-            ("SOURCE_WIDTH", shape[2]),
-            ("SOURCE_HEIGHT", shape[1]),
+            (
+                "SOURCE_WIDTH",
+                if packed { input.elements() } else { shape[2] },
+            ),
+            (
+                "SOURCE_HEIGHT",
+                if packed { input.elements() } else { shape[1] },
+            ),
+            ("GEOMETRY_COUNT", crops * 3),
+            ("GEOMETRY_LAST", crops * 3 - 1),
         ] {
             source = source.replace(&format!("@{name}@"), &value.to_string());
         }
@@ -130,6 +178,14 @@ impl ImageOps {
         let src = model.allocate(input.bytes())?;
         let maps = model.allocate(matrices.bytes())?;
         let dst = model.allocate(output.bytes())?;
+        let mut inputs = vec![(src, input.clone()), (maps, matrices)];
+        let mut args = vec![src.read(), maps.read(), dst.write()];
+        if packed {
+            let desc = TensorDesc::new(DType::U32, vec![crops, 3])?;
+            let geometry = model.allocate(desc.bytes())?;
+            inputs.push((geometry, desc));
+            args.push(geometry.read());
+        }
         // Kernel loads are guarded before conversion and bounded to these extents.
         let kernel = unsafe { model.compile(&[(&source, Specialization::new("affine_rgb"))])? }[0];
         unsafe {
@@ -138,9 +194,9 @@ impl ImageOps {
                     kernel,
                     [0],
                     [count.div_ceil(256) as u32, 1, 1],
-                    vec![src.read(), maps.read(), dst.write()],
+                    args,
                 ))],
-                &[(src, input.clone()), (maps, matrices)],
+                &inputs,
                 &[(dst, output)],
             )
         }

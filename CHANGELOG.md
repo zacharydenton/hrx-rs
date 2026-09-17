@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Add audited graph-local private scratch reuse. Model IO and weights remain
+  distinct; hazards order workspace reuse and separate slots remain independent.
+- Add runtime-geometry packed RGB affine sampling for mixed-resolution batches,
+  with checked extents, explicit sampling contracts and reusable graph bindings.
+- Add direct host-slot publication callbacks, avoiding capacity-sized temporary
+  buffers for variable-length packed inputs.
+- Add batched vision composition with caller-defined downscaling, resident
+  landmark gathering/alignment, bounded shape caches and lazy source storage.
+- Expose directly bound row-gather fragments for resident cross-model graphs.
+- Add an unpublished `hrx-vision` integration crate and use its shared-image,
+  two-phase DINO/SCRFD/ArcFace graph in the vision benchmark by default. Keep
+  CPU face selection explicit and expose resident final tensors to callers.
+
 ## 0.7.0 — 2026-09-17
 
 - Add validated model fragments that record into caller-owned execution graphs
