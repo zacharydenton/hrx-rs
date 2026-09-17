@@ -30,6 +30,7 @@ pub struct ModelFragment {
     commands: Vec<(Option<GpuKernel>, Vec<Region>, Option<u8>)>,
     inputs: Vec<(Region, TensorDesc)>,
     outputs: Vec<(Region, TensorDesc)>,
+    reuse_private_scratch: bool,
 }
 
 impl ModelSession {
@@ -239,11 +240,27 @@ impl ModelDefinition {
             commands: prepared,
             inputs: inputs.to_vec(),
             outputs: outputs.to_vec(),
+            reuse_private_scratch: false,
         })
     }
 }
 
 impl ModelFragment {
+    /// Reuse private temporaries across fragments recorded into the same graph.
+    /// Input/output allocations and immutable weights are never recycled. Each
+    /// inference slot still owns a separate workspace. Graph hazards order reads
+    /// before a later fragment overwrites that storage, potentially serializing
+    /// otherwise independent branches in exchange for lower peak memory.
+    ///
+    /// # Safety
+    /// Every private scratch byte read by this fragment must first be written
+    /// by this fragment on every execution, including padding and conditional
+    /// paths. Neither initial zeroes nor another fragment's values may be used.
+    /// All scratch accesses must already be declared by the kernel contracts.
+    pub unsafe fn reuse_private_scratch(mut self) -> Self {
+        self.reuse_private_scratch = true;
+        self
+    }
     /// Allocate independent fixed-address slots, exposing their actual model IO.
     pub fn prepare(&self, capacity: usize) -> Result<PreparedModel> {
         PreparedModel::prepare(&self.context, capacity, |context| {
@@ -303,6 +320,33 @@ impl ModelFragment {
                 } else {
                     buffers[region.allocation] = Some((region.offset, binding));
                 }
+            }
+        }
+        if self.reuse_private_scratch {
+            let private: Vec<_> = self
+                .allocations
+                .iter()
+                .enumerate()
+                .filter_map(|(index, storage)| match storage {
+                    Storage::Scratch(_, placement)
+                        if self.extents[index] > 0
+                            && !self
+                                .inputs
+                                .iter()
+                                .chain(&self.outputs)
+                                .any(|(region, _)| region.allocation == index) =>
+                    {
+                        Some((
+                            index,
+                            (self.extents[index], matches!(placement, Placement::Shared)),
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let requests: Vec<_> = private.iter().map(|(_, request)| *request).collect();
+            for ((index, _), view) in private.into_iter().zip(graph.fragment_scratch(&requests)?) {
+                buffers[index] = Some((0, view));
             }
         }
         for (index, storage) in self.allocations.iter().enumerate() {

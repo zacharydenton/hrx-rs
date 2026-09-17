@@ -584,6 +584,24 @@ impl ModelSlot {
                 "host model input byte count mismatch".into(),
             ));
         }
+        self.submit_host_with(|index, destination| {
+            destination.copy_from_slice(inputs[index]);
+            Ok(())
+        })
+    }
+
+    /// Publish directly into the exclusively leased slot's host staging.
+    /// The callback runs once per input, in order, before any GPU work is
+    /// submitted. An error releases the slot without executing the graph.
+    /// Unwritten bytes retain their previous contents: initialize every byte
+    /// the graph can read. This supports packed variable-length inputs without
+    /// building or clearing a capacity-sized temporary host buffer.
+    pub fn submit_host_with(
+        self,
+        mut write: impl FnMut(usize, &mut [u8]) -> Result<()>,
+    ) -> Result<Inference> {
+        let pool = &self.lease.pool;
+        let slot = &pool.slots[self.lease.index];
         let upload = crate::cached_init(&slot.upload, || {
             Ok(Arc::new(Transfer::prepare(
                 &pool.context,
@@ -591,9 +609,11 @@ impl ModelSlot {
                 true,
             )?))
         })?;
-        for (bytes, host) in inputs.iter().zip(&upload.buffers) {
+        for (index, host) in upload.buffers.iter().enumerate() {
             if let Some(host) = host {
-                host.map_write()?.copy_from_slice(bytes);
+                write(index, &mut host.map_write()?)?;
+            } else {
+                write(index, &mut [])?;
             }
         }
         let dependencies = if let Some(upload) = &upload.graph {

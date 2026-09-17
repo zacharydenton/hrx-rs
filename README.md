@@ -86,6 +86,10 @@ using those runtimes; they do not measure the Rust scheduler.
 The [single-image Rust vision benchmark](benchmarks/vision/README.md) runs DINOv3,
 SCRFD and ArcFace in one shared HRX context, reporting end-to-end and per-stage
 median/p95 latency, raw samples and checked outputs.
+Its default [resident composition](pipelines/vision/README.md) publishes RGB
+once, keeps landmarks and crops on the GPU, and composes model graphs around
+an explicit CPU face-selection boundary. `--pipeline host` retains the separate
+host-API baseline for comparisons.
 
 ## Use from Rust
 
@@ -164,6 +168,13 @@ factory returning `InferenceGraph { inputs, outputs, graph }`: each slot owns
 the actual pipeline bindings, including sliced or in-place IO. Host transfer
 storage is allocated on first upload/readback and reused thereafter; device-only
 pipelines allocate none. Independent slots must not share writable IO.
+
+Audited fragments can opt into `reuse_private_scratch`: private activation
+storage is reused across stages in the same graph, while outputs, inputs and
+weights remain distinct. The fragment must initialize every temporary byte it
+reads; the graph's memory hazards order reuse after earlier readers. Independent
+slots never share this workspace. `ModelSlot::submit_host_with` publishes packed
+host inputs directly into reserved staging without an extra host assembly buffer.
 
 Shared operations need not all execute on the GPU. `TensorOps::gather_rows`
 accepts checked host-selected indices while keeping complete rows on-device.

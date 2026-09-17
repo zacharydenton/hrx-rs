@@ -9,6 +9,230 @@ use hrx::{
 
 #[test]
 #[ignore = "requires GPU and Loom compiler"]
+fn graph_reuses_private_scratch_without_aliasing_outputs() -> hrx::Result<()> {
+    use hrx::{
+        loom::Specialization,
+        model::{Command, Dispatch, ModelSession},
+    };
+    let context = ModelContext::new(Default::default())?;
+    let mut model = ModelSession::in_context(&context)?;
+    let temporary = model.allocate(64)?;
+    let output = model.allocate_shared(64)?;
+    let source = r#"
+amdgpu.target<gfx11-generic> @t {subgroup_size = 32}
+kernel.def target(@t) export("copy") @copy(%unused: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 64 : index
+  kernel.launch.config workgroups(%one, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%unused: index, %input: buffer, %output: buffer) {
+  %zero = index.constant 0 : offset
+  %lane = kernel.workitem.id<x> : index
+  %i = index.assume %lane [range(%lane, 0, 63)] : index
+  %ig = buffer.assume.memory_space<global> %input : buffer
+  %og = buffer.assume.memory_space<global> %output : buffer
+  %iv = buffer.view %ig[%zero] : buffer -> view<64xi8>
+  %ov = buffer.view %og[%zero] : buffer -> view<64xi8>
+  %v = view.load %iv[%i] : view<64xi8> -> i8
+  view.store %v, %ov[%i] : i8, view<64xi8>
+  kernel.return
+}
+"#;
+    let kernel = unsafe { model.compile(&[(source, Specialization::new("copy"))])? }[0];
+    let engine = model.freeze(&context)?;
+    let fragment = |value| -> hrx::Result<_> {
+        // The full temporary is initialized by Fill before its only read.
+        unsafe {
+            Ok(engine
+                .fragment(
+                    &[
+                        Command::Fill {
+                            region: temporary,
+                            value,
+                        },
+                        Command::Dispatch(Dispatch::indices(
+                            kernel,
+                            [0],
+                            [1, 1, 1],
+                            vec![temporary.read(), output.write()],
+                        )),
+                    ],
+                    &[],
+                    &[(output, TensorDesc::new(DType::U8, vec![64])?)],
+                )?
+                .reuse_private_scratch())
+        }
+    };
+    let first = fragment(7)?;
+    let second = fragment(11)?;
+    let before = context.runtime().statistics();
+    let plan = PreparedModel::prepare(&context, 2, |context| {
+        let mut graph = context.runtime().graph();
+        let mut outputs = first.record(&mut graph, &[])?;
+        outputs.extend(second.record(&mut graph, &[])?);
+        Ok(InferenceGraph {
+            inputs: vec![],
+            outputs,
+            graph: graph.prepare()?,
+        })
+    })?;
+    let after = context.runtime().statistics();
+    // Two independent slots; each has one temporary and two distinct outputs.
+    assert_eq!(after.allocations - before.allocations, 6);
+    for _ in 0..3 {
+        let a = plan.submit_host(&[])?;
+        let b = plan.submit_host(&[])?;
+        assert_eq!(b.download()?.wait()?, vec![vec![7; 64], vec![11; 64]]);
+        assert_eq!(a.download()?.wait()?, vec![vec![7; 64], vec![11; 64]]);
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires GPU and Loom compiler"]
+fn packed_affine_reuses_geometry_and_bounds_invalid_records() -> hrx::Result<()> {
+    use hrx::{
+        execution::MemoryPlacement,
+        image::{ImageOps, RgbSampling},
+    };
+    let context = ModelContext::new(Default::default())?;
+    let ops = ImageOps::new(&context, 1)?;
+    let fragment = ops.affine_packed_rgb_fragment(
+        &TensorDesc::new(DType::U8, vec![48])?,
+        4,
+        2,
+        2,
+        RgbSampling::BlackTiesEven,
+    )?;
+    let plan = PreparedModel::prepare(&context, 1, |context| {
+        let inputs = [
+            TensorDesc::new(DType::U8, vec![48])?,
+            TensorDesc::new(DType::F32, vec![4, 2, 3])?,
+            TensorDesc::new(DType::U32, vec![4, 3])?,
+        ]
+        .into_iter()
+        .map(|desc| context.allocate_with(desc, MemoryPlacement::HostVisible))
+        .collect::<hrx::Result<Vec<_>>>()?;
+        let mut graph = context.runtime().graph();
+        let outputs = fragment.record(&mut graph, &inputs)?;
+        Ok(InferenceGraph {
+            inputs,
+            outputs,
+            graph: graph.prepare()?,
+        })
+    })?;
+    let pixels: Vec<u8> = (0..48).collect();
+    let maps: Vec<u8> = [1f32, 0., 0., 0., 1., 0.]
+        .into_iter()
+        .cycle()
+        .take(24)
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    let geometry = |records: [[u32; 3]; 4]| {
+        records
+            .into_iter()
+            .flatten()
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>()
+    };
+    let meta = geometry([[12, 3, 2], [0, 2, 2], [12, 3, 2], [30, 2, 3]]);
+    let expected: Vec<u8> = [12..18, 21..27, 0..12, 12..18, 21..27, 30..42]
+        .into_iter()
+        .flat_map(|range| pixels[range].iter().copied())
+        .collect();
+    assert_eq!(
+        plan.submit_host(&[&pixels, &maps, &meta])?
+            .download()?
+            .wait()?[0],
+        expected
+    );
+    let invalid = geometry([
+        [u32::MAX, 2, 2],
+        [0, 0, 1],
+        [0, u32::MAX, u32::MAX],
+        [47, 2, 2],
+    ]);
+    assert_eq!(
+        plan.submit_host(&[&pixels, &maps, &invalid])?
+            .download()?
+            .wait()?[0],
+        vec![0; 48]
+    );
+    let slot = plan.try_acquire()?;
+    assert!(
+        slot.submit_host_with(|_, _| Err(hrx::Error::Message("cancel publication".into())))
+            .is_err()
+    );
+    assert!(plan.is_idle());
+    assert_eq!(
+        plan.try_acquire()?
+            .submit_host_with(|i, dst| {
+                dst.copy_from_slice([pixels.as_slice(), &maps, &meta][i]);
+                Ok(())
+            })?
+            .download()?
+            .wait()?[0],
+        expected
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires GPU and Loom compiler"]
+fn row_gather_fragment_binds_resident_source_and_reuses_mapped_io() -> hrx::Result<()> {
+    use hrx::{execution::MemoryPlacement, tensor::TensorOps};
+    let context = ModelContext::new(Default::default())?;
+    let ops = TensorOps::new(&context, 1)?;
+    let desc = TensorDesc::new(DType::U8, vec![4, 7])?;
+    assert!(ops.gather_rows_fragment(&desc, 0).is_err());
+    assert!(
+        ops.gather_rows_fragment(&TensorDesc::new(DType::U8, vec![0, 7])?, 2)
+            .is_err()
+    );
+    let gather = ops.gather_rows_fragment(&desc, 3)?;
+    let source = context.allocate_with(desc, MemoryPlacement::HostVisible)?;
+    let plan = PreparedModel::prepare(&context, 1, |context| {
+        let ids = context.allocate_with(
+            TensorDesc::new(DType::U32, vec![3])?,
+            MemoryPlacement::HostVisible,
+        )?;
+        let mut graph = context.runtime().graph();
+        let outputs = gather.record(&mut graph, &[source.clone(), ids.clone()])?;
+        Ok(InferenceGraph {
+            inputs: vec![source.clone(), ids],
+            outputs,
+            graph: graph.prepare()?,
+        })
+    })?;
+    let bytes: Vec<u8> = (0..28).collect();
+    let ids: Vec<u8> = [3u32, 0, 3]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect();
+    let expected: Vec<u8> = [3, 0, 3]
+        .into_iter()
+        .flat_map(|i| bytes[i * 7..][..7].iter().copied())
+        .collect();
+    assert_eq!(
+        plan.submit_host(&[&bytes, &ids])?.download()?.wait()?,
+        vec![expected.clone()]
+    );
+    let before = context.runtime().statistics();
+    for _ in 0..3 {
+        assert_eq!(
+            plan.submit_host(&[&bytes, &ids])?.download()?.wait()?,
+            vec![expected.clone()]
+        );
+    }
+    let after = context.runtime().statistics();
+    assert_eq!(after.allocations, before.allocations);
+    assert_eq!(after.copied_bytes, before.copied_bytes);
+    assert_eq!(after.native_graphs_prepared, before.native_graphs_prepared);
+    assert_eq!(after.submissions - before.submissions, 3);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires GPU and Loom compiler"]
 fn fragments_share_one_graph_without_intermediate_copies_or_allocations() -> hrx::Result<()> {
     use hrx::{image::ImageOps, tensor::Layout};
     let context = ModelContext::new(Default::default())?;

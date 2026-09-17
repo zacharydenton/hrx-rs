@@ -5,7 +5,7 @@ kernel.def target(@affine_target) export("affine_rgb") @affine_rgb(%unused: inde
   %threads = index.constant 256 : index
   %grid = index.constant @GRID@ : index
   kernel.launch.config workgroups(%grid, %one, %one) workgroup_size(%threads, %one, %one) : index
-} launch(%unused: index, %input: buffer, %matrices: buffer, %output: buffer) {
+} launch(%unused: index, %input: buffer, %matrices: buffer, %output: buffer@GEOMETRY_ARG@) {
   %off = index.constant 0 : offset
   %zero = index.constant 0 : index
   %one = index.constant 1 : index
@@ -17,7 +17,6 @@ kernel.def target(@affine_target) export("affine_rgb") @affine_rgb(%unused: inde
   %count = index.constant @COUNT@ : index
   %width = index.constant @WIDTH@ : index
   %pixels = index.constant @PIXELS@ : index
-  %sw = index.constant @SOURCE_WIDTH@ : index
   %threads = index.constant 256 : index
   %lane = kernel.workitem.id<x> : index
   %group = kernel.workgroup.id<x> : index
@@ -35,6 +34,7 @@ kernel.def target(@affine_target) export("affine_rgb") @affine_rgb(%unused: inde
     %channel = index.rem %i, %three : index
     %pixel = index.div %i, %three : index
     %face = index.div %pixel, %pixels : index
+    @GEOMETRY@
     %local = index.rem %pixel, %pixels : index
     %x = index.rem %local, %width : index
     %y = index.div %local, %width : index
@@ -71,8 +71,6 @@ kernel.def target(@affine_target) export("affine_rgb") @affine_rgb(%unused: inde
     %fzero = scalar.constant 0.0 : f32
     %fone = scalar.constant 1.0 : f32
     %minusone = scalar.constant -1.0 : f32
-    %fw = scalar.constant @SOURCE_WIDTH@.0 : f32
-    %fh = scalar.constant @SOURCE_HEIGHT@.0 : f32
     %ix0 = scalar.cmpf ogt, %xx, %minusone : f32
     %ix1 = scalar.cmpf olt, %xx, %fw : f32
     %iy0 = scalar.cmpf ogt, %yy, %minusone : f32
@@ -87,7 +85,8 @@ kernel.def target(@affine_target) export("affine_rgb") @affine_rgb(%unused: inde
     %finitex = scalar.cmpf olt, %absx, %bound : f32
     %finitey = scalar.cmpf olt, %absy, %bound : f32
     %finite = scalar.andi %finitex, %finitey : i1
-    %inside = scf.select %replicate, %finite, %inbounds : i1
+    %sample_ok = scf.select %replicate, %finite, %inbounds : i1
+    %inside = scalar.andi %sample_ok, %geometry_ok : i1
     %value = scf.if %inside -> (f32) {
       %floorx = scalar.floorf %xx : f32
       %floory = scalar.floorf %yy : f32
@@ -128,10 +127,16 @@ kernel.def target(@affine_target) export("affine_rgb") @affine_rgb(%unused: inde
             %pyraw = index.cast %pyint : i32 to index
             %pxidx = index.assume %pxraw [range(%pxraw, 0, @SOURCE_WIDTH@)] : index
             %pyidx = index.assume %pyraw [range(%pyraw, 0, @SOURCE_HEIGHT@)] : index
-            %offsety = index.mul %pyidx, %sw : index
-            %offsetx = index.add %offsety, %pxidx : index
-            %rgb = index.mul %offsetx, %three : index
-            %addr = index.add %rgb, %channel : index
+            %swi = index.cast %sw : index to i32
+            %source_i = index.cast %source_offset : index to i32
+            %channel_i = index.cast %channel : index to i32
+            %three_i = scalar.constant 3 : i32
+            %offsety = scalar.muli %pyint, %swi : i32
+            %offsetx = scalar.addi %offsety, %pxint : i32
+            %rgb = scalar.muli %offsetx, %three_i : i32
+            %local_addr = scalar.addi %rgb, %channel_i : i32
+            %address_i = scalar.addi %local_addr, %source_i : i32
+            %addr = index.cast %address_i : i32 to index
             %at = index.assume %addr [range(%addr, 0, @LAST_INPUT@)] : index
             %byte = view.load %iv[%at] : view<@INPUT@xi8> -> i8
             %uint = scalar.extui %byte : i8 to i32
