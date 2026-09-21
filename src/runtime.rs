@@ -1000,10 +1000,27 @@ impl Stream {
     fn reclaim_staging(&mut self) {
         let mut cached = self.staging_pool.iter().map(|b| b.bytes).sum::<usize>();
         for buffer in self.staging.drain(..) {
-            if self.staging_pool.len() < 8 && buffer.bytes <= STAGING_LIMIT.saturating_sub(cached) {
-                cached += buffer.bytes;
-                self.staging_pool.push(buffer);
+            if buffer.bytes > STAGING_LIMIT {
+                continue;
             }
+            // A pool filled by tiny uploads must adapt when larger uploads
+            // arrive. Otherwise every later large staging allocation is thrown
+            // away while the unusable small allocations remain cached forever.
+            // All entries here have completed their queued copies.
+            while self.staging_pool.len() >= 8
+                || buffer.bytes > STAGING_LIMIT.saturating_sub(cached)
+            {
+                let smallest = self
+                    .staging_pool
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, b)| b.bytes)
+                    .map(|(i, _)| i)
+                    .expect("nonempty staging pool exceeds its limit");
+                cached -= self.staging_pool.swap_remove(smallest).bytes;
+            }
+            cached += buffer.bytes;
+            self.staging_pool.push(buffer);
         }
     }
     /// Submit pending commands before querying completion; native query alone
@@ -1983,6 +2000,44 @@ mod staging_tests {
         stream.upload(buffer.binding(), &[13; 1024])?;
         assert_eq!(stream.staging.len(), 1);
         stream.synchronize()?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires gfx1151"]
+    fn larger_uploads_replace_small_completed_staging() -> Result<()> {
+        let mut stream = Stream::open()?;
+        let buffer = stream.allocate(16 << 20)?;
+        for _ in 0..8 {
+            stream.upload(buffer.binding(), &[7; 1024])?;
+        }
+        stream.synchronize()?;
+        assert_eq!(stream.staging_pool.len(), 8);
+
+        let source = vec![0x35; 1 << 20];
+        stream.upload(buffer.binding(), &source)?;
+        let large = stream.staging[0].raw;
+        stream.synchronize()?;
+        let replacement = vec![0xa9; source.len()];
+        stream.upload(buffer.binding(), &replacement)?;
+        assert_eq!(stream.staging[0].raw, large);
+        let mut output = vec![0; source.len()];
+        stream.read_blocking(buffer.try_slice(0, output.len())?, &mut output)?;
+        assert_eq!(output, replacement);
+        assert!(stream.staging_pool.len() <= 8);
+        assert!(stream.staging_pool.iter().map(|b| b.bytes).sum::<usize>() <= STAGING_LIMIT);
+
+        // Larger packets also exercise eviction at the byte ceiling, before
+        // the cache reaches its eight-entry ceiling.
+        let source = vec![0x63; 16 << 20];
+        for _ in 0..9 {
+            stream.upload(buffer.binding(), &source)?;
+        }
+        let mut output = vec![0; source.len()];
+        stream.read_blocking(buffer.binding(), &mut output)?;
+        assert_eq!(output, source);
+        assert!(stream.staging_pool.len() <= 8);
+        assert!(stream.staging_pool.iter().map(|b| b.bytes).sum::<usize>() <= STAGING_LIMIT);
         Ok(())
     }
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Let the upload staging cache replace completed small allocations when larger
+  uploads arrive. Retain the eight-entry and 64 MiB limits while avoiding
+  repeated allocation after a workload changes its upload sizes.
+
 ## 0.7.1 — 2026-09-17
 
 - Add audited graph-local private scratch reuse. Model IO and weights remain
