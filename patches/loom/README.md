@@ -46,6 +46,19 @@ before the fix and passes afterward. The isolated fix is on fork branch
 [`fix/loom-gfx11-vmem-source-reuse`](https://github.com/zacharydenton/hrx-system/tree/fix/loom-gfx11-vmem-source-reuse),
 commit [`beaff74b2`](https://github.com/zacharydenton/hrx-system/commit/beaff74b2).
 
+`0009-amdgpu-profile-processor-mode.patch` adds a typed AMDGPU profile
+extension for default, CU, or WGP execution. The policy survives target
+specialization and module serialization, selects the occupancy domain, and
+sets the native and assembly kernel descriptors consistently. Explicit modes
+are supported on GFX11/GFX12. Older libraries reject the nonempty extension
+chain instead of silently ignoring it. The patch includes native profile,
+serialization, and occupancy tests plus generator validation.
+
+This ninth patch is a local compiler extension and is **not included in the
+currently pinned runtime bundle**. To use `CompilerOptions::processor_mode`,
+build the patched compiler below and set `HRX_LOOM_LIBRARY`; default-mode
+compilation still works with the pinned bundle and retains its cache keys.
+
 ## Rebuild the compiler
 
 From this HRX checkout, with upstream's build prerequisites installed:
@@ -88,3 +101,5 @@ Patch SHA-256 values:
 - `0005-materialize-encoding-config.patch`: `a74b0ae2cd73be6bbd219b8f27d324944df088eeb582e411baa47ebabbd6ead2`
 - `0006-bind-dependent-inline-types.patch`: `c196c0e284c2d8ba6946c00b9816a43208ab6ef55dc1601fab30efc3b4f8d56c`
 - `0007-gfx11-vmem-source-reuse.patch`: `032a77cd4786b71e916f9e1d7ce69faed1d8e8b22c7f111bfa1ca47b2d814556`
+
+- `0009-amdgpu-profile-processor-mode.patch`: `5f262dfcd0e981291e3defb21da48e2152d57bc07fc5fa5aa88a38ab563e61cb`

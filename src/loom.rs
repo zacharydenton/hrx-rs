@@ -62,6 +62,19 @@ pub struct Diagnostic {
     /// One-based source column, or zero when unavailable.
     pub column: u32,
 }
+/// AMDGPU workgroup scheduling domain. Explicit modes require compiler support.
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessorMode {
+    /// Preserve the compiler's default for the selected target.
+    #[default]
+    Default,
+    /// Schedule each workgroup within a single compute unit (GFX11/GFX12).
+    ComputeUnit,
+    /// Schedule across a workgroup processor (GFX11/GFX12).
+    WorkgroupProcessor,
+}
+
 /// Compiler target and limits for concurrent workspaces and cached modules.
 #[derive(Clone, Debug)]
 pub struct CompilerOptions {
@@ -72,12 +85,15 @@ pub struct CompilerOptions {
     /// Maximum retained source modules; zero disables module caching.
     /// Eviction chooses an arbitrary entry, not the least recently used module.
     pub module_cache_capacity: usize,
+    /// Execution policy; older compiler libraries reject explicit modes.
+    pub processor_mode: ProcessorMode,
 }
 impl Default for CompilerOptions {
     fn default() -> Self {
         Self {
             target: crate::Target::default(),
             module_cache_capacity: 64,
+            processor_mode: ProcessorMode::Default,
             workers: NonZeroUsize::new(
                 std::thread::available_parallelism()
                     .map_or(1, NonZeroUsize::get)
@@ -109,6 +125,7 @@ struct Inner {
     target: crate::Target,
     workers: NonZeroUsize,
     module_cache_capacity: usize,
+    processor_mode: ProcessorMode,
     path: PathBuf,
     identity: String,
 }
@@ -119,6 +136,7 @@ struct SharedCompilerKey {
     target: String,
     workers: NonZeroUsize,
     module_cache_capacity: usize,
+    processor_mode: ProcessorMode,
 }
 /// A pinned compiler library and reusable native state, shared by cheap clones.
 #[derive(Clone)]
@@ -162,6 +180,7 @@ impl Compiler {
             target: options.target.as_str().to_owned(),
             workers: options.workers,
             module_cache_capacity: options.module_cache_capacity,
+            processor_mode: options.processor_mode,
         };
         let mut cache = RESOLVED
             .lock()
@@ -191,8 +210,13 @@ impl Compiler {
     pub fn with_options(library: Option<&Path>, options: CompilerOptions) -> Result<Self> {
         let path = Self::resolved_library(library)?;
         let identity = bundle::file_digest(&path)?;
-        let native =
-            native::Prepared::open(&path, &identity, options.workers.get(), &options.target)?;
+        let native = native::Prepared::open(
+            &path,
+            &identity,
+            options.workers.get(),
+            &options.target,
+            options.processor_mode,
+        )?;
         if bundle::file_digest(&path)? != identity {
             return Err(Error::Message(
                 "compiler library changed while loading".into(),
@@ -204,6 +228,7 @@ impl Compiler {
             target: options.target,
             workers: options.workers,
             module_cache_capacity: options.module_cache_capacity,
+            processor_mode: options.processor_mode,
             path,
             identity,
         })))
@@ -479,6 +504,8 @@ struct Record {
     key: String,
     compiler: String,
     target: String,
+    #[serde(default)]
+    processor_mode: ProcessorMode,
     symbol: String,
     sha256: String,
     diagnostics: Vec<Diagnostic>,
@@ -508,6 +535,10 @@ impl Artifact {
     pub fn target(&self) -> &str {
         &self.record.target
     }
+    /// Scheduling domain used to compile this artifact.
+    pub fn processor_mode(&self) -> ProcessorMode {
+        self.record.processor_mode
+    }
     /// Export compiled into this artifact.
     pub fn symbol(&self) -> &str {
         &self.record.symbol
@@ -534,7 +565,7 @@ impl Module {
     /// Cache identity including compiler, pipeline contract, source and specialization.
     pub fn key(&self, spec: &Specialization) -> Result<String> {
         spec.validate()?;
-        Ok(bundle::digest(&serde_json::to_vec(&(
+        let base = bundle::digest(&serde_json::to_vec(&(
             "loomc-v1",
             self.compiler.identity(),
             self.identity(),
@@ -542,7 +573,18 @@ impl Module {
             self.compiler.0.target.as_str(),
             &spec.config,
             spec.report,
-        ))?))
+        ))?);
+        // Retain existing default artifacts; explicit execution modes own a
+        // separate namespace even if their output bytes happen to match.
+        if self.compiler.0.processor_mode == ProcessorMode::Default {
+            Ok(base)
+        } else {
+            Ok(bundle::digest(&serde_json::to_vec(&(
+                "loomc-processor-mode-v1",
+                base,
+                self.compiler.0.processor_mode,
+            ))?))
+        }
     }
     /// Compile in process or return verified cached bytes. Publication is atomic
     /// and serialized per key across threads and processes; failures are retryable.
@@ -578,6 +620,7 @@ impl Module {
             key,
             compiler: self.compiler.identity().into(),
             target: self.compiler.0.target.as_str().into(),
+            processor_mode: self.compiler.0.processor_mode,
             symbol: spec.symbol.clone(),
             sha256: bundle::digest(&compiled.bytes),
             diagnostics,
@@ -670,6 +713,52 @@ mod tests {
         uncached.module("// not retained");
         assert!(!serial.0.modules.lock().unwrap().is_empty());
         assert!(uncached.0.modules.lock().unwrap().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires libloomc.so, no GPU"]
+    fn processor_modes_are_isolated_or_explicitly_rejected() -> Result<()> {
+        let default = Compiler::shared(None, CompilerOptions::default())?;
+        let options = CompilerOptions {
+            processor_mode: ProcessorMode::ComputeUnit,
+            ..Default::default()
+        };
+        let cu = match Compiler::shared(None, options.clone()) {
+            Ok(compiler) => compiler,
+            Err(error) => {
+                // The pinned bundle predates the extension. Its explicit
+                // rejection is required; silently producing WGP code is not.
+                assert!(
+                    error
+                        .to_string()
+                        .contains("AMDGPU profile option extensions are not supported"),
+                    "{error}"
+                );
+                return Ok(());
+            }
+        };
+        let same = Compiler::shared(None, options)?;
+        assert!(Arc::ptr_eq(&cu.0, &same.0));
+        assert!(!Arc::ptr_eq(&default.0, &cu.0));
+        let source = include_str!("../tests/kernels/euler.loom");
+        let spec = euler_spec();
+        let wgp = default.module(source).compile(&spec)?;
+        let unit = cu.module(source).compile(&spec)?;
+        assert_ne!(wgp.path(), unit.path());
+        assert_eq!(unit.processor_mode(), ProcessorMode::ComputeUnit);
+        let cached = cu.module(source).compile(&spec)?;
+        assert_eq!(cached.processor_mode(), ProcessorMode::ComputeUnit);
+        assert_eq!(unit.bytes(), cached.bytes());
+        let differences: Vec<_> = wgp
+            .bytes()
+            .iter()
+            .zip(unit.bytes())
+            .filter(|(a, b)| a != b)
+            .collect();
+        assert_eq!(wgp.bytes().len(), unit.bytes().len());
+        assert_eq!(differences.len(), 1);
+        assert_eq!(*differences[0].0 ^ *differences[0].1, 0x20);
         Ok(())
     }
 

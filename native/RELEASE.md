@@ -65,6 +65,13 @@ a rebuild; staging refuses a nonempty destination. Both the binary archive and
 `hrx-native-sources.tar.gz` must be uploaded to the release named in the command.
 The inventory and NOTICE record the source archive URL and SHA-256.
 
+The current development manifest also includes patch 0009 (CU/WGP profile
+execution options). A rebuild from this checkout therefore contains nine
+patches and needs a new release tag and provenance label. The already published
+bundle and its corresponding source archive contain the original eight patches;
+its hashes and runtime selection remain unchanged. The ninth patch can be used
+without repackaging the runtime by selecting its compiler with `HRX_LOOM_LIBRARY`.
+
 ## Corresponding source and library replacement
 
 The source release contains pristine upstream archives under `upstream/`, all

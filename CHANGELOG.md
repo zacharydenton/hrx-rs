@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add `loom::CompilerOptions::processor_mode` for AMDGPU CU/WGP scheduling,
+  with compiler and artifact caches separated by mode. Struct literals must add
+  the field or use `..Default::default()`. Explicit modes require compiler patch
+  0009; the pinned compiler rejects them. Default-mode cache keys are preserved.
+
 - Let the upload staging cache replace completed small allocations when larger
   uploads arrive. Retain the eight-entry and 64 MiB limits while avoiding
   repeated allocation after a workload changes its upload sizes.

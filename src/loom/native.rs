@@ -218,6 +218,7 @@ impl Prepared {
         identity: &str,
         workers: usize,
         architecture: &crate::Target,
+        processor_mode: super::ProcessorMode,
     ) -> Result<Self> {
         let api = library(path, identity)?;
         unsafe {
@@ -239,15 +240,29 @@ impl Prepared {
             let context = output(&api, api.loomc_context_release, |out| {
                 api.loomc_context_create(&options, alloc, out)
             })?;
+            let execution = loomc_amdgpu_profile_execution_options_t {
+                type_: LOOMC_STRUCTURE_TYPE_AMDGPU_PROFILE_EXECUTION_OPTIONS,
+                structure_size: size_of::<loomc_amdgpu_profile_execution_options_t>(),
+                processor_mode: match processor_mode {
+                    super::ProcessorMode::Default => LOOMC_AMDGPU_PROCESSOR_MODE_DEFAULT,
+                    super::ProcessorMode::ComputeUnit => LOOMC_AMDGPU_PROCESSOR_MODE_CU,
+                    super::ProcessorMode::WorkgroupProcessor => LOOMC_AMDGPU_PROCESSOR_MODE_WGP,
+                },
+                ..Default::default()
+            };
             let profile_options = loomc_amdgpu_profile_options_t {
                 type_: LOOMC_STRUCTURE_TYPE_AMDGPU_PROFILE_OPTIONS,
                 structure_size: size_of::<loomc_amdgpu_profile_options_t>(),
+                next: if processor_mode == super::ProcessorMode::Default {
+                    ptr::null()
+                } else {
+                    (&execution as *const loomc_amdgpu_profile_execution_options_t).cast()
+                },
                 identifier: view(architecture.as_str()),
                 identity: loomc_amdgpu_target_identity_t {
                     target: view(architecture.as_str()),
                     ..Default::default()
                 },
-                ..Default::default()
             };
             let profile = output(&api, api.loomc_target_profile_release, |out| {
                 api.loomc_target_profile_create_amdgpu(
