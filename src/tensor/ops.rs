@@ -143,6 +143,12 @@ impl TensorOps {
     /// finite. Empty tensors are not accepted. Multi-pass bounded reductions
     /// avoid atomics and leave input/output ownership with normal slot leases.
     pub fn prepare_finite(&self, input: &TensorDesc) -> Result<Arc<PreparedModel>> {
+        self.finite
+            .get_or_prepare(input.clone(), || self.finite_fragment(input)?.prepare(3))
+    }
+    /// Record a finite-value reduction directly into a caller-owned graph.
+    /// The output is one I32 flag with the same contract as `prepare_finite`.
+    pub fn finite_fragment(&self, input: &TensorDesc) -> Result<ModelFragment> {
         if input.dtype() != DType::F32
             || !input.is_contiguous()
             || input.is_empty()
@@ -152,7 +158,7 @@ impl TensorOps {
                 "finite check requires nonempty contiguous F32".into(),
             ));
         }
-        self.finite.get_or_prepare(input.clone(), || {
+        {
             let mut model = ModelSession::in_context(&self.context)?;
             let src = model.allocate(input.bytes())?;
             let mut current = src;
@@ -161,25 +167,49 @@ impl TensorOps {
             let mut first = true;
             loop {
                 let out = count.div_ceil(256);
-                let dst = model.allocate(out*4)?;
-                let ty = if first {"f32"} else {"i32"};
+                let dst = model.allocate(out * 4)?;
+                let ty = if first { "f32" } else { "i32" };
                 let bad = if first {
                     "%abs = scalar.absf %value : f32\n%max = scalar.constant 3.402823466e38 : f32\n%finite = scalar.cmpf ole, %abs, %max : f32\n%bad = scf.select %finite, %fzero, %fone : f32"
-                } else { "%bad = scalar.uitofp %value : i32 to f32" };
-                let mut source = include_str!("finite.loom").replace("@TYPE@",ty).replace("@CHECK@",bad);
-                for (name,value) in [("GRID",out.div_ceil(64)),("INPUT",count),("OUTPUT",out),("LAST_INPUT",count-1),("LAST_OUTPUT",out-1)] {
-                    source = source.replace(&format!("@{name}@"),&value.to_string());
+                } else {
+                    "%bad = scalar.uitofp %value : i32 to f32"
+                };
+                let mut source = include_str!("finite.loom")
+                    .replace("@TYPE@", ty)
+                    .replace("@CHECK@", bad);
+                for (name, value) in [
+                    ("GRID", out.div_ceil(64)),
+                    ("INPUT", count),
+                    ("OUTPUT", out),
+                    ("LAST_INPUT", count - 1),
+                    ("LAST_OUTPUT", out - 1),
+                ] {
+                    source = source.replace(&format!("@{name}@"), &value.to_string());
                 }
                 // Static bounds above cover every load, reduction flag and store.
-                let kernel = unsafe {model.compile(&[(&source,Specialization::new("finite"))])?}[0];
-                commands.push(Command::Dispatch(Dispatch::indices(kernel,[0],[out.div_ceil(64) as u32,1,1],vec![current.read(),dst.write()])));
+                let kernel =
+                    unsafe { model.compile(&[(&source, Specialization::new("finite"))])? }[0];
+                commands.push(Command::Dispatch(Dispatch::indices(
+                    kernel,
+                    [0],
+                    [out.div_ceil(64) as u32, 1, 1],
+                    vec![current.read(), dst.write()],
+                )));
                 current = dst;
-                if out == 1 { break; }
+                if out == 1 {
+                    break;
+                }
                 count = out;
                 first = false;
             }
-            unsafe {model.freeze(&self.context)?.prepare(&commands,&[(src,input.clone())],&[(current,TensorDesc::new(DType::I32,vec![1])?)],3)}
-        })
+            unsafe {
+                model.freeze(&self.context)?.fragment(
+                    &commands,
+                    &[(src, input.clone())],
+                    &[(current, TensorDesc::new(DType::I32, vec![1])?)],
+                )
+            }
+        }
     }
     /// Return a resident non-finite flag without downloading the input tensor.
     pub fn finite(&self, input: &DeviceTensor) -> Result<Inference> {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.5 — compose image and validation stages
+
+- Expose recordable fragments for RGB view encoding/decoding, RGB compositing
+  and finite-value reductions. Callers can bind intermediate GPU tensors
+  directly into a prepared graph without separate helper submissions or slot
+  copies. Existing prepared APIs retain their caches and arithmetic.
+- Retain the qualified 0.8.3 native bundle unchanged.
+
 ## 0.8.4 — reuse budgeted native commands
 
 - Reuse dispatch and transfer commands for buffers owned by budgeted streams.

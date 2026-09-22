@@ -25,6 +25,20 @@ impl ImageOps {
         crop: &TensorDesc,
         mode: RgbComposite,
     ) -> Result<Arc<PreparedModel>> {
+        self.composite_plans
+            .get_or_prepare((image.clone(), crop.clone(), mode), || {
+                self.composite_rgb_fragment(image, crop, mode)?.prepare(3)
+            })
+    }
+
+    /// Record compositing with directly bound frame, crop, mask, matrix and
+    /// region/blend inputs. Descriptors and arithmetic match `prepare_composite_rgb`.
+    pub fn composite_rgb_fragment(
+        &self,
+        image: &TensorDesc,
+        crop: &TensorDesc,
+        mode: RgbComposite,
+    ) -> Result<ModelFragment> {
         for (desc, dtype) in [(image, DType::U8), (crop, DType::F32)] {
             if desc.dtype() != dtype
                 || desc.layout() != Layout::Nhwc
@@ -44,16 +58,25 @@ impl ImageOps {
         let mask = TensorDesc::new(DType::F32, crop.shape()[1..3].to_vec())?;
         let matrix = TensorDesc::new(DType::F32, vec![1, 2, 3])?;
         let region = TensorDesc::new(DType::F32, vec![5])?;
-        self.composite_plans.get_or_prepare((image.clone(),crop.clone(),mode), || {
+        {
             let count = image.elements();
             let mut source = include_str!("composite_rgb.loom").to_owned();
-            for (name,value) in [
-                ("COUNT",count),("GRID",count.div_ceil(256)),("WIDTH",image.shape()[2]),
-                ("LAST_OUTPUT",count-1),("LAST_CROP",crop.elements()-1),("LAST_MASK",mask.elements()-1),
-                ("LAST_X",crop.shape()[2]-1),("LAST_Y",crop.shape()[1]-1),
-                ("CROP",crop.elements()),("MASK",mask.elements()),
-                ("CROP_WIDTH",crop.shape()[2]),("CROP_HEIGHT",crop.shape()[1]),
-            ] { source = source.replace(&format!("@{name}@"),&value.to_string()); }
+            for (name, value) in [
+                ("COUNT", count),
+                ("GRID", count.div_ceil(256)),
+                ("WIDTH", image.shape()[2]),
+                ("LAST_OUTPUT", count - 1),
+                ("LAST_CROP", crop.elements() - 1),
+                ("LAST_MASK", mask.elements() - 1),
+                ("LAST_X", crop.shape()[2] - 1),
+                ("LAST_Y", crop.shape()[1] - 1),
+                ("CROP", crop.elements()),
+                ("MASK", mask.elements()),
+                ("CROP_WIDTH", crop.shape()[2]),
+                ("CROP_HEIGHT", crop.shape()[1]),
+            ] {
+                source = source.replace(&format!("@{name}@"), &value.to_string());
+            }
             source = source.replace("@CROP_ROUND@", if mode == RgbComposite::QuantizedBlend {
                 "%half = scalar.constant 0.5 : f32\n%shift = scalar.addf %face0, %half : f32\n%face = scalar.floorf %shift : f32"
             } else { "%face = scalar.addf %face0, %fzero : f32" });
@@ -62,17 +85,29 @@ impl ImageOps {
             } else { "%final = scalar.addf %clamped, %fzero : f32" });
             let mut model = ModelSession::in_context(&self.context)?;
             let descs = [image.clone(), crop.clone(), mask, matrix, region];
-            let inputs = descs.into_iter().map(|d| Ok((model.allocate(d.bytes())?,d))).collect::<Result<Vec<_>>>()?;
+            let inputs = descs
+                .into_iter()
+                .map(|d| Ok((model.allocate(d.bytes())?, d)))
+                .collect::<Result<Vec<_>>>()?;
             let dst = model.allocate(image.bytes())?;
-            let mut bindings = inputs.iter().map(|(r,_)| r.read()).collect::<Vec<_>>();
+            let mut bindings = inputs.iter().map(|(r, _)| r.read()).collect::<Vec<_>>();
             bindings.push(dst.write());
             // The source guards float-to-integer conversion and bounds every access.
-            let kernel = unsafe { model.compile(&[(&source,Specialization::new("composite_rgb"))])? }[0];
-            unsafe { model.freeze(&self.context)?.prepare(
-                &[Command::Dispatch(Dispatch::indices(kernel,[0],[count.div_ceil(256) as u32,1,1],bindings))],
-                &inputs, &[(dst,image.clone())], 3,
-            ) }
-        })
+            let kernel =
+                unsafe { model.compile(&[(&source, Specialization::new("composite_rgb"))])? }[0];
+            unsafe {
+                model.freeze(&self.context)?.fragment(
+                    &[Command::Dispatch(Dispatch::indices(
+                        kernel,
+                        [0],
+                        [count.div_ceil(256) as u32, 1, 1],
+                        bindings,
+                    ))],
+                    &inputs,
+                    &[(dst, image.clone())],
+                )
+            }
+        }
     }
 
     /// Composite resident pixels. Bounds and blend are small host metadata;

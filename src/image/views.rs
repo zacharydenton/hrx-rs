@@ -23,7 +23,10 @@ impl ImageOps {
         if input.dtype() != DType::U8 || input.layout() != Layout::Nhwc {
             return Err(Error::Message("RGB view encoding requires U8 NHWC".into()));
         }
-        self.prepare_rgb_views(input, factor, encoding)
+        self.view_plans
+            .get_or_prepare((input.clone(), factor, encoding), || {
+                self.rgb_views_fragment(input, factor, encoding)?.prepare(3)
+            })
     }
 
     /// Reassemble interleaved F32 NCHW views as F32 NHWC byte-level RGB.
@@ -38,15 +41,44 @@ impl ImageOps {
         if input.dtype() != DType::F32 || input.layout() != Layout::Nchw {
             return Err(Error::Message("RGB view decoding requires F32 NCHW".into()));
         }
-        self.prepare_rgb_views(input, factor, encoding)
+        self.view_plans
+            .get_or_prepare((input.clone(), factor, encoding), || {
+                self.rgb_views_fragment(input, factor, encoding)?.prepare(3)
+            })
     }
 
-    fn prepare_rgb_views(
+    /// Record RGB view encoding with directly bound input pixels.
+    pub fn encode_rgb_views_fragment(
         &self,
         input: &TensorDesc,
         factor: usize,
         encoding: RgbEncoding,
-    ) -> Result<Arc<PreparedModel>> {
+    ) -> Result<ModelFragment> {
+        if input.dtype() != DType::U8 || input.layout() != Layout::Nhwc {
+            return Err(Error::Message("RGB view encoding requires U8 NHWC".into()));
+        }
+        self.rgb_views_fragment(input, factor, encoding)
+    }
+
+    /// Record RGB view decoding with directly bound model output.
+    pub fn decode_rgb_views_fragment(
+        &self,
+        input: &TensorDesc,
+        factor: usize,
+        encoding: RgbEncoding,
+    ) -> Result<ModelFragment> {
+        if input.dtype() != DType::F32 || input.layout() != Layout::Nchw {
+            return Err(Error::Message("RGB view decoding requires F32 NCHW".into()));
+        }
+        self.rgb_views_fragment(input, factor, encoding)
+    }
+
+    fn rgb_views_fragment(
+        &self,
+        input: &TensorDesc,
+        factor: usize,
+        encoding: RgbEncoding,
+    ) -> Result<ModelFragment> {
         if !input.is_contiguous()
             || input.is_empty()
             || input.shape().len() != 4
@@ -82,10 +114,11 @@ impl ImageOps {
         } else {
             TensorDesc::new(DType::F32, vec![batch, height, width, 3])?.with_layout(Layout::Nhwc)?
         };
-        self.view_plans.get_or_prepare((input.clone(), factor, encoding), || {
+        {
             let count = input.elements();
             let address = if encode {
-                format!(r#"
+                format!(
+                    r#"
     %x = index.rem %i, %vw : index
     %yy = index.div %i, %vw : index
     %y = index.rem %yy, %vh : index
@@ -110,9 +143,11 @@ impl ImageOps {
     %byte = view.load %src[%at] : view<{count}xi8> -> i8
     %uint = scalar.extui %byte : i8 to i32
     %value = scalar.uitofp %uint : i32 to f32
-"#)
+"#
+                )
             } else {
-                format!(r#"
+                format!(
+                    r#"
     %ch = index.rem %i, %three : index
     %pixel = index.div %i, %three : index
     %x = index.rem %pixel, %width : index
@@ -135,16 +170,26 @@ impl ImageOps {
     %addr = index.add %rw, %xx : index
     %at = index.assume %addr [range(%addr, 0, {count})] : index
     %value = view.load %src[%at] : view<{count}xf32> -> f32
-"#)
+"#
+                )
             };
             let arithmetic = match (encode, encoding) {
-                (true, RgbEncoding::Unit) => "%scale = scalar.constant 255.0 : f32\n%result = scalar.divf %value, %scale : f32",
-                (true, RgbEncoding::Symmetric) => "%scale = scalar.constant 127.5 : f32\n%onef = scalar.constant 1.0 : f32\n%scaled = scalar.divf %value, %scale : f32\n%result = scalar.subf %scaled, %onef : f32",
-                (false, RgbEncoding::Unit) => "%scale = scalar.constant 255.0 : f32\n%result = scalar.mulf %value, %scale : f32",
-                (false, RgbEncoding::Symmetric) => "%scale = scalar.constant 127.5 : f32\n%onef = scalar.constant 1.0 : f32\n%negative = scalar.constant -1.0 : f32\n%low = scalar.maxnumf %value, %negative : f32\n%clamped = scalar.minnumf %low, %onef : f32\n%shifted = scalar.addf %clamped, %onef : f32\n%scaled = scalar.mulf %shifted, %scale : f32\n%result = scalar.roundevenf %scaled : f32",
+                (true, RgbEncoding::Unit) => {
+                    "%scale = scalar.constant 255.0 : f32\n%result = scalar.divf %value, %scale : f32"
+                }
+                (true, RgbEncoding::Symmetric) => {
+                    "%scale = scalar.constant 127.5 : f32\n%onef = scalar.constant 1.0 : f32\n%scaled = scalar.divf %value, %scale : f32\n%result = scalar.subf %scaled, %onef : f32"
+                }
+                (false, RgbEncoding::Unit) => {
+                    "%scale = scalar.constant 255.0 : f32\n%result = scalar.mulf %value, %scale : f32"
+                }
+                (false, RgbEncoding::Symmetric) => {
+                    "%scale = scalar.constant 127.5 : f32\n%onef = scalar.constant 1.0 : f32\n%negative = scalar.constant -1.0 : f32\n%low = scalar.maxnumf %value, %negative : f32\n%clamped = scalar.minnumf %low, %onef : f32\n%shifted = scalar.addf %clamped, %onef : f32\n%scaled = scalar.mulf %shifted, %scale : f32\n%result = scalar.roundevenf %scaled : f32"
+                }
             };
             let ty = if encode { "i8" } else { "f32" };
-            let source = format!(r#"
+            let source = format!(
+                r#"
 amdgpu.target<gfx11-generic> @views_target {{subgroup_size = 32}}
 kernel.def target(@views_target) export("rgb_views") @rgb_views(%unused: index) {{
   %one = index.constant 1 : index
@@ -180,17 +225,29 @@ kernel.def target(@views_target) export("rgb_views") @rgb_views(%unused: index) 
   }}
   kernel.return
 }}
-"#, grid=count.div_ceil(256), plane=vh*vw);
+"#,
+                grid = count.div_ceil(256),
+                plane = vh * vw
+            );
             let mut model = ModelSession::in_context(&self.context)?;
             let src = model.allocate(input.bytes())?;
             let dst = model.allocate(output.bytes())?;
             // Permutations above are bijections within checked input/output extents.
-            let kernel = unsafe { model.compile(&[(&source, Specialization::new("rgb_views"))])? }[0];
-            unsafe { model.freeze(&self.context)?.prepare(
-                &[Command::Dispatch(Dispatch::indices(kernel, [0], [count.div_ceil(256) as u32,1,1], vec![src.read(),dst.write()]))],
-                &[(src,input.clone())], &[(dst,output)], 3,
-            ) }
-        })
+            let kernel =
+                unsafe { model.compile(&[(&source, Specialization::new("rgb_views"))])? }[0];
+            unsafe {
+                model.freeze(&self.context)?.fragment(
+                    &[Command::Dispatch(Dispatch::indices(
+                        kernel,
+                        [0],
+                        [count.div_ceil(256) as u32, 1, 1],
+                        vec![src.read(), dst.write()],
+                    ))],
+                    &[(src, input.clone())],
+                    &[(dst, output)],
+                )
+            }
+        }
     }
 
     /// Encode resident pixels without a host boundary.
