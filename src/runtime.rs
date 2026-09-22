@@ -328,6 +328,9 @@ impl BudgetUses {
         self.0.clear();
     }
 }
+const DISPATCH_CACHE_ENTRIES: usize = 1024;
+const DISPATCH_CACHE_BYTES: usize = 16 << 20;
+
 struct CachedDispatch {
     kernel: Kernel,
     grid: [u32; 3],
@@ -566,7 +569,7 @@ impl Stream {
                 .prepare_fill(&dst.owner.native, dst.offset, dst.length, value)?;
         // Other streams may use this device-scoped allocation. Only cache when
         // its owning stream can evict the entry when the public buffer drops.
-        if Arc::ptr_eq(&dst.owner.owner, &self.inner) && dst.owner.reservation.is_none() {
+        if Arc::ptr_eq(&dst.owner.owner, &self.inner) {
             if cache.len() == 128 {
                 cache.remove(0);
             }
@@ -609,10 +612,7 @@ impl Stream {
             src.offset,
             src.length,
         )?;
-        if Arc::ptr_eq(&dst.owner.owner, &self.inner)
-            && Arc::ptr_eq(&src.owner.owner, &self.inner)
-            && dst.owner.reservation.is_none()
-            && src.owner.reservation.is_none()
+        if Arc::ptr_eq(&dst.owner.owner, &self.inner) && Arc::ptr_eq(&src.owner.owner, &self.inner)
         {
             if cache.len() == 128 {
                 cache.remove(0);
@@ -778,10 +778,11 @@ impl Stream {
         bindings: &[View<'_>],
     ) -> Result<()> {
         self.budget_uses.borrow_mut().retain(bindings);
-        if self.budget.is_none()
-            && bindings.iter().all(|view| {
-                Arc::ptr_eq(&view.owner.owner, &self.inner) && view.owner.reservation.is_none()
-            })
+        // Owned buffers evict their cached commands before releasing backing or
+        // budget charges. Queued uses keep their reservations until the fence.
+        if bindings
+            .iter()
+            .all(|view| Arc::ptr_eq(&view.owner.owner, &self.inner))
         {
             let mut cache = self
                 .inner
@@ -797,8 +798,16 @@ impl Stream {
             let command =
                 unsafe { self.prepare_dispatch(kernel, grid, block, constants, bindings) }?;
             self.inner.submit(&command)?;
-            if cache.len() == 64 {
-                cache.remove(0);
+            let bytes = command.storage_bytes();
+            if bytes > DISPATCH_CACHE_BYTES {
+                return Ok(());
+            }
+            let mut retained: usize = cache
+                .iter()
+                .map(|entry| entry.command.storage_bytes())
+                .sum();
+            while cache.len() >= DISPATCH_CACHE_ENTRIES || retained + bytes > DISPATCH_CACHE_BYTES {
+                retained -= cache.remove(0).command.storage_bytes();
             }
             cache.push(CachedDispatch {
                 kernel: kernel.clone(),
@@ -1361,6 +1370,112 @@ mod tests {
 #[cfg(test)]
 mod staging_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires gfx1151"]
+    fn budgeted_commands_replay_and_evict_without_releasing_pending_charges() -> Result<()> {
+        let residency = crate::residency::ResidencyManager::new(4096)?;
+        let device = Device::open(0)?;
+        let mut stream = device.stream()?.with_memory_budget(residency.budget());
+        let mut foreign = device.stream()?;
+        let compiler = crate::loom::Compiler::for_stream(None, &stream)?;
+        let mut spec = crate::loom::Specialization::new("add_f32");
+        spec.set_config("add.grid", "1");
+        let artifact = compiler
+            .module(include_str!("../tests/kernels/add_f32.loom"))
+            .compile(&spec)?;
+        // SAFETY: the trusted fixture adds a scalar to exactly 64 f32 elements.
+        let kernel = unsafe { stream.load_artifact(&artifact)? };
+        let buffer = stream.allocate(256)?;
+        stream.fill(buffer.binding(), 0)?;
+        let constants = |delta: f32| -> Result<Constants> {
+            let mut constants = Constants::new();
+            match kernel.layout[0].1 {
+                4 => constants.push(64u32)?,
+                8 => constants.push(64u64)?,
+                _ => unreachable!("index width"),
+            }
+            constants.push(delta)?;
+            Ok(constants)
+        };
+        // More entries than the old cache could hold, with distinct constants.
+        for _ in 0..2 {
+            for delta in 1..=100 {
+                unsafe {
+                    stream.dispatch(
+                        &kernel,
+                        [1; 3],
+                        [256, 1, 1],
+                        &constants(delta as f32)?,
+                        &[buffer.binding()],
+                    )?;
+                }
+            }
+            stream.synchronize()?;
+            assert_eq!(stream.inner.dispatch_cache.lock().unwrap().len(), 100);
+        }
+        let mut actual = [0u8; 256];
+        stream.read_blocking(buffer.binding(), &mut actual)?;
+        assert!(
+            actual
+                .chunks_exact(4)
+                .all(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()) == 10100.)
+        );
+        assert_eq!(residency.statistics().reserved_bytes, 256);
+        for delta in 101..=1124 {
+            unsafe {
+                stream.dispatch(
+                    &kernel,
+                    [1; 3],
+                    [256, 1, 1],
+                    &constants(delta as f32)?,
+                    &[buffer.binding()],
+                )?;
+            }
+        }
+        stream.synchronize()?;
+        {
+            let cache = stream.inner.dispatch_cache.lock().unwrap();
+            assert_eq!(cache.len(), DISPATCH_CACHE_ENTRIES);
+            assert!(
+                cache
+                    .iter()
+                    .map(|entry| entry.command.storage_bytes())
+                    .sum::<usize>()
+                    <= DISPATCH_CACHE_BYTES
+            );
+        }
+        // A foreign stream cannot retain a command whose owner cannot evict it.
+        unsafe {
+            foreign.dispatch(
+                &kernel,
+                [1; 3],
+                [256, 1, 1],
+                &constants(1.)?,
+                &[buffer.binding()],
+            )?;
+        }
+        foreign.synchronize()?;
+        assert!(foreign.inner.dispatch_cache.lock().unwrap().is_empty());
+        // Removing public backing purges both caches; its queued reservation
+        // survives until the stream explicitly observes completion.
+        unsafe {
+            stream.dispatch(
+                &kernel,
+                [1; 3],
+                [256, 1, 1],
+                &constants(1.)?,
+                &[buffer.binding()],
+            )?;
+        }
+        drop(buffer);
+        assert!(stream.inner.dispatch_cache.lock().unwrap().is_empty());
+        assert!(stream.inner.transfer_cache.lock().unwrap().is_empty());
+        assert_eq!(residency.statistics().reserved_bytes, 256);
+        stream.synchronize()?;
+        assert_eq!(residency.statistics().reserved_bytes, 0);
+        Ok(())
+    }
 
     #[test]
     #[ignore = "requires gfx1151"]

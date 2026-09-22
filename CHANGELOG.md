@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.8.4 — reuse budgeted native commands
+
+- Reuse dispatch and transfer commands for buffers owned by budgeted streams.
+  Dropping a buffer evicts its commands before releasing backing; queued work
+  retains its budget charge until completion. Foreign-stream bindings remain
+  uncached.
+- Bound dispatch reuse by 1,024 entries and 16 MiB of private argument, fence
+  and scratch storage. This accommodates eager model pipelines without keeping
+  arbitrarily large native scratch allocations resident.
+- Retain the qualified 0.8.3 native bundle unchanged.
 
 ## 0.8.3 — restore cached GPU system memory
 

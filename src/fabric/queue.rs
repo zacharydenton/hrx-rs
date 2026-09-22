@@ -401,6 +401,9 @@ impl Queue {
             1,
         ]);
         pad(&mut words);
+        let storage_bytes = argument_buffer.len()
+            + fence.len()
+            + scratch.as_ref().map_or(0, |(buffer, _, _)| buffer.len());
         buffers.push(argument_buffer.clone());
         if let Some((scratch, _, _)) = scratch {
             buffers.push(scratch);
@@ -411,6 +414,7 @@ impl Queue {
         Ok(PreparedGpu {
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
+                storage_bytes,
                 work: Arc::new(Work {
                     _kernels: vec![kernel.clone()],
                     buffers,
@@ -473,6 +477,12 @@ impl Queue {
             std::slice::from_raw_parts(indirect.as_ptr().cast(), indirect.len() * 4)
         })?;
         let ib_address = storage.device_address(self.device())?;
+        let storage_bytes = storage.len()
+            + 64
+            + commands
+                .iter()
+                .map(|(command, _)| command.storage_bytes())
+                .sum::<usize>();
         buffers.push(storage);
         buffers.sort_by_key(|buffer| Arc::as_ptr(&buffer.0) as usize);
         buffers.dedup_by(|a, b| Arc::ptr_eq(&a.0, &b.0));
@@ -502,6 +512,7 @@ impl Queue {
         Ok(PreparedGpu {
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
+                storage_bytes,
                 work: Arc::new(Work {
                     fence,
                     _kernels: kernels,
@@ -555,6 +566,7 @@ impl Queue {
         Ok(PreparedGpu {
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
+                storage_bytes: fence.len(),
                 work: Arc::new(Work {
                     fence,
                     _kernels: Vec::new(),
@@ -595,6 +607,7 @@ pub struct PreparedGpu {
     inner: Arc<PreparedInner>,
 }
 struct PreparedInner {
+    storage_bytes: usize,
     work: Arc<Work>,
     words: Vec<u32>,
     dispatch_range: std::ops::Range<usize>,
@@ -602,6 +615,12 @@ struct PreparedInner {
     previous: Mutex<u32>,
 }
 impl PreparedGpu {
+    /// Private argument, scratch and fence bytes, excluding operands, code and
+    /// provider allocation rounding. Used to bound retained command caches.
+    pub(crate) fn storage_bytes(&self) -> usize {
+        self.inner.storage_bytes
+    }
+
     /// Submit previously prepared commands without creating native resources.
     ///
     /// # Safety
