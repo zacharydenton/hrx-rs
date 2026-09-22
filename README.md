@@ -10,7 +10,7 @@ compilation need no Python environment, HIP headers, or `hipcc`.
 
 The **GPU runtime and Loom compiler together are a 7.6 MB download**. The optional
 **NPU runtime adds 4.3 MB**, including XRT. These are the compressed archives in
-the [current native release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260910-gpu-npu),
+the [current native release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260922-hrx-update),
 separate from Cargo dependencies and any model weights your application uses.
 
 - **Build with Cargo:** no GPU SDK, C++ compiler, or native-library download at build time.

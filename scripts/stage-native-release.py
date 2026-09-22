@@ -77,7 +77,7 @@ def main():
 
     hrx = work / 'hrx-source'
     deps = build / '_deps'
-    rocr = work / 'rocm-systems/projects/rocr-runtime'
+    rocr = work / 'rocr-update-sources/projects/rocr-runtime'
     register = work / 'rocm-systems/projects/rocprofiler-register'
     roots = {name: next(p for p in (work / 'sources' / name).iterdir() if p.is_dir())
              for name in ['elfutils', 'numactl', 'libdrm', 'bzip2', 'zlib', 'zstd', 'liblzma', 'fmt', 'glog']}
@@ -170,8 +170,16 @@ def main():
 
     for name, (project, version, spdx, texts, source_keys) in runtime_names.items():
         source = amd / name if (amd / name).exists() else amd / 'rocm_sysdeps/lib' / name
+        origin = 'Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641'
+        source_keys = source_keys + ['therock.tar.gz']
+        if name == 'libhsa-runtime64.so.1':
+            source = work / 'rocr-update-runtime' / inputs['rocr_update']['library_path']
+            if digest(source) != inputs['rocr_update']['library_sha256']:
+                raise ValueError('ROCr library differs from the pinned update')
+            source_keys = ['rocr-update-sources', 'rocr-update-therock', 'rocr-update-manifest']
+            origin = f"Unmodified bytes from TheRock run {inputs['rocr_update']['therock']['github_run_id']}; core-runtime_lib_generic"
         component(name, source, project, version, spdx, texts + ['LICENSE-source-attributions.txt'],
-                  source_keys + ['therock.tar.gz'], 'Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641')
+                  source_keys, origin)
     for name, relative in {'libhrx.so': 'libhrx/src/libhrx/libhrx.so',
                            'libhrx.so.0': 'libhrx/src/libhrx/libhrx.so',
                            'libloomc.so': 'loom/binding/c/libloomc.so'}.items():
@@ -179,13 +187,13 @@ def main():
                   'Apache-2.0 WITH LLVM-exception AND MIT AND NCSA',
                   ['LICENSE-HRX.txt', 'LICENSE-CORE-MATH.txt', 'LICENSE-HSA-headers.txt',
                    'LICENSE-SPIRV-Headers.txt', 'LICENSE-Vulkan-Headers.txt', 'LICENSE-AMDGPU-ISA.txt'],
-                  ['hrx-system', 'hsa_runtime_headers', 'spirv_headers', 'vulkan_headers', 'amdgpu_isa_xml'], 'Fresh Release build of the pinned source plus the eight patches in patches/loom')
+                  ['hrx-system', 'hsa_runtime_headers', 'spirv_headers', 'vulkan_headers', 'amdgpu_isa_xml'], f"Fresh Release build of the pinned source plus {len(inputs['hrx']['patches'])} patches in patches/loom")
     components['librocprofiler-register.so.0']['statically_linked'] = {
         'fmt': {'version': '11.1.4', 'revision': inputs['downloads']['fmt']['revision'], 'license': 'MIT'},
         'glog': {'version': '0.7.1', 'revision': inputs['downloads']['glog']['revision'], 'license': 'BSD-3-Clause'},
     }
     components['libhsa-runtime64.so.1']['statically_linked'] = {
-        'ROCT-Thunk': {'revision': 'cb6561243e0a80215f5566a0feeb19eb44702aa4', 'license': 'MIT AND BSD-2-Clause',
+        'ROCT-Thunk': {'revision': inputs['rocr_update']['revision'], 'license': 'MIT AND BSD-2-Clause',
                        'note': 'Includes the Nginx-derived rbtree; its BSD-2-Clause notice is preserved.'},
     }
     for name in ['libhrx.so', 'libhrx.so.0', 'libloomc.so']:
@@ -240,7 +248,8 @@ def main():
     write_json(REPO / 'THIRD-PARTY.json', inventory)
     shutil.copyfile(REPO / 'THIRD-PARTY.json', stage / 'THIRD-PARTY.json')
     provenance = {'schema': 1, 'hrx': inputs['hrx'], 'amd_build': inputs['therock'],
-                  'upstream_artifacts': {key: spec for key, spec in inputs['downloads'].items() if key.endswith('.zst')},
+                  'rocr_update': inputs['rocr_update'],
+                  'upstream_artifacts': {key: spec for key, spec in inputs['downloads'].items() if spec['archive'].endswith('.zst')},
                   'build_recipe': 'scripts/rebuild-hrx.sh', 'corresponding_source': source_record,
                   'compiler': (build / 'compiler-version.txt').read_text().strip(),
                   'cmake_cache_sha256': digest(build / 'CMakeCache.txt'),
@@ -258,7 +267,7 @@ def main():
                'CORE-MATH adaptation. Zstandard includes xxHash by Yann Collet / Meta.\n'
                'Compiler tables use AMD GPU ISA XML (MIT); compiler/runtime builds also\n'
                'use HSA, SPIR-V and Vulkan headers. Their source licenses are included.\n\n'
-               'HRX/Loom are modified by the eight patches distributed with the source.\n'
+               f"HRX/Loom are modified by {len(inputs['hrx']['patches'])} patches distributed with the source.\n"
                'AMD modifies sysdeps library names and symbol versions; its complete build\n'
                'recipes and patch scripts are in the accompanying TheRock source archive.\n'
                'No further changes are made to the AMD library bytes.\n\n'

@@ -1,25 +1,8 @@
-From aa5f5c66acbf2c3ed3caf43fe8f1ab1c20db68e0 Mon Sep 17 00:00:00 2001
-From: Zach Denton <z@chdenton.com>
-Date: Wed, 9 Sep 2026 12:57:26 +0200
-Subject: [PATCH] Fix unordered SMEM completion when reusing destination
- registers
-
----
- .../target/arch/amdgpu/planning/wait_plan.c   |  7 ++-
- .../amdgpu/test/assembly_allocation.loom-test | 34 ++++++++++
- .../test/repro/smem_storage_reuse/README.md   | 52 +++++++++++++++
- .../test/repro/smem_storage_reuse/kernel.loom | 34 ++++++++++
- .../test/repro/smem_storage_reuse/main.c      | 63 +++++++++++++++++++
- 5 files changed, 189 insertions(+), 1 deletion(-)
- create mode 100644 loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/README.md
- create mode 100644 loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/kernel.loom
- create mode 100644 loom/src/loom/target/emit/native/amdgpu/test/repro/smem_storage_reuse/main.c
-
 diff --git a/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c b/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c
-index 57df4bdef..b5009d01e 100644
+index b865d940a..e5bcbe530 100644
 --- a/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c
 +++ b/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c
-@@ -2682,7 +2682,8 @@ static iree_status_t loom_amdgpu_wait_plan_handle_storage_release_action(
+@@ -2834,7 +2834,8 @@ static iree_status_t loom_amdgpu_wait_plan_handle_storage_release_action(
    uint16_t target_count = 0;
    const uint32_t producer_block =
        builder->schedule->nodes[lease_record->node_index].block_index;
@@ -29,9 +12,9 @@ index 57df4bdef..b5009d01e 100644
      const uint32_t slot =
          loom_amdgpu_wait_counter_slot_from_id(action->release_class_id);
      if (!loom_amdgpu_wait_plan_producer_target_count(
-@@ -2690,6 +2691,10 @@ static iree_status_t loom_amdgpu_wait_plan_handle_storage_release_action(
-       target_count = 0;
-     }
+@@ -2846,6 +2847,10 @@ static iree_status_t loom_amdgpu_wait_plan_handle_storage_release_action(
+         builder, lease_record->node_index, (uint16_t)action->block_index,
+         loom_amdgpu_wait_counter_slot_from_id(action->release_class_id));
    }
 +  // SMEM packets may complete out of order. Releasing their destination
 +  // storage requires a full drain, just like consuming their SSA results.
@@ -41,12 +24,12 @@ index 57df4bdef..b5009d01e 100644
        loom_amdgpu_wait_plan_node_xcnt_group(
            &builder->node_states[action->insertion_node_index]) ==
 diff --git a/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test b/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test
-index 39ecacc23..7d2bf9e85 100644
+index a69fe3d4e..82349f0e6 100644
 --- a/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test
 +++ b/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test
-@@ -190,3 +190,37 @@ low.func.def target<amdgpu.rdna3_5.core>(@target) @d16_tied_sources_assemble_ali
-   ds_write_b32 v0, v14 offset:88
-   ds_write_b32 v0, v15 offset:92
+@@ -313,3 +313,37 @@ low.func.def target<amdgpu.rdna3_5.core>(@target) @overlapping_slice_reloads(%bl
+   global_store_b32 v1, v0, s[0:1] offset:0
+   s_waitcnt_vscnt vscnt(0)
    s_endpgm
 +
 +// ====
@@ -249,6 +232,3 @@ index 000000000..1d12efd32
 +  free(host);
 +  return wrong ? 1 : 0;
 +}
--- 
-2.55.0
-

@@ -5,8 +5,8 @@
     "libhsa-runtime64.so.1": {
       "project": "ROCR-Runtime",
       "version": "1.21.0",
-      "origin": "Unmodified bytes from ROCm/hrx-system v0.3.0 public-deps; TheRock run 26672984641",
-      "sha256": "180f6d080b9ff85bff064c2eec982e7422ac6f1c7759c81abe71528000f654dd",
+      "origin": "Unmodified bytes from TheRock run 35670146294; core-runtime_lib_generic",
+      "sha256": "40d9274024da664f1ecfea4a977c7d0038d44ca7ddd1026715071e4e642816a9",
       "needed": [
         "librocm_sysdeps_elf.so.1",
         "libdl.so.2",
@@ -23,15 +23,20 @@
         "libgcc_s.so.1"
       ],
       "sources": {
-        "rocm-systems.tar.gz": {
-          "url": "https://codeload.github.com/ROCm/rocm-systems/tar.gz/cb6561243e0a80215f5566a0feeb19eb44702aa4",
-          "archive": "rocm-systems.tar.gz",
-          "sha256": "70bd25e1d302f2b74c5786089e6f8840d4c0631afd04cf720c82f4fbaa4b1501"
+        "rocr-update-sources": {
+          "url": "https://codeload.github.com/ROCm/rocm-systems/tar.gz/0816fc809a4ff1f21c330357368f977f4ffe67fd",
+          "archive": "rocr-update-sources.tar.gz",
+          "sha256": "0eebbbe00784d55eb8ee35d014c953383981a052ea6fffaa85a741f230b9dcae"
         },
-        "therock.tar.gz": {
-          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/9dfbd936fa3750b21f4aabea2f861f97a435aec0",
-          "archive": "therock.tar.gz",
-          "sha256": "821ed7caf13fa51512a5ad1bfc1ce4d8b6a02eb6ba9f0bcf7c50aab80cf2883d"
+        "rocr-update-therock": {
+          "url": "https://codeload.github.com/ROCm/TheRock/tar.gz/40d2bb4d2eba9920bf932b1eb7672ab0dd3ec77e",
+          "archive": "rocr-update-therock.tar.gz",
+          "sha256": "89775ca3b2d02874958ff9ec564e20643a696af88abd5ed348ddaac9946564dc"
+        },
+        "rocr-update-manifest": {
+          "url": "https://therock-nightly-artifacts.s3.amazonaws.com/35670146294-linux/manifests/therock_manifest.json",
+          "archive": "therock_manifest.json",
+          "sha256": "0794f47a5f23ca7cc19cebef6c9ea3fc24b17084c7b2a8dc69d8ca66973ea7a4"
         }
       },
       "license": {
@@ -48,7 +53,7 @@
       },
       "statically_linked": {
         "ROCT-Thunk": {
-          "revision": "cb6561243e0a80215f5566a0feeb19eb44702aa4",
+          "revision": "0816fc809a4ff1f21c330357368f977f4ffe67fd",
           "license": "MIT AND BSD-2-Clause",
           "note": "Includes the Nginx-derived rbtree; its BSD-2-Clause notice is preserved."
         }
@@ -394,18 +399,18 @@
     },
     "libhrx.so": {
       "project": "HRX / Loom",
-      "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
-      "origin": "Fresh Release build of the pinned source plus the eight patches in patches/loom",
-      "sha256": "ef70ba69b3ef53bc7202f74e0f475841fdfcae02aba50b262fa6a759b8de61f7",
+      "version": "556c648e8f301ad9656d325687cc93b417ea78ff",
+      "origin": "Fresh Release build of the pinned source plus 8 patches in patches/loom",
+      "sha256": "3c4cb45bbc274d3e369c00cfaaf9f0e0794689f16c46bbd348182eaa4e246e14",
       "needed": [
         "libm.so.6",
         "libc.so.6"
       ],
       "sources": {
         "hrx-system": {
-          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
-          "archive": "hrx-system-ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d.tar.gz",
-          "sha256": "f980fc81bd02234b2bcc141fb7af6c9430b9e9cfffe61aee8dfdf8b00068c9a5"
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/556c648e8f301ad9656d325687cc93b417ea78ff",
+          "archive": "hrx-system-556c648e8f301ad9656d325687cc93b417ea78ff.tar.gz",
+          "sha256": "a4c03604c47e745f6b1f3eb9bacbea5b53beda3db8030aafffcc8c00006132a3"
         },
         "hsa_runtime_headers": {
           "url": "https://github.com/iree-org/hsa-runtime-headers/archive/4285513114a70f7cf4830c89279c8cfa57b901bb.tar.gz",
@@ -443,25 +448,25 @@
       },
       "statically_linked": {
         "IREE": {
-          "revision": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+          "revision": "556c648e8f301ad9656d325687cc93b417ea78ff",
           "license": "Apache-2.0 WITH LLVM-exception"
         }
       }
     },
     "libhrx.so.0": {
       "project": "HRX / Loom",
-      "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
-      "origin": "Fresh Release build of the pinned source plus the eight patches in patches/loom",
-      "sha256": "ef70ba69b3ef53bc7202f74e0f475841fdfcae02aba50b262fa6a759b8de61f7",
+      "version": "556c648e8f301ad9656d325687cc93b417ea78ff",
+      "origin": "Fresh Release build of the pinned source plus 8 patches in patches/loom",
+      "sha256": "3c4cb45bbc274d3e369c00cfaaf9f0e0794689f16c46bbd348182eaa4e246e14",
       "needed": [
         "libm.so.6",
         "libc.so.6"
       ],
       "sources": {
         "hrx-system": {
-          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
-          "archive": "hrx-system-ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d.tar.gz",
-          "sha256": "f980fc81bd02234b2bcc141fb7af6c9430b9e9cfffe61aee8dfdf8b00068c9a5"
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/556c648e8f301ad9656d325687cc93b417ea78ff",
+          "archive": "hrx-system-556c648e8f301ad9656d325687cc93b417ea78ff.tar.gz",
+          "sha256": "a4c03604c47e745f6b1f3eb9bacbea5b53beda3db8030aafffcc8c00006132a3"
         },
         "hsa_runtime_headers": {
           "url": "https://github.com/iree-org/hsa-runtime-headers/archive/4285513114a70f7cf4830c89279c8cfa57b901bb.tar.gz",
@@ -499,16 +504,16 @@
       },
       "statically_linked": {
         "IREE": {
-          "revision": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+          "revision": "556c648e8f301ad9656d325687cc93b417ea78ff",
           "license": "Apache-2.0 WITH LLVM-exception"
         }
       }
     },
     "libloomc.so": {
       "project": "HRX / Loom",
-      "version": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
-      "origin": "Fresh Release build of the pinned source plus the eight patches in patches/loom",
-      "sha256": "95692e2365f9ca7592d4d7b9339799e9a2cff987f210e244289cbe386e3b86a3",
+      "version": "556c648e8f301ad9656d325687cc93b417ea78ff",
+      "origin": "Fresh Release build of the pinned source plus 8 patches in patches/loom",
+      "sha256": "4c479367353e765095b968c5f201664bf51f65c9201fd8d97f9a5054e7f44920",
       "needed": [
         "libm.so.6",
         "libstdc++.so.6",
@@ -517,9 +522,9 @@
       ],
       "sources": {
         "hrx-system": {
-          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
-          "archive": "hrx-system-ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d.tar.gz",
-          "sha256": "f980fc81bd02234b2bcc141fb7af6c9430b9e9cfffe61aee8dfdf8b00068c9a5"
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/556c648e8f301ad9656d325687cc93b417ea78ff",
+          "archive": "hrx-system-556c648e8f301ad9656d325687cc93b417ea78ff.tar.gz",
+          "sha256": "a4c03604c47e745f6b1f3eb9bacbea5b53beda3db8030aafffcc8c00006132a3"
         },
         "hsa_runtime_headers": {
           "url": "https://github.com/iree-org/hsa-runtime-headers/archive/4285513114a70f7cf4830c89279c8cfa57b901bb.tar.gz",
@@ -557,7 +562,7 @@
       },
       "statically_linked": {
         "IREE": {
-          "revision": "ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d",
+          "revision": "556c648e8f301ad9656d325687cc93b417ea78ff",
           "license": "Apache-2.0 WITH LLVM-exception"
         },
         "CORE-MATH adaptation": {
@@ -599,11 +604,11 @@
       "sha256": "1ca3502222d967f3be5751c55f6b7ee735b5383909c3b501495f54b216dbf227"
     },
     "LICENSE-ROCR.txt": {
-      "source_file": "rocm-systems/projects/rocr-runtime/LICENSE.txt",
+      "source_file": "rocr-update-sources/projects/rocr-runtime/LICENSE.txt",
       "sha256": "ffa5a77ce21419e276bd9068faec94333128e49e1c95426d9c1d35435e8fe835"
     },
     "LICENSE-ROCT.txt": {
-      "source_file": "rocm-systems/projects/rocr-runtime/libhsakmt/LICENSE.md",
+      "source_file": "rocr-update-sources/projects/rocr-runtime/libhsakmt/LICENSE.md",
       "sha256": "f45a5bc0bc68dd9a00e9609097788b1cbda79726fee02549cb0c04b90190b419"
     },
     "LICENSE-rocprofiler-register.txt": {
@@ -651,7 +656,7 @@
       "sha256": "4639ae96f455d387fd2b042ce11a2713ac3ee9bfc82591182683f4ee503be011"
     },
     "LICENSE-ROCT-rbtree.txt": {
-      "source_file": "rocm-systems/projects/rocr-runtime/libhsakmt/src/rbtree.c",
+      "source_file": "rocr-update-sources/projects/rocr-runtime/libhsakmt/src/rbtree.c",
       "sha256": "9cc75927153dbcdab6f40efdfeac37e58301db3c759ab3dc0ae16dd78d673869"
     },
     "LICENSE-zlib.txt": {
@@ -668,12 +673,12 @@
     },
     "LICENSE-source-attributions.txt": {
       "source_file": "Pinned elfutils, numactl, ROCR and ROCT source headers",
-      "sha256": "c15472bc8781f79b9ad7b8c2059478600eca87d23f635a8b708508a51decd9cb"
+      "sha256": "1b7e39db8f060b6f22efe6234db7bef8e34890170afc0dff704260ef46e80504"
     }
   },
   "corresponding_source": {
-    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260910-gpu-npu/hrx-native-sources.tar.gz",
-    "sha256": "9f3f8084368396eaf7b42673a9f241777aa478466ba06abe9650e0599576d3a6"
+    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-hrx-update/hrx-native-sources.tar.gz",
+    "sha256": "bcb1bd1a8870cb848e56bdce26ff347beec4d87e3b7bf4bb652b640d49da6f6e"
   },
   "system_dependencies_not_shipped": [
     "ld-linux-x86-64.so.2",

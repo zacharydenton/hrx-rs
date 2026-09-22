@@ -34,13 +34,13 @@ librocm_sysdeps_zstd.so.1: Zstandard 1.5.7
 librocm_sysdeps_liblzma.so.5: XZ Utils/liblzma 5.8.1
   0BSD
   LICENSE-xz-0BSD.txt, LICENSE-source-attributions.txt
-libhrx.so: HRX / Loom ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d
+libhrx.so: HRX / Loom 556c648e8f301ad9656d325687cc93b417ea78ff
   Apache-2.0 WITH LLVM-exception AND MIT AND NCSA
   LICENSE-HRX.txt, LICENSE-CORE-MATH.txt, LICENSE-HSA-headers.txt, LICENSE-SPIRV-Headers.txt, LICENSE-Vulkan-Headers.txt, LICENSE-AMDGPU-ISA.txt
-libhrx.so.0: HRX / Loom ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d
+libhrx.so.0: HRX / Loom 556c648e8f301ad9656d325687cc93b417ea78ff
   Apache-2.0 WITH LLVM-exception AND MIT AND NCSA
   LICENSE-HRX.txt, LICENSE-CORE-MATH.txt, LICENSE-HSA-headers.txt, LICENSE-SPIRV-Headers.txt, LICENSE-Vulkan-Headers.txt, LICENSE-AMDGPU-ISA.txt
-libloomc.so: HRX / Loom ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d
+libloomc.so: HRX / Loom 556c648e8f301ad9656d325687cc93b417ea78ff
   Apache-2.0 WITH LLVM-exception AND MIT AND NCSA
   LICENSE-HRX.txt, LICENSE-CORE-MATH.txt, LICENSE-HSA-headers.txt, LICENSE-SPIRV-Headers.txt, LICENSE-Vulkan-Headers.txt, LICENSE-AMDGPU-ISA.txt
 
@@ -50,7 +50,7 @@ CORE-MATH adaptation. Zstandard includes xxHash by Yann Collet / Meta.
 Compiler tables use AMD GPU ISA XML (MIT); compiler/runtime builds also
 use HSA, SPIR-V and Vulkan headers. Their source licenses are included.
 
-HRX/Loom are modified by the eight patches distributed with the source.
+HRX/Loom are modified by 8 patches distributed with the source.
 AMD modifies sysdeps library names and symbol versions; its complete build
 recipes and patch scripts are in the accompanying TheRock source archive.
 No further changes are made to the AMD library bytes.
@@ -58,8 +58,8 @@ No further changes are made to the AMD library bytes.
 libelf is distributed under LGPL-3.0-or-later; libnuma under LGPL-2.1-only.
 Corresponding source, modification/build scripts, and all license texts are
 available alongside the binary archive at no charge:
-https://github.com/zacharydenton/hrx-rs/releases/download/native-20260910-gpu-npu/hrx-native-sources.tar.gz
-SHA-256: 9f3f8084368396eaf7b42673a9f241777aa478466ba06abe9650e0599576d3a6
+https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-hrx-update/hrx-native-sources.tar.gz
+SHA-256: bcb1bd1a8870cb848e56bdce26ff347beec4d87e3b7bf4bb652b640d49da6f6e
 
 You may modify or replace these shared libraries. For a local replacement,
 copy the runtime directory, replace the library while preserving its ABI,

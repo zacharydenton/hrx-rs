@@ -11,9 +11,10 @@ our downloaded bytes. The accompanying `sysdeps_dev` artifact records libelf
 
 ## Review scope
 
-The runtime contains 13 shared-library files. Ten are copied, without changing
-their bytes, from AMD's dependency archive. Three are a fresh build of HRX/Loom
-from `ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d` with the eight patches under
+The runtime contains 13 shared-library files. Nine retain their original bytes
+from AMD's v0.3.0 dependency archive. ROCr comes from TheRock run 35670146294,
+as described below. Three are a fresh build of HRX/Loom from
+`556c648e8f301ad9656d325687cc93b417ea78ff` with eight patches under
 `patches/loom`. `libhrx.so` and `libhrx.so.0` contain identical bytes.
 
 The old Arch fmt, glog, gflags, and rocprofiler-register binaries are removed.
@@ -52,11 +53,11 @@ provenance and source archive.
 python3 scripts/fetch-native-inputs.py --work artifacts/new-release
 bash scripts/rebuild-hrx.sh artifacts/new-release
 python3 scripts/stage-native-release.py --work artifacts/new-release \
-  --release-tag native-20260910-gpu-npu
+  --release-tag native-20260922-hrx-update
 cargo run --release --bin hrx -- pack \
   artifacts/new-release/stage artifacts/new-release/packed \
-  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260910-gpu-npu/hrx-linux-x86_64-gfx1151.tar.gz \
-  'HRX ecaaf7376f7d + eight patches; TheRock 26672984641' gfx1151
+  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-hrx-update/hrx-linux-x86_64-gfx1151.tar.gz \
+  'HRX 556c648e8 + eight patches; ROCr 35670146294; Ubuntu 26.04' gfx1151
 ```
 
 The scripts preserve downloaded source archives. The container builder uses
@@ -65,12 +66,32 @@ a rebuild; staging refuses a nonempty destination. Both the binary archive and
 `hrx-native-sources.tar.gz` must be uploaded to the release named in the command.
 The inventory and NOTICE record the source archive URL and SHA-256.
 
-The current development manifest also includes patch 0009 (CU/WGP profile
-execution options). A rebuild from this checkout therefore contains nine
-patches and needs a new release tag and provenance label. The already published
-bundle and its corresponding source archive contain the original eight patches;
-its hashes and runtime selection remain unchanged. The ninth patch can be used
-without repackaging the runtime by selecting its compiler with `HRX_LOOM_LIBRARY`.
+## Runtime update (2026-09-22)
+
+The source pin is `556c648e8f301ad9656d325687cc93b417ea78ff`.
+Eight patches remain: 0001–0005 and 0007–0009. Patch 0006 is redundant with
+upstream; all five of its original regression cases pass unmodified upstream.
+See [the patch audit](../patches/loom/README.md#upstream-patch-audit-2026-09-22)
+for correctness fixes versus retained optimizations.
+
+Current HRX calls `hsa_amd_queue_create`, which the published v0.3.0 dependency
+archive does not export. New builds therefore replace only `libhsa-runtime64.so.1`
+with the pinned, unmodified ROCr library from TheRock run **35670146294**
+(ROCm **10.2.0a20260922**). `rocr_update` in `release-inputs.json` records its
+library digest, full build manifest, and rocm-systems source revision
+`0816fc809a4ff1f21c330357368f977f4ffe67fd`. The nine other AMD library files
+remain from the original dependency archive. The fetch/staging scripts include
+both generations' corresponding sources and use the newer ROCr license evidence.
+
+Patch 0008 uses upstream's buffer-owned export API. Patch 0009 now uses public
+descriptor type **42**, because upstream assigned 41 to its C++ importer.
+Rebuild older locally patched compilers before selecting explicit CU/WGP modes
+with the updated Rust binding.
+
+Release `native-20260922-hrx-update` contains the GPU runtime and its source
+archive. The checked-in `bundle.json`, `THIRD-PARTY.json`, NOTICE, and license
+files describe that distribution. The separate NPU bundle remains pinned to
+`native-20260910-gpu-npu`; GPU/NPU sharing was validated with this combination.
 
 ## Corresponding source and library replacement
 

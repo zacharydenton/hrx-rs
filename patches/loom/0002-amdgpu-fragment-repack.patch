@@ -1,27 +1,8 @@
-From 15451788364499c23c109003314271dff4fc45b4 Mon Sep 17 00:00:00 2001
-From: Zach Denton <z@chdenton.com>
-Date: Wed, 9 Sep 2026 13:38:56 +0200
-Subject: [PATCH] amdgpu: preserve fragment layout and refresh lowering
- fixtures
-
----
- .../target/arch/amdgpu/descriptors/alu.py     |  21 ++
- .../target/arch/amdgpu/descriptors/sets.py    |   2 +
- .../amdgpu/lower/matrix_fragment_repack.c     |  11 ++
- .../lower/matrix_fragment_repack_packed_b16.c | 185 ++++++++++++++++++
- .../lower/matrix_fragment_repack_packed_b16.h |  10 +
- loom/src/loom/target/arch/amdgpu/lower/plan.h |  16 ++
- .../arch/amdgpu/lower/subgroup_crosslane.c    |  60 +++++-
- .../arch/amdgpu/lower/subgroup_shuffle.c      |   3 +-
- ...w_mma_fragment_repack_packed_b16.loom-test | 126 +++++++-----
- .../source_low_subgroup_collective.loom-test  |   8 +-
- 10 files changed, 383 insertions(+), 59 deletions(-)
-
 diff --git a/loom/py/loom/target/arch/amdgpu/descriptors/alu.py b/loom/py/loom/target/arch/amdgpu/descriptors/alu.py
-index a6ce1aa6f..74c047c53 100644
+index 75b02ae6a..03f559dd7 100644
 --- a/loom/py/loom/target/arch/amdgpu/descriptors/alu.py
 +++ b/loom/py/loom/target/arch/amdgpu/descriptors/alu.py
-@@ -2469,6 +2469,26 @@ def _v_permlanex16_b32_src12_inline_overlay() -> AmdgpuDescriptorOverlay:
+@@ -2378,6 +2378,26 @@ def _v_permlanex16_b32_src12_inline_overlay() -> AmdgpuDescriptorOverlay:
      )
  
  
@@ -48,7 +29,7 @@ index a6ce1aa6f..74c047c53 100644
  def _v_lshrrev_b32_overlay() -> AmdgpuDescriptorOverlay:
      return _v_binary_u32_overlay(
          descriptor_key="amdgpu.v_lshrrev_b32",
-@@ -7065,6 +7085,7 @@ __all__ = (
+@@ -6989,6 +7009,7 @@ __all__ = (
      "_v_perm_b32_src2_literal_overlay",
      "_v_perm_b32_src1_zero_src2_literal_overlay",
      "_v_permlanex16_b32_src12_inline_overlay",
@@ -57,10 +38,10 @@ index a6ce1aa6f..74c047c53 100644
      "_v_lshl_add_u32_shift_immediate_src2_literal_overlay",
      "_v_lshlrev_b32_literal_overlay",
 diff --git a/loom/py/loom/target/arch/amdgpu/descriptors/sets.py b/loom/py/loom/target/arch/amdgpu/descriptors/sets.py
-index 4abe0af4b..197e159cb 100644
+index ea6adba81..f6e350bf5 100644
 --- a/loom/py/loom/target/arch/amdgpu/descriptors/sets.py
 +++ b/loom/py/loom/target/arch/amdgpu/descriptors/sets.py
-@@ -1029,6 +1029,7 @@ def _gfx11_core_overlays() -> tuple[AmdgpuDescriptorOverlay, ...]:
+@@ -1046,6 +1046,7 @@ def _gfx11_core_overlays() -> tuple[AmdgpuDescriptorOverlay, ...]:
          *_integer_bitwise_shift_overlays(),
          *_integer_bitwise_permute_overlays(),
          _v_permlanex16_b32_src12_inline_overlay(),
@@ -68,7 +49,7 @@ index 4abe0af4b..197e159cb 100644
          *_v_binary_f32_overlays(),
          *_v_binary_f16_overlays(),
          _v_med3_num_f32_overlay(),
-@@ -1838,6 +1839,7 @@ def _rdna4_core_overlays() -> tuple[AmdgpuDescriptorOverlay, ...]:
+@@ -1863,6 +1864,7 @@ def _rdna4_core_overlays() -> tuple[AmdgpuDescriptorOverlay, ...]:
          *_integer_bitwise_shift_overlays(),
          *_integer_bitwise_permute_overlays(),
          _v_permlanex16_b32_src12_inline_overlay(),
@@ -77,7 +58,7 @@ index 4abe0af4b..197e159cb 100644
          *_v_binary_f16_overlays(),
          _v_med3_num_f32_overlay(
 diff --git a/loom/src/loom/target/arch/amdgpu/lower/matrix_fragment_repack.c b/loom/src/loom/target/arch/amdgpu/lower/matrix_fragment_repack.c
-index 7d0ccaa37..0fc405ff6 100644
+index 52ed64450..46956ffb3 100644
 --- a/loom/src/loom/target/arch/amdgpu/lower/matrix_fragment_repack.c
 +++ b/loom/src/loom/target/arch/amdgpu/lower/matrix_fragment_repack.c
 @@ -125,6 +125,9 @@ iree_string_view_t loom_amdgpu_fragment_repack_plan_key(
@@ -109,7 +90,7 @@ index 7d0ccaa37..0fc405ff6 100644
      if (loom_amdgpu_fragment_repack_select_result_to_lhs_bf16_bpermute_strategy(
              descriptor_set, layout, plan)) {
        return true;
-@@ -1650,6 +1658,9 @@ iree_status_t loom_amdgpu_lower_vector_fragment_repack(
+@@ -1652,6 +1660,9 @@ iree_status_t loom_amdgpu_lower_vector_fragment_repack(
      case LOOM_AMDGPU_FRAGMENT_REPACK_STRATEGY_RESULT_TO_RHS_PACKED_B16_XOR_PERMUTE:
        return loom_amdgpu_lower_result_to_rhs_packed_b16_fragment_repack(
            context, source_op, plan);
@@ -334,10 +315,10 @@ index fdd9a57b0..f747ecd1d 100644
  }  // extern "C"
  #endif
 diff --git a/loom/src/loom/target/arch/amdgpu/lower/plan.h b/loom/src/loom/target/arch/amdgpu/lower/plan.h
-index 29397570f..a2da685ef 100644
+index acd32d4ab..8f0a5df67 100644
 --- a/loom/src/loom/target/arch/amdgpu/lower/plan.h
 +++ b/loom/src/loom/target/arch/amdgpu/lower/plan.h
-@@ -1000,6 +1000,9 @@ typedef enum loom_amdgpu_crosslane_kind_e {
+@@ -1011,6 +1011,9 @@ typedef enum loom_amdgpu_crosslane_kind_e {
    LOOM_AMDGPU_CROSSLANE_DPP = 1,
    // Use DS swizzle with a bitmask permutation immediate.
    LOOM_AMDGPU_CROSSLANE_SWIZZLE = 2,
@@ -347,7 +328,7 @@ index 29397570f..a2da685ef 100644
  } loom_amdgpu_crosslane_kind_t;
  
  typedef struct loom_amdgpu_direct_xor_lane_recipe_t {
-@@ -1648,6 +1651,10 @@ typedef enum loom_amdgpu_fragment_repack_strategy_e {
+@@ -1667,6 +1670,10 @@ typedef enum loom_amdgpu_fragment_repack_strategy_e {
    LOOM_AMDGPU_FRAGMENT_REPACK_STRATEGY_DIAGNOSTIC = 5,
    // Packed B16 result rows are exchanged and repacked into RHS registers.
    LOOM_AMDGPU_FRAGMENT_REPACK_STRATEGY_RESULT_TO_RHS_PACKED_B16_XOR_PERMUTE = 6,
@@ -358,7 +339,7 @@ index 29397570f..a2da685ef 100644
  } loom_amdgpu_fragment_repack_strategy_t;
  
  typedef enum loom_amdgpu_fragment_repack_reason_e {
-@@ -1765,6 +1772,15 @@ typedef struct loom_amdgpu_fragment_repack_plan_t {
+@@ -1784,6 +1791,15 @@ typedef struct loom_amdgpu_fragment_repack_plan_t {
        // Wave32 predicate selecting lanes that reverse the packed pair.
        uint32_t reverse_lane_mask;
      } result_to_rhs;
@@ -461,7 +442,7 @@ index 52ab500ad..22999776d 100644
    IREE_RETURN_IF_ERROR(loom_low_lower_emit_resolved_descriptor_op(
        context, descriptor, &low_source_value, 1,
 diff --git a/loom/src/loom/target/arch/amdgpu/lower/subgroup_shuffle.c b/loom/src/loom/target/arch/amdgpu/lower/subgroup_shuffle.c
-index 35e2ed353..797e52c1a 100644
+index 52a5c5f96..ce1174be6 100644
 --- a/loom/src/loom/target/arch/amdgpu/lower/subgroup_shuffle.c
 +++ b/loom/src/loom/target/arch/amdgpu/lower/subgroup_shuffle.c
 @@ -427,7 +427,8 @@ iree_status_t loom_amdgpu_lower_kernel_subgroup_shuffle(
@@ -622,11 +603,11 @@ index e61e19789..31bedc1ec 100644
 +COMPILE-REPORT: source_low[1] function=report_result_to_rhs_packed_b16 source_op=vector.fragment.repack selection=plan plan_key=amdgpu.fragment_repack.strategy.result_to_rhs_packed_b16_xor_permute emitted_ops=44
  COMPILE-REPORT: source_low_native[1] function=report_result_to_rhs_packed_b16 source_op=vector.fragment.repack native_contraction={tile:1x16x16x16,participants:32,lhs:{evidence:exact,bits:16,registers:8,payload:16,positions:512,coordinates:256,owners:2},rhs:{evidence:exact,bits:16,registers:8,payload:16,positions:512,coordinates:256,owners:2},accumulator:{evidence:exact,bits:16,registers:8,payload:16,positions:256,coordinates:256,owners:1},result:{evidence:exact,bits:16,registers:8,payload:16,positions:256,coordinates:256,owners:1}} native_transition={result:f16->rhs:f16,positions:512,participant_changes:256,local_position_changes:480,replication:2,source_owner:[participant+=(participant/1%16)*1,participant+=(position/1%2)*16,position+=(position/2)*1]}
 diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_subgroup_collective.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_subgroup_collective.loom-test
-index e6a869140..db8e4726f 100644
+index 384672ccb..7679d5614 100644
 --- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_subgroup_collective.loom-test
 +++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_subgroup_collective.loom-test
-@@ -4177,9 +4177,11 @@ low.kernel.def target<amdgpu.gfx11.generic.core>(@target) workgroup_size(64, 1,
-   %output_view = resource<hal_binding> {index = 1, source_type = hal.buffer, extent = 256} : reg<amdgpu.sgpr x2>
+@@ -4138,9 +4138,11 @@ low.kernel.def target<amdgpu.gfx11.generic.core>(@target) abi_layout({constant_c
+   %output_view = resource<hal_binding> {extent = 256, index = 1, source_type = hal.buffer} : reg<amdgpu.sgpr x2>
    %16 = v_lshlrev_b32_src0_inline %tid, 2
    %value = global_load_b32_saddr %16, %input_view
 -  %shuffle = ds_swizzle_b32 %value {offset = 16415}
@@ -640,6 +621,3 @@ index e6a869140..db8e4726f 100644
    return
  }
  
--- 
-2.55.0
-

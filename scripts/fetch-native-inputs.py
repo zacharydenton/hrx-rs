@@ -52,7 +52,9 @@ def main():
             dest.mkdir()
             with tarfile.open(downloaded[name]) as archive:
                 archive.extractall(dest, filter='data')
-    for name, dest_name in [('therock.tar.gz', 'therock'), ('rocm-systems.tar.gz', 'rocm-systems')]:
+    for name, dest_name in [('therock.tar.gz', 'therock'), ('rocm-systems.tar.gz', 'rocm-systems'),
+                            ('rocr-update-sources', 'rocr-update-sources'),
+                            ('rocr-update-therock', 'rocr-update-therock')]:
         dest = work / dest_name
         if not dest.exists():
             dest.mkdir()
@@ -60,11 +62,17 @@ def main():
             command = ['tar', '-xzf', str(downloaded[name]), '-C', str(dest), '--strip-components=1']
             if dest_name == 'rocm-systems':
                 command += ['--wildcards', '*/projects/rocr-runtime/*', '*/projects/rocprofiler-register/*']
+            elif dest_name == 'rocr-update-sources':
+                command += ['--wildcards', '*/projects/rocr-runtime/*']
             subprocess.run(command, check=True)
     dest = work / 'upstream-deps'
     if not dest.exists():
         dest.mkdir()
         subprocess.run(['tar', '--zstd', '-xf', str(downloaded['upstream-deps.tar.zst']), '-C', str(dest)], check=True)
+    dest = work / 'rocr-update-runtime'
+    if not dest.exists():
+        dest.mkdir()
+        subprocess.run(['tar', '--zstd', '-xf', str(downloaded['rocr-update-runtime']), '-C', str(dest)], check=True)
     print(f'Verified {len(downloaded)} inputs in {work}')
 
 

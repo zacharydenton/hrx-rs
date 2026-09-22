@@ -1,19 +1,19 @@
 diff --git a/loom/binding/c/include/loomc/base.h b/loom/binding/c/include/loomc/base.h
-index 458586c..d0de5d1 100644
+index 2f7f3530e..797f2449e 100644
 --- a/loom/binding/c/include/loomc/base.h
 +++ b/loom/binding/c/include/loomc/base.h
-@@ -295,6 +295,9 @@ typedef enum loomc_structure_type_e {
+@@ -298,6 +298,9 @@ typedef enum loomc_structure_type_e {
  
-   /// `loomc_task_pool_options_t`.
-   LOOMC_STRUCTURE_TYPE_TASK_POOL_OPTIONS = 40,
+   /// `loomc_cxx_import_options_t`.
+   LOOMC_STRUCTURE_TYPE_CXX_IMPORT_OPTIONS = 41,
 +
 +  /// `loomc_amdgpu_profile_execution_options_t`.
-+  LOOMC_STRUCTURE_TYPE_AMDGPU_PROFILE_EXECUTION_OPTIONS = 41,
++  LOOMC_STRUCTURE_TYPE_AMDGPU_PROFILE_EXECUTION_OPTIONS = 42,
  } loomc_structure_type_t;
  
  /// One loose string option entry.
 diff --git a/loom/binding/c/include/loomc/target/amdgpu/profile.h b/loom/binding/c/include/loomc/target/amdgpu/profile.h
-index 99410ed..d50e27b 100644
+index 99410ed67..d50e27baf 100644
 --- a/loom/binding/c/include/loomc/target/amdgpu/profile.h
 +++ b/loom/binding/c/include/loomc/target/amdgpu/profile.h
 @@ -76,6 +76,26 @@ LOOMC_API_EXPORT loomc_status_t loomc_amdgpu_target_identity_parse_artifact_key(
@@ -53,10 +53,10 @@ index 99410ed..d50e27b 100644
  
    /// Stable profile identifier used in diagnostics.
 diff --git a/loom/binding/c/target/amdgpu/amdgpu.c b/loom/binding/c/target/amdgpu/amdgpu.c
-index 6c4da69..2f69d3d 100644
+index 90b743c1d..d0807df0d 100644
 --- a/loom/binding/c/target/amdgpu/amdgpu.c
 +++ b/loom/binding/c/target/amdgpu/amdgpu.c
-@@ -54,9 +54,26 @@ static loomc_status_t loomc_amdgpu_profile_options_validate(
+@@ -55,9 +55,26 @@ static loomc_status_t loomc_amdgpu_profile_options_validate(
          "AMDGPU profile options structure_size is too small");
    }
    if (options->next != NULL) {
@@ -86,7 +86,7 @@ index 6c4da69..2f69d3d 100644
    }
    LOOMC_RETURN_IF_ERROR(loomc_amdgpu_validate_string_view(options->identifier));
    LOOMC_RETURN_IF_ERROR(
-@@ -402,6 +419,30 @@ loomc_status_t loomc_target_profile_create_amdgpu(
+@@ -419,6 +436,30 @@ loomc_status_t loomc_target_profile_create_amdgpu(
                               "AMDGPU target cannot be emitted as HSACO");
    }
  
@@ -117,7 +117,7 @@ index 6c4da69..2f69d3d 100644
    loom_amdgpu_target_profile_t* target_profile = NULL;
    LOOMC_RETURN_IF_ERROR(loomc_allocator_malloc(
        allocator, sizeof(*target_profile), (void**)&target_profile));
-@@ -415,6 +456,8 @@ loomc_status_t loomc_target_profile_create_amdgpu(
+@@ -432,6 +473,8 @@ loomc_status_t loomc_target_profile_create_amdgpu(
      return status;
    }
  
@@ -127,7 +127,7 @@ index 6c4da69..2f69d3d 100644
        loomc_string_view_is_empty(options->identifier) ? options->identity.target
                                                        : options->identifier;
 diff --git a/loom/binding/c/test/target/amdgpu/amdgpu_test.cc b/loom/binding/c/test/target/amdgpu/amdgpu_test.cc
-index 385f508..32836cc 100644
+index 3353ef16c..2d99a8997 100644
 --- a/loom/binding/c/test/target/amdgpu/amdgpu_test.cc
 +++ b/loom/binding/c/test/target/amdgpu/amdgpu_test.cc
 @@ -305,11 +305,16 @@ low.kernel.def target<amdgpu.gfx11.generic.core>(@gfx_target) workgroup_size(64,
@@ -197,7 +197,7 @@ index 385f508..32836cc 100644
  TEST(AmdgpuTargetTest, ParsesArtifactKeyIdentity) {
    loomc_amdgpu_target_identity_t identity = {};
    LOOMC_EXPECT_OK(loomc_amdgpu_target_identity_parse_artifact_key(
-@@ -850,6 +896,90 @@ kernel.def target(@gfx1151) @decode(%row_count: i32, %scale: bf16) {
+@@ -860,6 +906,90 @@ kernel.def target(@gfx1151) @decode(%row_count: i32, %scale: bf16) {
    EXPECT_EQ(decode_config.workgroup_count.x, 64u);
  }
  
@@ -289,7 +289,7 @@ index 385f508..32836cc 100644
       SpecializationPreservesGenericHalTargetAndEmitsExactArtifact) {
    TargetEnvironmentPtr target_environment = CreateAmdgpuTargetEnvironment();
 diff --git a/loom/py/loom/error/amdgpu.py b/loom/py/loom/error/amdgpu.py
-index e00f28d..b178f8d 100644
+index 4e9a413a1..2c0a51019 100644
 --- a/loom/py/loom/error/amdgpu.py
 +++ b/loom/py/loom/error/amdgpu.py
 @@ -1082,6 +1082,16 @@ ERR_AMDGPU_050 = ErrorDef(
@@ -316,7 +316,7 @@ index e00f28d..b178f8d 100644
 +    ERR_AMDGPU_051,
  )
 diff --git a/loom/py/loom/gen/target/arch/amdgpu/planning/amdgpu_occupancy_tables.py b/loom/py/loom/gen/target/arch/amdgpu/planning/amdgpu_occupancy_tables.py
-index 87c73b4..2f4542d 100644
+index 87c73b4f8..2f4542d99 100644
 --- a/loom/py/loom/gen/target/arch/amdgpu/planning/amdgpu_occupancy_tables.py
 +++ b/loom/py/loom/gen/target/arch/amdgpu/planning/amdgpu_occupancy_tables.py
 @@ -234,6 +234,8 @@ def _validate_models(
@@ -359,7 +359,7 @@ index 87c73b4..2f4542d 100644
                  f"    .best_tier = {_u32_expr(model.max_waves_per_simd)},",
                  "    .direct_resources = {",
 diff --git a/loom/py/loom/gen/target/arch/amdgpu/planning/amdgpu_occupancy_tables_test.py b/loom/py/loom/gen/target/arch/amdgpu/planning/amdgpu_occupancy_tables_test.py
-index 02eef46..3b0859d 100644
+index 02eef46d9..3b0859d9a 100644
 --- a/loom/py/loom/gen/target/arch/amdgpu/planning/amdgpu_occupancy_tables_test.py
 +++ b/loom/py/loom/gen/target/arch/amdgpu/planning/amdgpu_occupancy_tables_test.py
 @@ -262,3 +262,28 @@ def test_pressure_cliffs_match_exhaustive_current_models() -> None:
@@ -392,7 +392,7 @@ index 02eef46..3b0859d 100644
 +    with pytest.raises(ValueError, match="must partition"):
 +        amdgpu_occupancy_tables._validate_models(rows, sorted_processor_infos(), _current_descriptor_schemas_by_key())
 diff --git a/loom/py/loom/target/arch/amdgpu/dialect.py b/loom/py/loom/target/arch/amdgpu/dialect.py
-index bf1c848..dfaf742 100644
+index bf1c848ee..dfaf7427b 100644
 --- a/loom/py/loom/target/arch/amdgpu/dialect.py
 +++ b/loom/py/loom/target/arch/amdgpu/dialect.py
 @@ -9,6 +9,7 @@
@@ -429,10 +429,10 @@ index bf1c848..dfaf742 100644
      verify="loom_amdgpu_target_record_verify",
      format=[
 diff --git a/loom/py/loom/target/arch/amdgpu/target_info.py b/loom/py/loom/target/arch/amdgpu/target_info.py
-index 1ffe958..218d473 100644
+index f71d58d33..b531a7e78 100644
 --- a/loom/py/loom/target/arch/amdgpu/target_info.py
 +++ b/loom/py/loom/target/arch/amdgpu/target_info.py
-@@ -719,6 +719,7 @@ class AmdgpuOccupancyModelInfo:
+@@ -721,6 +721,7 @@ class AmdgpuOccupancyModelInfo:
      domain: AmdgpuOccupancyDomainInfo
      register_classes: tuple[AmdgpuOccupancyRegisterClassInfo, ...]
      resources: tuple[AmdgpuOccupancyResourceInfo, ...] = ()
@@ -440,7 +440,7 @@ index 1ffe958..218d473 100644
  
  
  @dataclass(frozen=True, slots=True)
-@@ -810,6 +811,12 @@ AMDGPU_OCCUPANCY_DOMAIN_RDNA = AmdgpuOccupancyDomainInfo(
+@@ -812,6 +813,12 @@ AMDGPU_OCCUPANCY_DOMAIN_RDNA = AmdgpuOccupancyDomainInfo(
      local_memory_allocation_granularity=512,
      max_barrier_workgroup_count=32,
  )
@@ -453,7 +453,7 @@ index 1ffe958..218d473 100644
  AMDGPU_OCCUPANCY_DOMAIN_GFX125X = AmdgpuOccupancyDomainInfo(
      simd_count=4,
      local_memory_bytes=320 * 1024,
-@@ -866,6 +873,7 @@ AMDGPU_OCCUPANCY_RDNA_1024 = AmdgpuProcessorOccupancyInfo(
+@@ -868,6 +875,7 @@ AMDGPU_OCCUPANCY_RDNA_1024 = AmdgpuProcessorOccupancyInfo(
      wave32=AmdgpuOccupancyModelInfo(
          max_waves_per_simd=16,
          domain=AMDGPU_OCCUPANCY_DOMAIN_RDNA,
@@ -461,7 +461,7 @@ index 1ffe958..218d473 100644
          register_classes=(
              AMDGPU_OCCUPANCY_REGISTER_CLASS_SGPR_RDNA,
              AmdgpuOccupancyRegisterClassInfo("amdgpu.vgpr", 1024, 16),
-@@ -874,6 +882,7 @@ AMDGPU_OCCUPANCY_RDNA_1024 = AmdgpuProcessorOccupancyInfo(
+@@ -876,6 +884,7 @@ AMDGPU_OCCUPANCY_RDNA_1024 = AmdgpuProcessorOccupancyInfo(
      wave64=AmdgpuOccupancyModelInfo(
          max_waves_per_simd=16,
          domain=AMDGPU_OCCUPANCY_DOMAIN_RDNA,
@@ -469,7 +469,7 @@ index 1ffe958..218d473 100644
          register_classes=(
              AMDGPU_OCCUPANCY_REGISTER_CLASS_SGPR_RDNA,
              AmdgpuOccupancyRegisterClassInfo("amdgpu.vgpr", 512, 8),
-@@ -884,6 +893,7 @@ AMDGPU_OCCUPANCY_RDNA_1536 = AmdgpuProcessorOccupancyInfo(
+@@ -886,6 +895,7 @@ AMDGPU_OCCUPANCY_RDNA_1536 = AmdgpuProcessorOccupancyInfo(
      wave32=AmdgpuOccupancyModelInfo(
          max_waves_per_simd=16,
          domain=AMDGPU_OCCUPANCY_DOMAIN_RDNA,
@@ -477,7 +477,7 @@ index 1ffe958..218d473 100644
          register_classes=(
              AMDGPU_OCCUPANCY_REGISTER_CLASS_SGPR_RDNA,
              AmdgpuOccupancyRegisterClassInfo("amdgpu.vgpr", 1536, 24),
-@@ -892,6 +902,7 @@ AMDGPU_OCCUPANCY_RDNA_1536 = AmdgpuProcessorOccupancyInfo(
+@@ -894,6 +904,7 @@ AMDGPU_OCCUPANCY_RDNA_1536 = AmdgpuProcessorOccupancyInfo(
      wave64=AmdgpuOccupancyModelInfo(
          max_waves_per_simd=16,
          domain=AMDGPU_OCCUPANCY_DOMAIN_RDNA,
@@ -485,7 +485,7 @@ index 1ffe958..218d473 100644
          register_classes=(
              AMDGPU_OCCUPANCY_REGISTER_CLASS_SGPR_RDNA,
              AmdgpuOccupancyRegisterClassInfo("amdgpu.vgpr", 768, 12),
-@@ -2314,6 +2325,11 @@ def _validate_portable_occupancy_model(
+@@ -2325,6 +2336,11 @@ def _validate_portable_occupancy_model(
              f"AMDGPU generic processor {generic_processor} wave{wave_size} "
              "occupancy has divergent SIMD topology"
          )
@@ -498,10 +498,10 @@ index 1ffe958..218d473 100644
          raise ValueError(
              f"AMDGPU generic processor {generic_processor} wave{wave_size} "
 diff --git a/loom/src/loom/target/arch/amdgpu/facts.c b/loom/src/loom/target/arch/amdgpu/facts.c
-index f6abdfa..fac832b 100644
+index c212b06e8..341b6eacd 100644
 --- a/loom/src/loom/target/arch/amdgpu/facts.c
 +++ b/loom/src/loom/target/arch/amdgpu/facts.c
-@@ -181,6 +181,11 @@ static bool loom_amdgpu_target_facts_satisfy_specialization_requirement(
+@@ -184,6 +184,11 @@ static bool loom_amdgpu_target_facts_satisfy_specialization_requirement(
      return false;
    }
  
@@ -510,11 +510,11 @@ index f6abdfa..fac832b 100644
 +    return false;
 +  }
 +
-   // A processor may support more than one wavefront size. An omitted authored
-   // choice uses the row default without constraining later specialization. An
-   // explicit choice remains a requirement even when it equals that default.
+   // A processor may support more than one wavefront size. An unchosen mode
+   // remains open to specialization; explicit or root-selected modes constrain
+   // later requirements even when they equal the processor preference.
 diff --git a/loom/src/loom/target/arch/amdgpu/facts.h b/loom/src/loom/target/arch/amdgpu/facts.h
-index 875ed7e..6f16ce3 100644
+index b593ef589..fc3470851 100644
 --- a/loom/src/loom/target/arch/amdgpu/facts.h
 +++ b/loom/src/loom/target/arch/amdgpu/facts.h
 @@ -18,6 +18,13 @@ extern "C" {
@@ -538,28 +538,28 @@ index 875ed7e..6f16ce3 100644
 +  // Requested workgroup scheduling domain; default follows the processor.
 +  loom_amdgpu_processor_mode_t processor_mode;
 +
-   // True when subgroup_size was supplied as an explicit semantic input.
+   // True when subgroup_size is constrained by an input or a root's execution
+   // choice; a callee cannot replace it with another supported mode.
    bool subgroup_size_explicit;
- 
 diff --git a/loom/src/loom/target/arch/amdgpu/ops/fact_projection.c b/loom/src/loom/target/arch/amdgpu/ops/fact_projection.c
-index 3152e9e..d04873c 100644
+index c054c010a..c0dafddbd 100644
 --- a/loom/src/loom/target/arch/amdgpu/ops/fact_projection.c
 +++ b/loom/src/loom/target/arch/amdgpu/ops/fact_projection.c
-@@ -25,6 +25,12 @@ static void loom_amdgpu_target_facts_project(
+@@ -23,6 +23,12 @@ static void loom_amdgpu_target_facts_project(
+           : loom_attr_as_signed_enum_set(features_attr);
+   loom_amdgpu_target_identity_initialize_with_features(
        target, features.words, features.word_count, &facts->identity);
-   loom_amdgpu_target_properties_resolve(
-       &facts->identity, &facts->base.storage.bundle, &facts->properties);
-+  const loom_attribute_t mode_attr = loom_target_record_view_attribute(
-+      record, loom_amdgpu_target_processor_mode_ATTR_INDEX);
++  const loom_attribute_t mode_attr =
++      loom_amdgpu_target_processor_mode_from_record(record);
 +  facts->processor_mode =
 +      loom_attr_is_absent(mode_attr)
 +          ? LOOM_AMDGPU_PROCESSOR_MODE_DEFAULT
 +          : (loom_amdgpu_processor_mode_t)loom_attr_as_enum(mode_attr);
-   facts->subgroup_size_explicit = loom_target_facts_field_is_explicit(
-       &facts->base, LOOM_TARGET_FACT_FIELD_SUBGROUP_SIZE);
-   facts->contract_set_key_explicit = loom_target_facts_field_is_explicit(
+   loom_amdgpu_target_facts_initialize(facts);
+ }
+ 
 diff --git a/loom/src/loom/target/arch/amdgpu/ops/ops.h b/loom/src/loom/target/arch/amdgpu/ops/ops.h
-index 74df7fb..fe68fec 100644
+index 598f4b30b..fdc0ccbae 100644
 --- a/loom/src/loom/target/arch/amdgpu/ops/ops.h
 +++ b/loom/src/loom/target/arch/amdgpu/ops/ops.h
 @@ -60,6 +60,14 @@ typedef enum loom_amdgpu_target_features_e {
@@ -661,7 +661,7 @@ index 74df7fb..fe68fec 100644
      loom_op_t** out_op);
  iree_status_t loom_amdgpu_target_record_verify(
 diff --git a/loom/src/loom/target/arch/amdgpu/ops/target.c b/loom/src/loom/target/arch/amdgpu/ops/target.c
-index 17b064c..095dddf 100644
+index a60866c2b..f58ed8bfc 100644
 --- a/loom/src/loom/target/arch/amdgpu/ops/target.c
 +++ b/loom/src/loom/target/arch/amdgpu/ops/target.c
 @@ -16,6 +16,14 @@
@@ -700,12 +700,12 @@ index 17b064c..095dddf 100644
  }
  
  static iree_string_view_t loom_amdgpu_target_record_symbol_name(
-@@ -329,6 +342,19 @@ iree_status_t loom_amdgpu_target_record_verify(
+@@ -327,6 +340,19 @@ iree_status_t loom_amdgpu_target_record_verify(
    IREE_RETURN_IF_ERROR(loom_amdgpu_target_record_verify_features(
        module, op, emitter, processor));
  
 +  const loom_attribute_t mode_attr =
-+      loom_op_const_attrs(op)[loom_amdgpu_target_processor_mode_ATTR_INDEX];
++      loom_amdgpu_target_processor_mode_attr(op);
 +  if (!loom_attr_is_absent(mode_attr) && loom_attr_as_enum(mode_attr) != 0 &&
 +      processor->properties.kernel_descriptor.profile !=
 +          LOOM_AMDGPU_KERNEL_DESCRIPTOR_PROFILE_GFX11 &&
@@ -721,148 +721,68 @@ index 17b064c..095dddf 100644
    if (loom_amdgpu_target_record_effective_wavefront_size(op, processor,
                                                           &wavefront_size) &&
 diff --git a/loom/src/loom/target/arch/amdgpu/planning/occupancy.c b/loom/src/loom/target/arch/amdgpu/planning/occupancy.c
-index a51bcf2..243999a 100644
+index 8ccfd25ee..7168dcfdc 100644
 --- a/loom/src/loom/target/arch/amdgpu/planning/occupancy.c
 +++ b/loom/src/loom/target/arch/amdgpu/planning/occupancy.c
-@@ -384,17 +384,20 @@ static uint32_t loom_amdgpu_occupancy_ceil_div_u32(uint32_t numerator,
- }
- 
- static uint32_t loom_amdgpu_occupancy_wave_limit_for_workgroups(
--    const loom_amdgpu_occupancy_model_t* model, uint32_t waves_per_workgroup,
--    uint32_t workgroup_count) {
-+    const loom_amdgpu_occupancy_model_t* model,
-+    const loom_amdgpu_occupancy_domain_model_t* domain,
-+    uint32_t waves_per_workgroup, uint32_t workgroup_count) {
-   const uint32_t resident_waves = waves_per_workgroup * workgroup_count;
--  const uint32_t resident_waves_per_simd = loom_amdgpu_occupancy_ceil_div_u32(
--      resident_waves, model->domain.simd_count);
-+  const uint32_t resident_waves_per_simd =
-+      loom_amdgpu_occupancy_ceil_div_u32(resident_waves, domain->simd_count);
-   return iree_min(resident_waves_per_simd, model->max_waves_per_simd);
- }
- 
- static void loom_amdgpu_occupancy_apply_launch_limits(
--    const loom_amdgpu_occupancy_model_t* model, uint32_t flat_workgroup_size,
--    uint32_t local_memory_bytes, loom_amdgpu_occupancy_table_t* table) {
-+    const loom_amdgpu_occupancy_model_t* model,
-+    const loom_amdgpu_occupancy_domain_model_t* domain,
-+    uint32_t flat_workgroup_size, uint32_t local_memory_bytes,
-+    loom_amdgpu_occupancy_table_t* table) {
-   table->flat_workgroup_size = flat_workgroup_size;
-   uint32_t launch_wave_limit = 0;
-   if (flat_workgroup_size != 0) {
-@@ -402,36 +405,32 @@ static void loom_amdgpu_occupancy_apply_launch_limits(
-         flat_workgroup_size, table->wave_size);
-     table->waves_per_workgroup = waves_per_workgroup;
- 
--    const uint32_t wave_slots =
--        model->max_waves_per_simd * model->domain.simd_count;
-+    const uint32_t wave_slots = model->max_waves_per_simd * domain->simd_count;
-     const uint32_t wave_limited_workgroup_count =
-         wave_slots / waves_per_workgroup;
-     const uint32_t workgroup_slot_count =
-         waves_per_workgroup == 1
-             ? wave_slots
-             : iree_min(wave_limited_workgroup_count,
--                       model->domain.max_barrier_workgroup_count);
-+                       domain->max_barrier_workgroup_count);
- 
-     uint32_t local_memory_workgroup_count = wave_slots;
-     if (local_memory_bytes != 0) {
--      const uint32_t granularity =
--          model->domain.local_memory_allocation_granularity;
-+      const uint32_t granularity = domain->local_memory_allocation_granularity;
-       const uint32_t rounded_local_memory_bytes =
-           loom_amdgpu_occupancy_ceil_div_u32(local_memory_bytes, granularity) *
-           granularity;
--      IREE_ASSERT_LE(rounded_local_memory_bytes,
--                     model->domain.local_memory_bytes);
-+      IREE_ASSERT_LE(rounded_local_memory_bytes, domain->local_memory_bytes);
-       local_memory_workgroup_count = iree_min(
--          model->domain.local_memory_bytes / rounded_local_memory_bytes,
--          wave_slots);
-+          domain->local_memory_bytes / rounded_local_memory_bytes, wave_slots);
-     }
- 
-     const uint32_t workgroup_wave_limit =
-         loom_amdgpu_occupancy_wave_limit_for_workgroups(
--            model, waves_per_workgroup, workgroup_slot_count);
-+            model, domain, waves_per_workgroup, workgroup_slot_count);
-     const uint32_t local_memory_wave_limit =
-         loom_amdgpu_occupancy_wave_limit_for_workgroups(
--            model, waves_per_workgroup, local_memory_workgroup_count);
-+            model, domain, waves_per_workgroup, local_memory_workgroup_count);
-     launch_wave_limit = iree_min(workgroup_wave_limit, local_memory_wave_limit);
-     if (launch_wave_limit < table->resident_waves_per_simd ||
-         (launch_wave_limit == table->resident_waves_per_simd &&
-@@ -489,9 +488,9 @@ static iree_string_view_t loom_amdgpu_occupancy_limiting_resource_name(
+@@ -699,7 +699,8 @@ static iree_string_view_t loom_amdgpu_occupancy_limiting_resource_name(
  
  iree_status_t loom_amdgpu_occupancy_build_target_resources(
      const loom_amdgpu_processor_info_t* processor, uint32_t wave_size,
 -    uint32_t scalar_register_count, uint32_t vector_register_count,
--    uint32_t flat_workgroup_size, uint32_t local_memory_bytes,
--    iree_arena_allocator_t* arena,
 +    bool compute_unit_mode, uint32_t scalar_register_count,
-+    uint32_t vector_register_count, uint32_t flat_workgroup_size,
-+    uint32_t local_memory_bytes, iree_arena_allocator_t* arena,
-     loom_amdgpu_occupancy_target_resources_t* out_resources) {
-   *out_resources = (loom_amdgpu_occupancy_target_resources_t){0};
-   if (processor == NULL) {
-@@ -589,8 +588,13 @@ iree_status_t loom_amdgpu_occupancy_build_target_resources(
-   if (!has_complete_direct_resource_values) {
-     table.residency_summary = (loom_target_residency_summary_t){0};
++    uint32_t vector_register_count,
+     uint32_t flat_workgroup_size, uint32_t local_memory_bytes,
+     iree_arena_allocator_t* arena,
+     loom_amdgpu_occupancy_target_resources_t* out_resources,
+@@ -817,8 +818,13 @@ iree_status_t loom_amdgpu_occupancy_build_target_resources(
+     loom_amdgpu_occupancy_capture_register_constraints(
+         model, &table, &register_query, constraints);
    }
--  loom_amdgpu_occupancy_apply_launch_limits(model, flat_workgroup_size,
--                                            local_memory_bytes, &table);
-+  if (compute_unit_mode && model->cu_domain.simd_count == 0) {
-+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-+                            "processor has no CU execution domain");
++  loom_amdgpu_occupancy_model_t launch_model = *model;
++  if (compute_unit_mode) {
++    IREE_ASSERT_NE(model->cu_domain.simd_count, 0);
++    launch_model.domain = model->cu_domain;
 +  }
-+  loom_amdgpu_occupancy_apply_launch_limits(
-+      model, compute_unit_mode ? &model->cu_domain : &model->domain,
-+      flat_workgroup_size, local_memory_bytes, &table);
- 
-   *out_resources = (loom_amdgpu_occupancy_target_resources_t){
-       .scalar_register_class = scalar_register_class,
-@@ -750,8 +754,17 @@ iree_status_t loom_amdgpu_occupancy_build(
+   loom_amdgpu_occupancy_apply_launch_limits(
+-      model, flat_workgroup_size, local_memory_bytes, &table,
++      &launch_model, flat_workgroup_size, local_memory_bytes, &table,
+       constraints != NULL ? constraints + register_constraint_count : NULL);
+   if (out_constraints != NULL) {
+     loom_amdgpu_occupancy_finalize_constraints(&table.residency_summary,
+@@ -987,8 +993,15 @@ iree_status_t loom_amdgpu_occupancy_build(
        &table));
    IREE_RETURN_IF_ERROR(loom_amdgpu_occupancy_finalize_register_limits(
-       model, register_classes, pressure_resources, arena, &table));
+       model, register_classes, pressure_resources, arena, &table, NULL));
 -  loom_amdgpu_occupancy_apply_launch_limits(model, table.flat_workgroup_size, 0,
--                                            &table);
+-                                            &table, NULL);
 +  const loom_amdgpu_target_facts_t* facts =
 +      loom_amdgpu_target_facts_cast(allocation->target.target_facts);
-+  const bool compute_unit_mode =
-+      facts != NULL && facts->processor_mode == LOOM_AMDGPU_PROCESSOR_MODE_CU;
-+  if (compute_unit_mode && model->cu_domain.simd_count == 0) {
-+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-+                            "processor has no CU execution domain");
++  loom_amdgpu_occupancy_model_t launch_model = *model;
++  if (facts && facts->processor_mode == LOOM_AMDGPU_PROCESSOR_MODE_CU) {
++    IREE_ASSERT_NE(model->cu_domain.simd_count, 0);
++    launch_model.domain = model->cu_domain;
 +  }
 +  loom_amdgpu_occupancy_apply_launch_limits(
-+      model, compute_unit_mode ? &model->cu_domain : &model->domain,
-+      table.flat_workgroup_size, 0, &table);
++      &launch_model, table.flat_workgroup_size, 0, &table, NULL);
  
    if (options && iree_any_bit_set(options->diagnostic_flags,
                                    LOOM_AMDGPU_OCCUPANCY_DIAGNOSTIC_SUMMARY)) {
 diff --git a/loom/src/loom/target/arch/amdgpu/planning/occupancy.h b/loom/src/loom/target/arch/amdgpu/planning/occupancy.h
-index 0a002a0..9e7d549 100644
+index c81fedb60..08cd9c067 100644
 --- a/loom/src/loom/target/arch/amdgpu/planning/occupancy.h
 +++ b/loom/src/loom/target/arch/amdgpu/planning/occupancy.h
-@@ -202,9 +202,9 @@ iree_status_t loom_amdgpu_occupancy_build(
- // |arena| is used only as scratch during construction.
+@@ -203,7 +203,8 @@ iree_status_t loom_amdgpu_occupancy_build(
+ // arena-owned inventory for report capture; NULL avoids allocating that data.
  iree_status_t loom_amdgpu_occupancy_build_target_resources(
      const loom_amdgpu_processor_info_t* processor, uint32_t wave_size,
 -    uint32_t scalar_register_count, uint32_t vector_register_count,
--    uint32_t flat_workgroup_size, uint32_t local_memory_bytes,
--    iree_arena_allocator_t* arena,
 +    bool compute_unit_mode, uint32_t scalar_register_count,
-+    uint32_t vector_register_count, uint32_t flat_workgroup_size,
-+    uint32_t local_memory_bytes, iree_arena_allocator_t* arena,
-     loom_amdgpu_occupancy_target_resources_t* out_resources);
- 
- // Returns the generated target residency model for |target|.
++    uint32_t vector_register_count,
+     uint32_t flat_workgroup_size, uint32_t local_memory_bytes,
+     iree_arena_allocator_t* arena,
+     loom_amdgpu_occupancy_target_resources_t* out_resources,
 diff --git a/loom/src/loom/target/arch/amdgpu/planning/occupancy_model.h b/loom/src/loom/target/arch/amdgpu/planning/occupancy_model.h
-index 796818d..e86b859 100644
+index 796818dbe..e86b85920 100644
 --- a/loom/src/loom/target/arch/amdgpu/planning/occupancy_model.h
 +++ b/loom/src/loom/target/arch/amdgpu/planning/occupancy_model.h
 @@ -65,6 +65,8 @@ typedef struct loom_amdgpu_occupancy_model_t {
@@ -875,15 +795,15 @@ index 796818d..e86b859 100644
    loom_target_residency_model_t residency_model;
    // Register-class occupancy models in diagnostic order.
 diff --git a/loom/src/loom/target/arch/amdgpu/planning/occupancy_test.cc b/loom/src/loom/target/arch/amdgpu/planning/occupancy_test.cc
-index f0b86aa..d952a49 100644
+index 58b66fe74..17b021982 100644
 --- a/loom/src/loom/target/arch/amdgpu/planning/occupancy_test.cc
 +++ b/loom/src/loom/target/arch/amdgpu/planning/occupancy_test.cc
-@@ -30,14 +30,16 @@ class AmdgpuOccupancyTargetResourcesTest : public ::testing::Test {
-   loom_amdgpu_occupancy_target_resources_t Build(
+@@ -31,13 +31,14 @@ class AmdgpuOccupancyTargetResourcesTest : public ::testing::Test {
        iree_string_view_t processor_name, uint32_t wave_size,
        uint32_t scalar_register_count, uint32_t vector_register_count,
--      uint32_t flat_workgroup_size, uint32_t local_memory_bytes) {
-+      uint32_t flat_workgroup_size, uint32_t local_memory_bytes,
+       uint32_t flat_workgroup_size, uint32_t local_memory_bytes,
+-      loom_target_residency_constraint_list_t* constraints = nullptr) {
++      loom_target_residency_constraint_list_t* constraints = nullptr,
 +      bool compute_unit_mode = false) {
      const loom_amdgpu_processor_info_t* processor =
          loom_amdgpu_target_info_find_processor(processor_name);
@@ -891,30 +811,27 @@ index f0b86aa..d952a49 100644
      loom_amdgpu_occupancy_target_resources_t resources = {};
      IREE_EXPECT_OK(loom_amdgpu_occupancy_build_target_resources(
 -        processor, wave_size, scalar_register_count, vector_register_count,
--        flat_workgroup_size, local_memory_bytes, &arena_, &resources));
-+        processor, wave_size, compute_unit_mode, scalar_register_count,
-+        vector_register_count, flat_workgroup_size, local_memory_bytes, &arena_,
-+        &resources));
++        processor, wave_size, compute_unit_mode, scalar_register_count, vector_register_count,
+         flat_workgroup_size, local_memory_bytes, &arena_, &resources,
+         constraints));
      return resources;
-   }
- 
-@@ -45,6 +47,14 @@ class AmdgpuOccupancyTargetResourcesTest : public ::testing::Test {
-   iree_arena_allocator_t arena_;
- };
+@@ -58,6 +59,14 @@ static const loom_target_residency_constraint_t* FindConstraint(
+   return nullptr;
+ }
  
 +TEST_F(AmdgpuOccupancyTargetResourcesTest, CuModeUsesHalfWgpLocalMemory) {
 +  const auto wgp = Build(IREE_SV("gfx1151"), 32, 32, 32, 128, 40000);
-+  const auto cu = Build(IREE_SV("gfx1151"), 32, 32, 32, 128, 40000, true);
++  const auto cu = Build(IREE_SV("gfx1151"), 32, 32, 32, 128, 40000, nullptr, true);
 +  EXPECT_EQ(wgp.resident_waves_per_simd, 3u);
 +  EXPECT_EQ(cu.resident_waves_per_simd, 2u);
 +  EXPECT_EQ(wgp.max_waves_per_simd, cu.max_waves_per_simd);
 +}
 +
  TEST_F(AmdgpuOccupancyTargetResourcesTest,
-        ReportsSelectedGenericTargetTransition) {
-   const loom_amdgpu_occupancy_target_resources_t resources =
+        RetainsJointRegisterAndLdsRequirements) {
+   loom_target_residency_constraint_list_t constraints = {};
 diff --git a/loom/src/loom/target/arch/amdgpu/profile.c b/loom/src/loom/target/arch/amdgpu/profile.c
-index 2d38e19..a7cccbf 100644
+index 61c0ea407..f7c2ff2bb 100644
 --- a/loom/src/loom/target/arch/amdgpu/profile.c
 +++ b/loom/src/loom/target/arch/amdgpu/profile.c
 @@ -30,6 +30,7 @@ static iree_status_t loom_amdgpu_target_profile_project_facts(
@@ -922,11 +839,11 @@ index 2d38e19..a7cccbf 100644
    facts->base.selector = (uint8_t)profile->identity.target->target_kind;
    facts->identity = profile->identity;
 +  facts->processor_mode = profile->processor_mode;
-   loom_amdgpu_target_properties_resolve(
-       &facts->identity, &facts->base.storage.bundle, &facts->properties);
+   loom_amdgpu_target_facts_initialize(facts);
    return iree_ok_status();
+ }
 diff --git a/loom/src/loom/target/arch/amdgpu/profile.h b/loom/src/loom/target/arch/amdgpu/profile.h
-index 5e18aca..1395f26 100644
+index 5e18aca8c..1395f2623 100644
 --- a/loom/src/loom/target/arch/amdgpu/profile.h
 +++ b/loom/src/loom/target/arch/amdgpu/profile.h
 @@ -27,6 +27,9 @@ typedef struct loom_amdgpu_target_profile_t {
@@ -940,7 +857,7 @@ index 5e18aca..1395f26 100644
  
  // Initializes an AMDGPU profile and its target-neutral bundle projection.
 diff --git a/loom/src/loom/target/emit/native/amdgpu/descriptor.c b/loom/src/loom/target/emit/native/amdgpu/descriptor.c
-index f308f74..17b3120 100644
+index f308f74dd..17b312057 100644
 --- a/loom/src/loom/target/emit/native/amdgpu/descriptor.c
 +++ b/loom/src/loom/target/emit/native/amdgpu/descriptor.c
 @@ -70,7 +70,8 @@ static const loom_amdgpu_kernel_descriptor_flags_t
@@ -978,7 +895,7 @@ index f308f74..17b3120 100644
        &compute_pgm_rsrc1, LOOM_AMDGPU_COMPUTE_PGM_RSRC1_MEM_ORDERED_SHIFT,
        loom_amdgpu_processor_properties_kernel_descriptor_has_flags(
 diff --git a/loom/src/loom/target/emit/native/amdgpu/descriptor.h b/loom/src/loom/target/emit/native/amdgpu/descriptor.h
-index 5b50554..54b80f2 100644
+index 5b5055478..54b80f27a 100644
 --- a/loom/src/loom/target/emit/native/amdgpu/descriptor.h
 +++ b/loom/src/loom/target/emit/native/amdgpu/descriptor.h
 @@ -63,6 +63,8 @@ typedef enum loom_amdgpu_kernel_descriptor_bits_e {
@@ -991,7 +908,7 @@ index 5b50554..54b80f2 100644
  
  // Bitset of loom_amdgpu_kernel_descriptor_bits_t values.
 diff --git a/loom/src/loom/target/emit/native/amdgpu/kernel_assembly.c b/loom/src/loom/target/emit/native/amdgpu/kernel_assembly.c
-index 7bc4cc3..1011507 100644
+index 83cc7190d..41a3f04bf 100644
 --- a/loom/src/loom/target/emit/native/amdgpu/kernel_assembly.c
 +++ b/loom/src/loom/target/emit/native/amdgpu/kernel_assembly.c
 @@ -188,7 +188,9 @@ static iree_status_t loom_amdgpu_kernel_assembly_append_metadata(
@@ -1006,7 +923,7 @@ index 7bc4cc3..1011507 100644
    if (uses_gfx10_sgpr_encoding) {
      IREE_RETURN_IF_ERROR(
 diff --git a/loom/src/loom/target/emit/native/amdgpu/kernel_hsaco.c b/loom/src/loom/target/emit/native/amdgpu/kernel_hsaco.c
-index c1f36b1..81f7121 100644
+index 07f587b06..cb6547aa6 100644
 --- a/loom/src/loom/target/emit/native/amdgpu/kernel_hsaco.c
 +++ b/loom/src/loom/target/emit/native/amdgpu/kernel_hsaco.c
 @@ -83,6 +83,8 @@ iree_status_t loom_amdgpu_build_kernel_hsaco_contribution(
@@ -1017,9 +934,9 @@ index c1f36b1..81f7121 100644
 +                       LOOM_AMDGPU_KERNEL_DESCRIPTOR_ENABLE_CU_MODE),
        record.metadata.sgpr_count, record.metadata.vgpr_count,
        flat_workgroup_size, record.metadata.group_segment_fixed_size,
-       scratch_arena, &target_resources));
+       scratch_arena, &target_resources, options->residency_constraints));
 diff --git a/loom/src/loom/target/emit/native/amdgpu/kernel_record.c b/loom/src/loom/target/emit/native/amdgpu/kernel_record.c
-index ebddcc0..7f7b89e 100644
+index 97d313916..7bc43e370 100644
 --- a/loom/src/loom/target/emit/native/amdgpu/kernel_record.c
 +++ b/loom/src/loom/target/emit/native/amdgpu/kernel_record.c
 @@ -440,6 +440,9 @@ iree_status_t loom_amdgpu_kernel_record_build(

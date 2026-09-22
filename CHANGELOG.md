@@ -2,10 +2,21 @@
 
 ## Unreleased
 
+- Select native release `native-20260922-hrx-update` for GPU execution and Loom
+  compilation; retain the existing NPU bundle.
+
+- Update the native HRX/Loom source pin to upstream `556c648e8` (2026-09-22),
+  rebase the downstream patches, pin a newer ROCr exporting `hsa_amd_queue_create`,
+  and remove patch 0006 after its five regression
+  cases pass unmodified upstream. Adapt dma-buf export to the new buffer API.
+- Move the local CU/WGP extension descriptor from 41 to 42 to avoid upstream's
+  C++ importer descriptor. Existing locally patched compilers must be rebuilt
+  for explicit modes. The new pinned native bundle includes this extension.
+
 - Add `loom::CompilerOptions::processor_mode` for AMDGPU CU/WGP scheduling,
   with compiler and artifact caches separated by mode. Struct literals must add
   the field or use `..Default::default()`. Explicit modes require compiler patch
-  0009; the pinned compiler rejects them. Default-mode cache keys are preserved.
+  0009, now included in the pinned compiler. Default-mode cache keys are preserved.
 
 - Let the upload staging cache replace completed small allocations when larger
   uploads arrive. Retain the eight-entry and 64 MiB limits while avoiding

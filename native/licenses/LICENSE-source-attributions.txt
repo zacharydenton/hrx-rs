@@ -4858,7 +4858,7 @@ Source: sources/numactl/numactl-2.0.19/util.c
    on your Linux system; if not, write to the Free Software Foundation,
    Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA */
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/common/hsa_table_interface.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/common/hsa_table_interface.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -4901,7 +4901,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/common/hsa_t
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/common/shared.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/common/shared.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -4944,7 +4944,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/common/share
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/driver/driver.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/driver/driver.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -4987,7 +4987,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/driver/drive
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/driver/kfd/amd_kfd_driver.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/driver/kfd/amd_kfd_driver.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5030,7 +5030,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/driver/kfd/a
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/driver/virtio/amd_kfd_virtio_driver.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/driver/virtio/amd_kfd_virtio_driver.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5073,7 +5073,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/driver/virti
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/driver/xdna/amd_xdna_driver.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/driver/xdna/amd_xdna_driver.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5116,16 +5116,16 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/driver/xdna/
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/driver/xdna/uapi/amdxdna_accel.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/driver/xdna/uapi/amdxdna_accel.h
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/agent.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/agent.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
 // Open Source License (NCSA)
 //
-// Copyright (c) 2014-2025, Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2014-2026, Advanced Micro Devices, Inc. All rights reserved.
 //
 // Developed by:
 //
@@ -5162,13 +5162,13 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/agent.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_aie_agent.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_aie_agent.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
 // Open Source License (NCSA)
 //
-// Copyright (c) 2022-2023, Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2022-2026, Advanced Micro Devices, Inc. All rights reserved.
 //
 // Developed by:
 //
@@ -5205,7 +5205,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_aie_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_aie_aql_queue.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_aie_aql_queue.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5248,7 +5248,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_aie_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_aql_queue.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_aql_queue.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5291,7 +5291,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_aql_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_available_drivers.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_available_drivers.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5334,7 +5334,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_avai
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_blit_kernel.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_blit_kernel.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5377,7 +5377,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_blit
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_blit_sdma.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_blit_sdma.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5420,7 +5420,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_blit
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_blit_shaders.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_blit_shaders.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5463,7 +5463,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_blit
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_cpu_agent.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_cpu_agent.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5506,7 +5506,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_cpu_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_filter_device.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_filter_device.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5549,7 +5549,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_filt
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_gpu_agent.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_gpu_agent.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5592,7 +5592,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_gpu_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_gpu_pm4.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_gpu_pm4.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5635,7 +5635,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_gpu_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_kfd_driver.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_kfd_driver.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5678,7 +5678,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_kfd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_memory_region.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_memory_region.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -5721,315 +5721,14 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_memo
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_topology.h
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_trap_handler_v1.h
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2022, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_virtio_driver.h
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_xdna_driver.h
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2024-2026, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/blit.h
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/cache.h
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/checked.h
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/counted_queue_manager.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_sdma_queue.h
 /*
  * Copyright © Advanced Micro Devices, Inc., or its affiliates.
  *
  * SPDX-License-Identifier: MIT
  */
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/default_signal.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_topology.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6072,7 +5771,315 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/default_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/driver.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_trap_handler_v1.h
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2022, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_virtio_driver.h
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/amd_xdna_driver.h
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2024-2026, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/blit.h
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/cache.h
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/checked.h
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/counted_queue_manager.h
+/*
+ * Copyright © Advanced Micro Devices, Inc., or its affiliates.
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/default_signal.h
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/driver.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6115,7 +6122,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/driver.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/exceptions.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/exceptions.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6158,7 +6165,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/exceptio
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/host_queue.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/host_queue.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6201,7 +6208,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/host_que
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_api_trace_int.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_api_trace_int.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6244,7 +6251,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_api_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_ext_amd_impl.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_ext_amd_impl.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6287,7 +6294,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_ext_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_ext_interface.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_ext_interface.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6330,7 +6337,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_ext_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_internal.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_internal.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6373,7 +6380,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_inte
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_table_interface.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_table_interface.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6416,7 +6423,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_tabl
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_ven_amd_loader_impl.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_ven_amd_loader_impl.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6461,7 +6468,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/hsa_ven_
 #ifndef HSA_RUNTME_CORE_INC_HSA_VEN_AMD_LOADER_IMPL_H_
 #define HSA_RUNTME_CORE_INC_HSA_VEN_AMD_LOADER_IMPL_H_
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/intercept_queue.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/intercept_queue.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6504,7 +6511,13 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/intercep
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/interrupt_signal.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/intercept_queue_logic.h
+/*
+Copyright © Advanced Micro Devices, Inc., or its affiliates.
+SPDX-License-Identifier: MIT
+*/
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/interrupt_signal.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6547,7 +6560,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/interrup
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/ipc_signal.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/ipc_signal.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6590,7 +6603,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/ipc_sign
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/isa.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/isa.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6633,7 +6646,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/isa.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/memory_region.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/memory_region.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6676,7 +6689,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/memory_r
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/queue.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/queue.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6719,7 +6732,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/queue.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/registers.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/registers.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6762,7 +6775,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/register
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/runtime.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/runtime.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6805,7 +6818,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/runtime.
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/scratch_cache.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/scratch_cache.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6848,7 +6861,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/scratch_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/sdma_registers.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/sdma_registers.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6891,7 +6904,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/sdma_reg
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/signal.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/signal.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6934,7 +6947,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/signal.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/svm_profiler.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/svm_profiler.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -6977,7 +6990,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/svm_prof
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/thunk_loader.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/inc/thunk_loader.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7020,7 +7033,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/inc/thunk_lo
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_aie_agent.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_aie_agent.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7063,7 +7076,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_aie_aql_queue.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_aie_aql_queue.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7106,7 +7119,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_aql_queue.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_aql_queue.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7149,7 +7162,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_blit_kernel.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_blit_kernel.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7192,7 +7205,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_blit_sdma.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_blit_sdma.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7235,7 +7248,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_cpu_agent.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_cpu_agent.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7278,7 +7291,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_filter_device.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_filter_device.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7321,7 +7334,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_gpu_agent.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_gpu_agent.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7364,7 +7377,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_hsa_loader.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_hsa_loader.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7407,7 +7420,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_loader_context.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_loader_context.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7450,7 +7463,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_memory_region.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_memory_region.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7493,229 +7506,14 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_topology.cpp
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2014-2025, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/cache.cpp
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/counted_queue_manager.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_sdma_queue.cpp
 /*
  * Copyright © Advanced Micro Devices, Inc., or its affiliates.
  *
  * SPDX-License-Identifier: MIT
  */
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/default_signal.cpp
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/host_queue.cpp
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa.cpp
-////////////////////////////////////////////////////////////////////////////////
-//
-// The University of Illinois/NCSA
-// Open Source License (NCSA)
-//
-// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
-//
-// Developed by:
-//
-//                 AMD Research and AMD HSA Software Development
-//
-//                 Advanced Micro Devices, Inc.
-//
-//                 www.amd.com
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal with the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-//  - Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimers.
-//  - Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimers in
-//    the documentation and/or other materials provided with the distribution.
-//  - Neither the names of Advanced Micro Devices, Inc,
-//    nor the names of its contributors may be used to endorse or promote
-//    products derived from this Software without specific prior written
-//    permission.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS WITH THE SOFTWARE.
-//
-////////////////////////////////////////////////////////////////////////////////
-
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_api_trace.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/amd_topology.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7758,7 +7556,229 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_ext_amd.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/cache.cpp
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/counted_queue_manager.cpp
+/*
+ * Copyright © Advanced Micro Devices, Inc., or its affiliates.
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/default_signal.cpp
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/host_queue.cpp
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa.cpp
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2014-2020, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_api_trace.cpp
+////////////////////////////////////////////////////////////////////////////////
+//
+// The University of Illinois/NCSA
+// Open Source License (NCSA)
+//
+// Copyright (c) 2014-2025, Advanced Micro Devices, Inc. All rights reserved.
+//
+// Developed by:
+//
+//                 AMD Research and AMD HSA Software Development
+//
+//                 Advanced Micro Devices, Inc.
+//
+//                 www.amd.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+//  - Redistributions of source code must retain the above copyright notice,
+//    this list of conditions and the following disclaimers.
+//  - Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimers in
+//    the documentation and/or other materials provided with the distribution.
+//  - Neither the names of Advanced Micro Devices, Inc,
+//    nor the names of its contributors may be used to endorse or promote
+//    products derived from this Software without specific prior written
+//    permission.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+// ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS WITH THE SOFTWARE.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_ext_amd.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7801,7 +7821,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_ext_interface.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_ext_interface.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7844,7 +7864,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_ven_amd_loader.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_ven_amd_loader.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7887,7 +7907,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/hsa_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/intercept_queue.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/intercept_queue.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7930,7 +7950,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/inte
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/interrupt_signal.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/interrupt_signal.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -7973,7 +7993,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/inte
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/ipc_signal.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/ipc_signal.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8016,7 +8036,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/ipc_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/isa.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/isa.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8059,7 +8079,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/isa.
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/queue.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/queue.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8102,7 +8122,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/queu
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/runtime.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/runtime.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8145,7 +8165,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/runt
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/signal.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/signal.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8188,7 +8208,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/sign
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/svm_profiler.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/svm_profiler.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8231,7 +8251,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/svm_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/thunk_loader.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/thunk_loader.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8274,7 +8294,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/runtime/thun
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/atomic_helpers.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/atomic_helpers.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8317,7 +8337,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/atomic_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/flag.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/flag.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8360,7 +8380,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/flag.cp
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/flag.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/flag.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8403,7 +8423,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/flag.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/lazy_ptr.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/lazy_ptr.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8446,7 +8466,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/lazy_pt
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/lnx/os_linux.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/lnx/os_linux.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8489,7 +8509,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/lnx/os_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/locks.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/locks.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8532,7 +8552,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/locks.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/memory.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/memory.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8575,7 +8595,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/memory.
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/os.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/os.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8618,7 +8638,24 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/os.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/simple_heap.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/poll_backoff.h
+////////////////////////////////////////////////////////////////////////////////
+//
+//
+// Copyright © Advanced Micro Devices, Inc., or its affiliates.
+// SPDX-License-Identifier: MIT
+//
+// Escalating backoff for userspace polling fallbacks.
+//
+// Some wait paths cannot sleep in the kernel (e.g. AsyncEventsLoop when the
+// thunk exposes no interrupt-backed signal events, as on the WSL/dxg thunk).
+// Those paths re-scan signal values in userspace and would otherwise burn a
+// full CPU core. To keep idle cost near zero without penalizing a wait that
+// completes quickly, the nap between scans starts at a small floor and doubles
+// up to a ceiling; callers reset to the floor whenever a wait makes progress so
+// the escalation only compounds within a single idle wait.
+
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/simple_heap.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8661,7 +8698,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/simple_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/small_heap.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/small_heap.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8704,7 +8741,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/small_h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/small_heap.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/small_heap.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8747,7 +8784,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/small_h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/timer.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/timer.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8790,7 +8827,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/timer.c
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/timer.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/timer.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8833,7 +8870,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/timer.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/utils.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/utils.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8876,7 +8913,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/utils.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/win/os_win.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/core/util/win/os_win.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -8919,7 +8956,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/core/util/win/os_
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/inc/addrinterface.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/inc/addrinterface.h
 /*
 ************************************************************************************************************************
 *
@@ -8928,7 +8965,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/inc
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/inc/addrtypes.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/inc/addrtypes.h
 /*
 ************************************************************************************************************************
 *
@@ -8937,7 +8974,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/inc
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/addrinterface.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/addrinterface.cpp
 /*
 ************************************************************************************************************************
 *
@@ -8946,7 +8983,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/amdgpu_asic_addr.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/amdgpu_asic_addr.h
 /*
 ************************************************************************************************************************
 *
@@ -8955,7 +8992,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/chip/gfx10/gfx10_gb_reg.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/chip/gfx10/gfx10_gb_reg.h
 /*
 ************************************************************************************************************************
 *
@@ -8964,7 +9001,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/chip/gfx11/gfx11_gb_reg.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/chip/gfx11/gfx11_gb_reg.h
 /*
 ************************************************************************************************************************
 *
@@ -8973,7 +9010,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/chip/gfx12/gfx12_gb_reg.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/chip/gfx12/gfx12_gb_reg.h
 /*
 ************************************************************************************************************************
 *
@@ -8982,7 +9019,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/chip/gfx9/gfx9_gb_reg.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/chip/gfx9/gfx9_gb_reg.h
 /*
 ************************************************************************************************************************
 *
@@ -8991,7 +9028,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/chip/r800/si_gb_reg.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/chip/r800/si_gb_reg.h
 /*
 ************************************************************************************************************************
 *
@@ -9000,7 +9037,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrcommon.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrcommon.h
 /*
 ************************************************************************************************************************
 *
@@ -9009,7 +9046,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrelemlib.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrelemlib.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9018,7 +9055,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrelemlib.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrelemlib.h
 /*
 ************************************************************************************************************************
 *
@@ -9027,7 +9064,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9036,7 +9073,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib.h
 /*
 ************************************************************************************************************************
 *
@@ -9045,7 +9082,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib1.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib1.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9054,7 +9091,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib1.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib1.h
 /*
 ************************************************************************************************************************
 *
@@ -9063,7 +9100,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib2.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib2.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9072,7 +9109,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib2.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib2.h
 /*
 ************************************************************************************************************************
 *
@@ -9081,7 +9118,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib3.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib3.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9090,7 +9127,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib3.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrlib3.h
 /*
 ************************************************************************************************************************
 *
@@ -9099,7 +9136,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrobject.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrobject.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9108,7 +9145,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrobject.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/addrobject.h
 /*
 ************************************************************************************************************************
 *
@@ -9117,7 +9154,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/coord.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/coord.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9126,7 +9163,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/coord.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/core/coord.h
 /*
 ************************************************************************************************************************
 *
@@ -9135,7 +9172,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx10/gfx10SwizzlePattern.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx10/gfx10SwizzlePattern.h
 /*
 ************************************************************************************************************************
 *
@@ -9144,7 +9181,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx10/gfx10addrlib.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx10/gfx10addrlib.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9153,7 +9190,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx10/gfx10addrlib.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx10/gfx10addrlib.h
 /*
 ************************************************************************************************************************
 *
@@ -9162,7 +9199,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx11/gfx11SwizzlePattern.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx11/gfx11SwizzlePattern.h
 /*
 ************************************************************************************************************************
 *
@@ -9171,7 +9208,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx11/gfx11addrlib.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx11/gfx11addrlib.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9180,7 +9217,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx11/gfx11addrlib.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx11/gfx11addrlib.h
 /*
 ************************************************************************************************************************
 *
@@ -9189,7 +9226,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx12/gfx12SwizzlePattern.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx12/gfx12SwizzlePattern.h
 /*
 ************************************************************************************************************************
 *
@@ -9198,7 +9235,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx12/gfx12addrlib.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx12/gfx12addrlib.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9207,7 +9244,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx12/gfx12addrlib.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx12/gfx12addrlib.h
 /*
 ************************************************************************************************************************
 *
@@ -9216,7 +9253,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx9/gfx9addrlib.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx9/gfx9addrlib.cpp
 /*
 ************************************************************************************************************************
 *
@@ -9225,7 +9262,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx9/gfx9addrlib.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src/gfx9/gfx9addrlib.h
 /*
 ************************************************************************************************************************
 *
@@ -9234,7 +9271,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/addrlib/src
 *
 ***********************************************************************************************************************/
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/blit_kernel.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/blit_kernel.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9277,7 +9314,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/blit_kernel
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/blit_kernel.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/blit_kernel.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9320,7 +9357,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/blit_kernel
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/blit_object_gfx7xx.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/blit_object_gfx7xx.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9363,7 +9400,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/blit_object
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/blit_object_gfx8xx.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/blit_object_gfx8xx.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9406,7 +9443,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/blit_object
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/blit_object_gfx9xx.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/blit_object_gfx9xx.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9449,7 +9486,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/blit_object
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/device_info.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/device_info.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9492,7 +9529,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/device_info
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/device_info.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/device_info.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9535,7 +9572,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/device_info
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/hsa_ext_image.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/hsa_ext_image.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9578,7 +9615,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/hsa_ext_ima
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9621,7 +9658,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_gfx11.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_gfx11.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9664,7 +9701,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_g
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_gfx11.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_gfx11.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9707,7 +9744,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_g
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_kv.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_kv.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9750,7 +9787,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_k
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_kv.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_kv.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9793,7 +9830,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_lut_k
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9836,7 +9873,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9879,7 +9916,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_ai.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_ai.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9922,7 +9959,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_ai.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_ai.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -9965,7 +10002,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_gfx11.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_gfx11.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10008,7 +10045,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_gfx11.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_gfx11.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10051,7 +10088,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_gfx12.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_gfx12.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10094,7 +10131,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_gfx12.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_gfx12.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10137,7 +10174,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_kv.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_kv.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10180,7 +10217,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_kv.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_kv.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10223,7 +10260,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_nv.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_nv.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10266,7 +10303,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_nv.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_manager_nv.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10309,7 +10346,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_manag
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_runtime.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_runtime.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10352,7 +10389,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_runti
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_runtime.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/image_runtime.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10395,7 +10432,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/image_runti
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/inc/hsa_ext_image_impl.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/inc/hsa_ext_image_impl.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10438,7 +10475,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/inc/hsa_ext
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/resource.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10481,7 +10518,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource_ai.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/resource_ai.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10524,7 +10561,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource_ai
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource_gfx11.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/resource_gfx11.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10567,7 +10604,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource_gf
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource_gfx12.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/resource_gfx12.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10610,7 +10647,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource_gf
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource_kv.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/resource_kv.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10653,7 +10690,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource_kv
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource_nv.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/resource_nv.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10696,7 +10733,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/resource_nv
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/util.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/image/util.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10739,7 +10776,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/image/util.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/Brig.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/Brig.h
 // University of Illinois/NCSA
 // Open Source License
 //
@@ -10781,7 +10818,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/Brig.h
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
 // SOFTWARE.
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_common.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_common.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10824,7 +10861,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_commo
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_elf.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_elf.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10867,7 +10904,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_elf.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_kernel_code.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_kernel_code.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10910,7 +10947,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_kerne
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_queue.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_queue.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10953,7 +10990,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_queue
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_signal.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_signal.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -10996,14 +11033,14 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_signa
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_launch_descriptor.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_launch_descriptor.h
 /*
  * Copyright (c) Advanced Micro Devices, Inc., or its affiliates.
  *
  * SPDX-License-Identifier: MIT
  */
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11046,14 +11083,14 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_amd_tool.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_amd_tool.h
 /*
  * Copyright © Advanced Micro Devices, Inc., or its affiliates.
  *
  * SPDX-License-Identifier: MIT
  */
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_api_trace.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_api_trace.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11096,7 +11133,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_api_trace
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_api_trace_version.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_api_trace_version.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11139,7 +11176,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_api_trace
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_amd.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_amd.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11182,14 +11219,14 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_amd.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_amd_aie.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_amd_aie.h
 /*
  * Copyright © Advanced Micro Devices, Inc., or its affiliates.
  *
  * SPDX-License-Identifier: MIT
  */
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_finalize.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_finalize.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11232,7 +11269,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_final
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_image.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_image.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11275,7 +11312,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ext_image
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ven_amd_aqlprofile.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ven_amd_aqlprofile.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11318,7 +11355,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ven_amd_a
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ven_amd_loader.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ven_amd_loader.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11361,7 +11398,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ven_amd_l
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ven_amd_pc_sampling.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ven_amd_pc_sampling.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11404,7 +11441,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa_ven_amd_p
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd_elf_image.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd_elf_image.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11447,7 +11484,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd_hsa_code.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd_hsa_code.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11490,7 +11527,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd_hsa_code_util.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd_hsa_code_util.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11533,7 +11570,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd_hsa_locks.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd_hsa_locks.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11576,7 +11613,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd_options.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd_options.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11619,7 +11656,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/amd
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/lnx/amd_core_dump.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/lnx/amd_core_dump.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11662,7 +11699,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/lnx
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/win32/amd_core_dump.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/win32/amd_core_dump.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11705,7 +11742,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/libamdhsacode/win
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/loader/AMDHSAKernelDescriptor.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/loader/AMDHSAKernelDescriptor.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11748,7 +11785,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/loader/AMDHSAKern
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/loader/executable.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/loader/executable.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11791,7 +11828,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/loader/executable
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/pcs/hsa_ven_amd_pc_sampling.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/pcs/hsa_ven_amd_pc_sampling.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11834,7 +11871,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/pcs/hsa_ven_amd_p
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/pcs/inc/hsa_ven_amd_pc_sampling_impl.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/pcs/inc/hsa_ven_amd_pc_sampling_impl.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11877,7 +11914,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/pcs/inc/hsa_ven_a
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/pcs/pcs_runtime.cpp
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/pcs/pcs_runtime.cpp
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11920,7 +11957,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/pcs/pcs_runtime.c
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/pcs/pcs_runtime.h
+Source: rocr-update-sources/projects/rocr-runtime/runtime/hsa-runtime/pcs/pcs_runtime.h
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The University of Illinois/NCSA
@@ -11963,7 +12000,7 @@ Source: rocm-systems/projects/rocr-runtime/runtime/hsa-runtime/pcs/pcs_runtime.h
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/ais.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/ais.c
 /*
  * Copyright © 2023 Advanced Micro Devices, Inc.
  *
@@ -11989,7 +12026,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/ais.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/debug.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/debug.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12015,7 +12052,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/debug.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/events.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/events.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12041,14 +12078,14 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/events.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/extsem.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/extsem.c
 /*
  * Copyright (c) Advanced Micro Devices, Inc., or its affiliates.
  *
  * SPDX-License-Identifier: MIT
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/fmm.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/fmm.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12074,7 +12111,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/fmm.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/fmm.h
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/fmm.h
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12100,7 +12137,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/fmm.h
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/globals.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/globals.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12126,7 +12163,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/globals.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/hsakmtmodel.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/hsakmtmodel.c
 /*
  * Copyright © 2025 Advanced Micro Devices, Inc.
  *
@@ -12152,7 +12189,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/hsakmtmodel.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/kfdcontext.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/kfdcontext.c
 /*
  * Copyright © 2025 Advanced Micro Devices, Inc.
  *
@@ -12178,7 +12215,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/kfdcontext.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/kfdcontext.h
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/kfdcontext.h
 /*
  * Copyright © 2025 Advanced Micro Devices, Inc.
  *
@@ -12204,14 +12241,14 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/kfdcontext.h
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/libhsakmt.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/libhsakmt.c
 /*
  * Copyright © Advanced Micro Devices, Inc., or its affiliates. 
  * 
  * SPDX-License-Identifier: MIT
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/libhsakmt.h
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/libhsakmt.h
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12237,7 +12274,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/libhsakmt.h
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/memory.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/memory.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12263,7 +12300,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/memory.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/openclose.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/openclose.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12289,7 +12326,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/openclose.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/pc_sampling.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/pc_sampling.c
 /*
  * Copyright © 2023 Advanced Micro Devices, Inc.
  *
@@ -12315,7 +12352,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/pc_sampling.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/perfctr.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/perfctr.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12341,7 +12378,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/perfctr.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/pmc_table.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/pmc_table.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12367,7 +12404,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/pmc_table.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/pmc_table.h
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/pmc_table.h
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12393,7 +12430,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/pmc_table.h
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/queues.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/queues.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12419,7 +12456,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/queues.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/rbtree.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/rbtree.c
 /*
  * Copyright (C) 2002-2018 Igor Sysoev
  * Copyright (C) 2011-2018 Nginx, Inc.
@@ -12447,7 +12484,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/rbtree.c
  * SUCH DAMAGE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/rbtree.h
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/rbtree.h
 /*
  * Copyright (C) 2002-2018 Igor Sysoev
  * Copyright (C) 2011-2018 Nginx, Inc.
@@ -12475,7 +12512,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/rbtree.h
  * SUCH DAMAGE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/rbtree_amd.h
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/rbtree_amd.h
 /*
  * Copyright © 2018 Advanced Micro Devices, Inc.
  *
@@ -12501,7 +12538,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/rbtree_amd.h
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/spm.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/spm.c
 /*
  * Copyright © 2020 Advanced Micro Devices, Inc.
  *
@@ -12527,7 +12564,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/spm.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/svm.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/svm.c
 /*
  * Copyright © 2020 Advanced Micro Devices, Inc.
  *
@@ -12553,7 +12590,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/svm.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/time.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/time.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *
@@ -12579,7 +12616,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/time.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/topology.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/topology.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  * Copyright 2016-2018 Raptor Engineering, LLC. All Rights Reserved.
@@ -12606,7 +12643,7 @@ Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/topology.c
  * DEALINGS IN THE SOFTWARE.
  */
 
-Source: rocm-systems/projects/rocr-runtime/libhsakmt/src/version.c
+Source: rocr-update-sources/projects/rocr-runtime/libhsakmt/src/version.c
 /*
  * Copyright © 2014 Advanced Micro Devices, Inc.
  *

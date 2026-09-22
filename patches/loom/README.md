@@ -1,7 +1,7 @@
 # Loom compiler patches
 
 These patches apply to public `ROCm/hrx-system` commit
-`ecaaf7376f7dcaa599f6258b0d1c38ff7fbd0e3d`; `base-revision` is the machine-readable
+`556c648e8f301ad9656d325687cc93b417ea78ff`; `base-revision` is the machine-readable
 pin. The patches use the upstream C API without adding private ABI entrypoints.
 
 `0001-vopd-source-cache-banks.patch` fixes AMDGPU VOPD register-bank constraints.
@@ -14,8 +14,10 @@ native assembly/placement regression fixtures and retains upstream license
 headers. It originated in fork commit
 [`675cc43bc`](https://github.com/zacharydenton/hrx-system/commit/675cc43bc).
 
-`0002-amdgpu-fragment-repack.patch` adds the accumulator-to-RHS fp16 fragment
-repack used by query-32 attention kernels, with native regression coverage.
+`0002-amdgpu-fragment-repack.patch` selects a VGPR permutation path for
+accumulator-to-RHS fp16 fragment repacking, with native regression coverage.
+Upstream now also supports this operation through `ds_swizzle`; the patch
+retains the existing downstream implementation.
 
 `0003-smem-storage-reuse-drain.patch` fully drains SMEM before overwriting pending scalar-load
 destination registers. A partial wait could mark a pointer load complete while it was
@@ -34,8 +36,9 @@ It includes current lowering expectations for scaled matrix operations.
 into concrete encoding definitions so generic kernel families specialize through
 native emission.
 
-`0006-bind-dependent-inline-types.patch` substitutes callable arguments into
-dependent vector types before validating and inlining selected templates.
+Patch 0006 (dependent inline types) has been removed: upstream now substitutes
+arguments during materialization. All five original regression cases pass with
+the unmodified compiler at this revision.
 
 `0007-gfx11-vmem-source-reuse.patch` removes memory-completion leases for GFX11
 VMEM address/resource SGPR sources. Hardware interlocks their consumption;
@@ -54,10 +57,11 @@ are supported on GFX11/GFX12. Older libraries reject the nonempty extension
 chain instead of silently ignoring it. The patch includes native profile,
 serialization, and occupancy tests plus generator validation.
 
-This ninth patch is a local compiler extension and is **not included in the
-currently pinned runtime bundle**. To use `CompilerOptions::processor_mode`,
-build the patched compiler below and set `HRX_LOOM_LIBRARY`; default-mode
-compilation still works with the pinned bundle and retains its cache keys.
+This local compiler extension is included in `native-20260922-hrx-update`,
+the runtime selected by `bundle.json`. Its descriptor type is 42 because
+upstream assigned 41 to the C++ importer. Rebuild earlier locally patched
+compilers before using explicit modes with these bindings. Default-mode cache
+keys remain unchanged; compiler identity separates artifacts from each build.
 
 ## Rebuild the compiler
 
@@ -72,7 +76,8 @@ cd "$LOOM_SOURCE"
 python3 dev.py --cmake-build-dir "$PWD/build" cmake setup
 python3 dev.py --cmake-build-dir "$PWD/build" cmake configure \
   -DCMAKE_BUILD_TYPE=Release -DLOOM_TARGET_AMDGPU=ON \
-  -DLOOM_TARGET_AMDGPU_TARGETS=gfx1151
+  -DLOOM_TARGET_AMDGPU_TARGETS=gfx1151 -DIREE_BUILD_TESTS=OFF \
+  -DLIBHRX_BUILD_CTS=OFF -DHRX_INSTALL_TESTS=OFF
 python3 dev.py --cmake-build-dir "$PWD/build" cmake build \
   loomc_shared loom-compile libhrx_src_libhrx_hrx
 export HRX_LOOM_LIBRARY="$PWD/build/loom/binding/c/libloomc.so"
@@ -85,21 +90,40 @@ compiler development. Compiler identity and artifact cache keys include the
 shared library's content digest, so applying a compiler fix automatically
 invalidates affected cache entries.
 
-The bundle records this base and every patch digest in `provenance.json`.
+The published bundle records this base and every patch digest in `provenance.json`.
 
 ## Validation
 
 See [VALIDATION.md](../../VALIDATION.md) for the tested bundle and crate results.
 The patch files include the native regression fixtures described above.
 
+## Upstream patch audit (2026-09-22)
+
+The audit compares pristine upstream `556c648e8` with the rebased compiler.
+
+| Patch | Result on pristine upstream | Decision |
+| --- | --- | --- |
+| 0001 VOPD banks | Three illegal source-cache pairings remain; a legal pairing is also missed | Retain correctness fix |
+| 0002 fragment repack | Repacking works, but uses `ds_swizzle` instead of the patched `v_permlanex16` path | Retain existing optimization; current performance benefit is unqualified |
+| 0003 SMEM reuse | Destination reuse emits `lgkmcnt(2)` before consuming an unordered load | Retain correctness fix |
+| 0004 fragment reads | Operand loads are still sunk after scale loads | Retain existing scheduling policy; current performance benefit is unqualified |
+| 0005 encoding config | Two canonicalization cases fail and i4/i8 configured kernels are rejected | Retain compilation fix |
+| 0006 inline types | All three inlining and both template regressions pass | Remove |
+| 0007 VMEM sources | SGPR address reuse still forces unnecessary completion waits | Retain existing optimization; refresh loop-plan expectations |
+| 0008 dma-buf export | hrx-rs's interop entry points are absent | Retain; migrate to upstream `iree_hal_buffer_export` |
+| 0009 CU/WGP mode | hrx-rs's profile execution extension is absent | Retain; use descriptor type 42 and upstream residency reporting |
+
+Code-generation differences establish that an optimization is not redundant;
+they do not establish a performance benefit on the updated compiler. No new
+end-to-end performance claim is made for 0002, 0004, or 0007.
+
 Patch SHA-256 values:
 
-- `0001-vopd-source-cache-banks.patch`: `cee76d2ab6cd3d279070a93e578b28931a7e6debd949080cd15a5bd0dcb3a06b`
-- `0002-amdgpu-fragment-repack.patch`: `cc415b38829104821c7964c1c22aac764e2cb8aabc288f41a7536db32ccd884f`
-- `0003-smem-storage-reuse-drain.patch`: `62506281067aa86810e4b373e3b7e1b150999c150fe753f524789695f50d96f0`
-- `0004-preserve-fragment-read-order.patch`: `7608c0d3d86ce64b72a08f5310fb6657a1473e1e20428b14958a5091db6e06b5`
-- `0005-materialize-encoding-config.patch`: `a74b0ae2cd73be6bbd219b8f27d324944df088eeb582e411baa47ebabbd6ead2`
-- `0006-bind-dependent-inline-types.patch`: `c196c0e284c2d8ba6946c00b9816a43208ab6ef55dc1601fab30efc3b4f8d56c`
-- `0007-gfx11-vmem-source-reuse.patch`: `032a77cd4786b71e916f9e1d7ce69faed1d8e8b22c7f111bfa1ca47b2d814556`
-
-- `0009-amdgpu-profile-processor-mode.patch`: `5f262dfcd0e981291e3defb21da48e2152d57bc07fc5fa5aa88a38ab563e61cb`
+- `0001-vopd-source-cache-banks.patch`: `7b8784f70a92200c1e2fdc60562cafe9bcdf82a537568ee9f2dfba5de6ce609d`
+- `0002-amdgpu-fragment-repack.patch`: `e7f43eb989ed6b43ec2fda21976338446f5a877df81ed6bbd1f79c4d5d946911`
+- `0003-smem-storage-reuse-drain.patch`: `b6fdff10054d8b2bfe28fc69c003dedee2834bf33f49a4ed2ff3ffe820dba845`
+- `0004-preserve-fragment-read-order.patch`: `2d5342ca88ccf8bfe8109497835c93471b5bb130f0dad6d664d936ebd9dc95df`
+- `0005-materialize-encoding-config.patch`: `91d2be463c6046e2571eb6bba86902da6d1e9d5b3cf2b91e70682c5131f310e0`
+- `0007-gfx11-vmem-source-reuse.patch`: `5da1cec6f6dffa8ca1d775198875d74a063aaffeff944fc56933b601eb1ddbc4`
+- `0008-export-owned-gpu-dmabuf.patch`: `15d51680d96762c1d2f426c1b0f9eb2bd12ff15aa38e7b444932c5eaed986909`
+- `0009-amdgpu-profile-processor-mode.patch`: `318db9d69eb9ccb0fd22d7f69fb1571e9ed628a2d2649769d71e585cc49255e2`

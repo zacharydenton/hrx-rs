@@ -15,8 +15,8 @@ HRX_API hrx_status_t hrx_buffer_export_dmabuf(
     return hrx_make_status(HRX_STATUS_INVALID_ARGUMENT, "NULL export argument");
   }
   iree_hal_external_buffer_t external = {0};
-  HRX_RETURN_IF_IREE_ERROR(iree_hal_allocator_export_buffer(
-      buffer->device->allocator.hal_allocator, buffer->hal_buffer,
+  HRX_RETURN_IF_IREE_ERROR(iree_hal_buffer_export(
+      buffer->hal_buffer,
       IREE_HAL_EXTERNAL_BUFFER_TYPE_DEVICE_ALLOCATION,
       IREE_HAL_EXTERNAL_BUFFER_FLAG_NONE, &external));
   // Resolve the SONAME already loaded by HRX. Never initialize another HSA copy.
@@ -44,8 +44,8 @@ HRX_API hrx_status_t hrx_buffer_export_dmabuf(
 HRX_API hrx_status_t hrx_buffer_allocation_address(hrx_buffer_t buffer, uint64_t* address) {
   if (!buffer || !address) return hrx_make_status(HRX_STATUS_INVALID_ARGUMENT, "NULL allocation address argument");
   iree_hal_external_buffer_t external = {0};
-  HRX_RETURN_IF_IREE_ERROR(iree_hal_allocator_export_buffer(
-      buffer->device->allocator.hal_allocator, buffer->hal_buffer,
+  HRX_RETURN_IF_IREE_ERROR(iree_hal_buffer_export(
+      buffer->hal_buffer,
       IREE_HAL_EXTERNAL_BUFFER_TYPE_DEVICE_ALLOCATION,
       IREE_HAL_EXTERNAL_BUFFER_FLAG_NONE, &external));
   *address = external.handle.device_allocation.ptr;
