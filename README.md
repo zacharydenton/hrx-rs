@@ -158,8 +158,9 @@ For a composed pipeline, validate each stage with `ModelDefinition::fragment`
 and call `ModelFragment::record` on the same `execution::Graph`, passing one
 stage's output tensors directly to the next. Prepare that graph once. Adjacent
 GPU stages become one native graph without intermediate copies or submissions.
-Image normalization, patchification, resize, affine sampling and similarity
-fitting also expose recordable fragments. `PreparedModel::prepare` takes a slot
+Image normalization, patchification, resize, affine sampling, RGB views and
+compositing, similarity fitting and finite-value checks also expose recordable
+fragments. `PreparedModel::prepare` takes a slot
 factory returning `InferenceGraph { inputs, outputs, graph }`: each slot owns
 the actual pipeline bindings, including sliced or in-place IO. Host transfer
 storage is allocated on first upload/readback and reused thereafter; device-only
