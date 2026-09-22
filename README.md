@@ -59,6 +59,18 @@ that an application can index with hrxdb.
 
 ## GPU + NPU pipelines
 
+Run independent work on both devices at once:
+
+```sh
+cargo run --release --features npu --example gpu_npu_parallel -- 16777216 1024 21 trace.json
+```
+
+This [example](examples/gpu_npu_parallel.rs) combines a GPU vector transform
+with batched NPU matrix multiplication in one prepared graph. It checks both
+CPU references, compares sequential and concurrent completion times, and writes
+a Chrome/Perfetto trace of host-observed device activity. Setup and host data
+transfers are excluded from the timings; speedup depends on the workload.
+
 The coordinated API is `hrx::execution`: owned shared buffers, checked kernel
 contracts, inferred dependencies, reusable GPU/NPU graphs, and completion handles
 that support blocking waits and Rust `Future`. `hrx::gpu` exposes the existing

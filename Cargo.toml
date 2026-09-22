@@ -80,3 +80,7 @@ required-features = ["npu"]
 [[example]]
 name = "gemm_pipeline"
 required-features = ["npu"]
+
+[[example]]
+name = "gpu_npu_parallel"
+required-features = ["npu"]

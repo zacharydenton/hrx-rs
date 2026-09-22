@@ -1,0 +1,47 @@
+// Copyright 2026 The IREE Authors
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Adapted from the pinned hrx-system XDNA image corpus for a batch of matrices.
+aie2p.target<array> @array_target
+
+aie2p.target<core> @core_target
+
+config.decl @gemm.batch : %value: index where [range(%value, 1, 16384)]
+
+pipeline.def<kernel> public retain target(@array_target) @gemm() launch(%lhs: buffer, %rhs: buffer, %output: buffer) {
+  %batch = config.get @gemm.batch : index
+  %lanes = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %lanes : index -> group
+  %lhs_view = buffer.view %lhs[%base] : buffer -> view<[%batch]x64xbf16>
+  %rhs_view = buffer.view %rhs[%base] : buffer -> view<[%batch]x64xbf16>
+  %output_view = buffer.view %output[%base] : buffer -> view<[%batch]x8x8xf32>
+  %lhs_flow = pipeline.read %lhs_view on %workers : view<[%batch]x64xbf16>, group -> pipeline.flow<tile<64xbf16>>
+  %rhs_flow = pipeline.read %rhs_view on %workers : view<[%batch]x64xbf16>, group -> pipeline.flow<tile<64xbf16>>
+  %result = pipeline.stage @matrix_bfp_cell on %workers(%lhs_flow, %rhs_flow) : (group, pipeline.flow<tile<64xbf16>>, pipeline.flow<tile<64xbf16>>) -> (pipeline.flow<tile<8x8xf32>>)
+  pipeline.write %result to %output_view : pipeline.flow<tile<8x8xf32>>, view<[%batch]x8x8xf32>
+  pipeline.return
+}
+
+func.def target(@core_target) @matrix_bfp_cell(%lhs: buffer, %rhs: buffer, %output: buffer) {
+  %lhs_aligned, %rhs_aligned, %output_aligned = buffer.assume.alignment %lhs, %rhs, %output {minimum_alignment = 64} : buffer, buffer, buffer
+  %base = index.constant 0 : offset
+  %lhs_view = buffer.view %lhs_aligned[%base] : buffer -> view<64xbf16>
+  %rhs_view = buffer.view %rhs_aligned[%base] : buffer -> view<64xbf16>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<8x8xf32>
+  %m = index.constant 8 : index
+  %n = index.constant 8 : index
+  %k = index.constant 8 : index
+  %lhs_value = vector.load %lhs_view[0] : view<64xbf16> -> vector<64xbf16>
+  %rhs_value = vector.load %rhs_view[0] : view<64xbf16> -> vector<64xbf16>
+  %schema = encoding.define #encoding.operand<element_format=bfp16ebs8, payload_elements=64, payload_packing=target_fragment, payload_registers=18, rounding=flush_subnormal> : encoding<schema>
+  %lhs_encoded = vector.encode %lhs_value using %schema : vector<64xbf16>, encoding<schema> -> vector<72xi8>
+  %rhs_encoded = vector.encode %rhs_value using %schema : vector<64xbf16>, encoding<schema> -> vector<72xi8>
+  %lhs_fragment = vector.fragment<lhs> %lhs_encoded shape [%m, %k] using {schema = %schema : encoding<schema>} : vector<72xi8>
+  %rhs_fragment = vector.fragment<rhs> %rhs_encoded shape [%k, %n] using {schema = %schema : encoding<schema>} : vector<72xi8>
+  %accumulator_init = vector.constant 0.0 : vector<64xf32>
+  %accumulator_fragment = vector.fragment<init> %accumulator_init shape [%m, %n] : vector<64xf32>
+  %product = vector.mma %lhs_fragment, %rhs_fragment, %accumulator_fragment : vector<72xi8>, vector<72xi8>, vector<64xf32>
+  vector.fragment.store<result> %product, %output_view[0, 0] shape [%m, %n] : vector<64xf32>, view<8x8xf32>
+  func.return
+}
+

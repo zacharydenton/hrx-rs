@@ -6,3 +6,4 @@ cargo run --locked --features npu --bin hrx -- prepare
 cargo run --locked --features npu --bin hrx -- doctor
 cargo test --locked --all-features -- --ignored --test-threads=1
 cargo run --locked --release --features npu --example gemm_pipeline
+cargo run --locked --release --features npu --example gpu_npu_parallel -- 1048576 17 3

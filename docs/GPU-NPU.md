@@ -72,7 +72,29 @@ bash scripts/test-npu-hardware.sh
 cargo run --release --features npu --example shared_roundtrip
 cargo run --release --features npu --example shared_bench
 cargo run --release --features npu --example gemm_pipeline
+cargo run --release --features npu --example gpu_npu_parallel -- 16777216 1024 21 trace.json
 ```
+
+[`gpu_npu_parallel`](../examples/gpu_npu_parallel.rs) runs two independent
+branches in one prepared graph: the GPU transforms an integer vector while the
+NPU multiplies a batch of 8x8 BF16 matrices into FP32 outputs. Disjoint buffers
+let the scheduler run both device lanes concurrently; waiting on the graph joins
+both branches. The NPU kernel is included, with no external model or SDK needed.
+
+The arguments are GPU element count, NPU matrix count, paired sample count, and
+an optional Chrome/Perfetto trace path. Defaults are 16,777,216 elements, 1,024
+matrices, and 21 samples. The example checks every result against independent
+CPU calculations, changes inputs across replays, and compares sequential and
+parallel completed execution in alternating order. Compilation, initial upload,
+and result readback are outside the timed regions. It checks that replay adds no
+native allocations or imports. Trace intervals are host-observed synchronized
+device regions, not hardware timestamps. Small workloads can be slower in
+parallel because scheduling overhead dominates; no speedup is assumed.
+
+On the gfx1151/NPU5 development host (2026-09-22), one default 21-pair run
+measured 0.754 ms sequential versus 0.610 ms parallel (1.24x). Every result
+matched exactly after changed inputs. Batches of 1, 17, 1,024, and 16,384 also
+passed; the NPU-dominated largest-batch case showed essentially no speedup.
 
 The default GEMM example runs an included 8x8 BF16/BFP16 native matrix fixture
 between GPU preprocessing and a GPU epilogue, including concurrent requests.
