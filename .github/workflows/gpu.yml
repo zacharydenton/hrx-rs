@@ -19,7 +19,7 @@ jobs:
         run: |
           set -euo pipefail
           export XDG_CACHE_HOME="$RUNNER_TEMP/hrx-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          unset HRX_RUNTIME_DIR HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST HRX_OFFLINE
+          unset HRX_AMDF_LIBRARY HRX_FABRIC_LIBRARY HRX_RUNTIME_DIR HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST HRX_OFFLINE
           if [[ -n "$BUNDLE_MIRROR" ]]; then
             curl --fail --location --proto '=https' "$BUNDLE_MIRROR" --output "$RUNNER_TEMP/hrx-manifest.json"
             export HRX_BUNDLE_MANIFEST="$RUNNER_TEMP/hrx-manifest.json"
@@ -30,38 +30,13 @@ jobs:
           cargo +stable test --locked -- --ignored --test-threads=1
 
   npu:
-    if: ${{ vars.HRX_NATIVE_BUILD != '' && vars.HRX_NPU_TOOLCHAIN != '' }}
+    if: ${{ vars.HRX_XDNA_RUNNER == '1' }}
     runs-on: [self-hosted, linux, x64, gfx1151, xdna2]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Compile and execute GPU/NPU fixtures
-        env:
-          HRX_NATIVE_BUILD: ${{ vars.HRX_NATIVE_BUILD }}
-          HRX_NPU_TOOLCHAIN: ${{ vars.HRX_NPU_TOOLCHAIN }}
-          HRX_NPU_WORK: ${{ runner.temp }}/hrx-npu-validation
-          HRX_QUALIFY_PERFORMANCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+      - name: Compile and execute native GPU/NPU fixtures
         run: bash scripts/test-npu-hardware.sh
-
-  published-npu:
-    if: ${{ vars.HRX_NPU_TOOLCHAIN != '' }}
-    runs-on: [self-hosted, linux, x64, gfx1151, xdna2]
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - name: Execute the published GPU and NPU bundles
-        env:
-          HRX_NPU_TOOLCHAIN: ${{ vars.HRX_NPU_TOOLCHAIN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          export XDG_CACHE_HOME="$RUNNER_TEMP/hrx-published-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          unset HRX_RUNTIME_DIR HRX_NPU_RUNTIME_DIR HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST HRX_NPU_BUNDLE_MANIFEST HRX_OFFLINE
-          cargo run --locked --features npu --bin hrx -- prepare
-          export HRX_OFFLINE=1
-          export HRX_TEST_NPU_DIR="$(cargo run --locked --release --features npu --example compile_npu -- "$HRX_NPU_TOOLCHAIN" 262144)"
-          cargo run --locked --features npu --bin hrx -- doctor
-          cargo test --locked --all-features --test heterogeneous --test coordinated -- --ignored --test-threads=1
 
   consumers:
     if: ${{ vars.HRX_KREA_CHECKOUT != '' && vars.HRX_H3_CHECKOUT != '' }}

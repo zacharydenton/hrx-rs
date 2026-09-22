@@ -1,212 +1,307 @@
-use std::ffi::{CStr, CString, c_void};
-use std::path::Path;
+//! GPU conveniences implemented over the owned native fabric.
+use crate::{Error, Result, Target, fabric};
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
-/// Native export metadata used to validate dispatch shapes and arguments.
-pub use crate::sys::ExportInfo;
-use crate::{Error, Result, TARGET_FAMILY, Target, sys};
-
-/// Turns a status into a `Result`, taking ownership of its message. A null status is success.
-pub(crate) fn check(status: sys::Status, what: impl std::fmt::Display) -> Result<()> {
-    if sys::is_ok(status) {
-        return Ok(());
-    }
-    let code = unsafe { sys::hrx_status_code(status) };
-    let mut message: *mut std::ffi::c_char = std::ptr::null_mut();
-    let mut length: usize = 0;
-    let text = unsafe {
-        let to_string = sys::hrx_status_to_string(status, &mut message, &mut length);
-        let text = if sys::is_ok(to_string) && !message.is_null() {
-            let owned = CStr::from_ptr(message).to_string_lossy().into_owned();
-            sys::hrx_status_free_message(message);
-            owned
-        } else {
-            sys::hrx_status_ignore(to_string);
-            "unknown error".to_string()
-        };
-        sys::hrx_status_ignore(status);
-        text
-    };
-    Err(Error::Runtime {
-        context: what.to_string(),
-        code,
-        message: text,
-    })
+/// Native entry's checked argument and workgroup layout.
+#[derive(Clone, Debug, Default)]
+pub struct ExportInfo {
+    /// Scalar bytes packed in declaration order, excluding alignment padding.
+    pub constant_byte_length: u32,
+    /// Number of explicit buffer arguments.
+    pub binding_count: u32,
+    /// Number of explicit native arguments.
+    pub parameter_count: u32,
+    /// Required workgroup dimensions; zero means unconstrained.
+    pub workgroup_size: [u32; 3],
 }
-
-/// Shared ownership of a stream and its borrowed device registry entry.
-/// Buffers, kernels and events retain this handle through their native uses.
 struct Inner {
-    device: sys::Device,
-    target: Target,
-    stream: sys::Stream,
+    device: fabric::Device,
+    queue: fabric::Queue,
+    last: Mutex<Option<fabric::Completion>>,
+    free: Mutex<Vec<fabric::Buffer>>,
+    dispatch_cache: Mutex<Vec<CachedDispatch>>,
+    transfer_cache: Mutex<Vec<CachedTransfer>>,
 }
-
-impl Drop for Inner {
-    fn drop(&mut self) {
-        // hrx_stream_create returns an owned reference. hrx_gpu_device_get
-        // borrows the global registry entry without retaining it; do not release it.
-        unsafe { sys::hrx_stream_release(self.stream) };
-    }
-}
-
-// Safety: native handle reference counts are atomic. Stream mutation requires
-// exclusive Stream access. Shared events query or wait on their semaphore;
-// they do not mutate the stream.
-unsafe impl Send for Inner {}
-unsafe impl Sync for Inner {}
-
-/// Initialize the process-wide runtime once, serializing access to native global
-/// state. ALREADY_EXISTS permits reuse across model libraries; failures are retryable.
-pub(crate) fn initialize_runtime() -> Result<()> {
-    sys::load()?;
-    static READY: std::sync::Mutex<Option<()>> = std::sync::Mutex::new(None);
-    crate::cached_init(&READY, || {
-        let _lock = sys::runtime_lock()?;
-        unsafe {
-            let status = sys::hrx_gpu_initialize(0);
-            if sys::hrx_status_code(status) == sys::STATUS_ALREADY_EXISTS {
-                sys::hrx_status_ignore(status);
-            } else {
-                check(status, "hrx_gpu_initialize")?;
+impl Inner {
+    fn submit(&self, command: &fabric::PreparedGpu) -> Result<()> {
+        let done = match unsafe { command.dispatch() } {
+            Ok(done) => done,
+            Err(Error::Busy(_)) => {
+                self.wait()?;
+                unsafe { command.dispatch() }?
             }
+            Err(error) => return Err(error),
+        };
+        *self
+            .last
+            .lock()
+            .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))? = Some(done);
+        Ok(())
+    }
+    fn drain_for_drop(&self) -> bool {
+        self.last.lock().ok().is_some_and(|last| {
+            last.as_ref().is_none_or(|done| {
+                done.wait_timeout(std::time::Duration::from_secs(10))
+                    .unwrap_or(false)
+            })
+        })
+    }
+    fn wait(&self) -> Result<()> {
+        if let Some(done) = self
+            .last
+            .lock()
+            .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))?
+            .as_ref()
+        {
+            done.wait()?;
         }
         Ok(())
-    })
-}
-
-pub(crate) fn open_device(index: i32) -> Result<(sys::Device, Target)> {
-    initialize_runtime()?;
-    unsafe {
-        let mut count = 0;
-        check(
-            sys::hrx_gpu_device_count(&mut count),
-            "hrx_gpu_device_count",
-        )?;
-        if index < 0 || index >= count {
-            return Err(Error::Message(
-                "no GPU device (check GPU access and the README provisioning instructions)".into(),
-            ));
-        }
-        let mut device = std::ptr::null_mut();
-        check(
-            sys::hrx_gpu_device_get(index, &mut device),
-            "hrx_gpu_device_get",
-        )?;
-        let mut architecture = [0u8; 64];
-        check(
-            sys::hrx_device_get_property(
-                device,
-                sys::DEVICE_PROPERTY_ARCHITECTURE,
-                architecture.as_mut_ptr().cast(),
-                architecture.len(),
-            ),
-            "device architecture",
-        )?;
-        let key = std::str::from_utf8(architecture.split(|b| *b == 0).next().unwrap())
-            .map_err(|_| Error::Message("invalid device architecture".into()))?;
-        Ok((device, Target::from_device_architecture(key)?))
     }
 }
-
-impl Stream {
-    fn new(index: i32) -> Result<Self> {
-        let (device, target) = open_device(index)?;
-        unsafe {
-            let mut stream = std::ptr::null_mut();
-            check(
-                sys::hrx_stream_create(device, 0, &mut stream),
-                "hrx_stream_create",
-            )?;
-            Ok(Self {
-                inner: std::sync::Arc::new(Inner {
-                    device,
-                    target,
-                    stream,
-                }),
-                _not_sync: std::marker::PhantomData,
-                staging: Vec::new(),
-                staging_pool: Vec::new(),
-                scratch: std::collections::BTreeMap::new(),
-                scratch_bytes: 0,
-                scratch_limit: 256 * 1024 * 1024,
-                budget: None,
-                budget_uses: std::cell::RefCell::new(BudgetUses::default()),
-            })
-        }
+/// An owned GPU address and execution domain.
+#[derive(Clone)]
+pub struct Device {
+    native: fabric::Device,
+}
+impl Device {
+    /// Activate an exact GPU ordinal in the native provider.
+    pub fn open(index: i32) -> Result<Self> {
+        let index = usize::try_from(index)
+            .map_err(|_| Error::Message("GPU index must be nonnegative".into()))?;
+        Ok(Self {
+            native: fabric::Device::open(fabric::Engine::Gpu, index)?,
+        })
     }
-
-    fn owns(&self, buffer: &Buffer) -> Result<()> {
-        owns(&self.inner, buffer)
-    }
-
-    fn synchronize_native(&self) -> Result<()> {
-        unsafe {
-            check(
-                sys::hrx_stream_synchronize(self.inner.stream),
-                "hrx_stream_synchronize",
-            )
+    /// Require the workload's exact target before creating execution resources.
+    pub fn open_for(index: i32, target: &str) -> Result<Self> {
+        let device = Self::open(index)?;
+        if device.target().as_str() != target {
+            return Err(Error::Unsupported(format!(
+                "workload requires {target}, found {}",
+                device.target().as_str()
+            )));
         }
+        Ok(device)
     }
-
-    unsafe fn loaded_export(&self, executable: sys::Executable, symbol: &str) -> Result<Kernel> {
-        let kernel = (|| {
-            let symbol_c =
-                CString::new(symbol).map_err(|_| Error::Message("export contains a NUL".into()))?;
-            let mut ordinal = 0;
-            let mut info = sys::ExportInfo::default();
-            unsafe {
-                check(
-                    sys::hrx_executable_lookup_export_by_name(
-                        executable,
-                        symbol_c.as_ptr(),
-                        &mut ordinal,
-                    ),
-                    "looking up export",
-                )?;
-                check(
-                    sys::hrx_executable_export_info(executable, ordinal, &mut info),
-                    "export metadata",
-                )?;
-            }
-            Ok(Kernel {
-                executable: std::sync::Arc::new(Executable {
-                    raw: executable,
-                    device: self.inner.clone(),
-                }),
-                ordinal,
-                info,
-                symbol: symbol.into(),
-            })
-        })();
-        if kernel.is_err() {
-            unsafe { sys::hrx_executable_release(executable) }
-        }
-        kernel
+    /// Exact compiler deployment key.
+    pub fn target(&self) -> &Target {
+        self.native.target()
+    }
+    /// Create an independent ordered native command queue.
+    pub fn stream(&self) -> Result<Stream> {
+        Ok(Stream {
+            inner: Arc::new(Inner {
+                device: self.native.clone(),
+                queue: self.native.queue()?,
+                last: Mutex::new(None),
+                free: Mutex::new(Vec::with_capacity(16)),
+                dispatch_cache: Mutex::new(Vec::with_capacity(64)),
+                transfer_cache: Mutex::new(Vec::with_capacity(128)),
+            }),
+            staging: Vec::new(),
+            staging_pool: Vec::new(),
+            scratch: BTreeMap::new(),
+            scratch_bytes: 0,
+            scratch_limit: 256 * 1024 * 1024,
+            budget: None,
+            budget_uses: RefCell::new(BudgetUses::default()),
+        })
+    }
+    /// Access the owned native domain for explicit cross-engine allocations.
+    pub fn native(&self) -> &fabric::Device {
+        &self.native
     }
 }
-
-/// An owned device allocation. Use [`Buffer::binding`] or [`Buffer::try_slice`]
-/// to borrow a binding; this API does not expose host pointers.
-/// A handle is bound to its device. Any stream on that device may use it;
-/// ordering conflicting access is the caller's, with events.
+/// Device backing with allocation-budget ownership.
 pub struct Buffer {
-    raw: sys::Buffer,
+    pub(crate) native: fabric::Buffer,
     bytes: usize,
-    /// Keeps the device alive: releasing a buffer after its device is gone would be a use-after-free.
-    _device: std::sync::Arc<Inner>,
-    reservation: Option<std::sync::Arc<crate::residency::MemoryReservation>>,
+    owner: Arc<Inner>,
+    reservation: Option<Arc<crate::residency::MemoryReservation>>,
+    poolable: bool,
 }
-
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        // Cached commands are only useful while the application owns their
+        // bindings. Eviction also keeps pooled or budgeted backing reclaimable.
+        if let Ok(mut cache) = self.owner.dispatch_cache.lock() {
+            cache.retain(|entry| {
+                !entry
+                    .bindings
+                    .iter()
+                    .any(|(buffer, _, _)| buffer.same_backing(&self.native))
+            });
+        }
+        if let Ok(mut cache) = self.owner.transfer_cache.lock() {
+            cache.retain(|entry| {
+                !entry.destination.same_backing(&self.native)
+                    && !entry
+                        .source
+                        .as_ref()
+                        .is_some_and(|(buffer, _)| buffer.same_backing(&self.native))
+            });
+        }
+        if self.poolable
+            && self.reservation.is_none()
+            && self.native.exclusively_owned()
+            && self.bytes <= 64 * 1024 * 1024
+            && let Ok(mut pool) = self.owner.free.lock()
+        {
+            let used: usize = pool.iter().map(fabric::Buffer::len).sum();
+            if pool.len() < 16 && self.bytes <= (64 * 1024 * 1024usize).saturating_sub(used) {
+                pool.push(self.native.clone());
+            }
+        }
+    }
+}
+/// Checked borrowed logical range in an owned buffer.
+#[derive(Clone, Copy, Debug)]
+pub struct View<'a> {
+    owner: &'a Buffer,
+    offset: usize,
+    length: usize,
+}
+impl<'a> View<'a> {
+    /// Select a checked range relative to this view.
+    pub fn slice(self, offset: usize, length: usize) -> Result<Self> {
+        checked_span(offset, length, self.length)?;
+        Ok(Self {
+            owner: self.owner,
+            offset: self.offset + offset,
+            length,
+        })
+    }
+    /// Owning allocation.
+    pub fn owner(self) -> &'a Buffer {
+        self.owner
+    }
+    /// Absolute offset in the allocation.
+    pub fn offset(self) -> usize {
+        self.offset
+    }
+    /// Logical byte length.
+    pub fn len(self) -> usize {
+        self.length
+    }
+    /// Whether the range is empty.
+    pub fn is_empty(self) -> bool {
+        self.length == 0
+    }
+}
+impl Buffer {
+    #[cfg(feature = "npu")]
+    pub(crate) fn share_with(mut self, device: &fabric::Device) -> Result<Self> {
+        self.poolable = false;
+        if self.native.device_address(device).is_err() {
+            self.native = self
+                .owner
+                .device
+                .fabric()
+                .share_owned(&self.native, &[self.owner.device.clone(), device.clone()])?;
+        }
+        Ok(self)
+    }
+    pub(crate) fn charged_to(&self, budget: &crate::residency::MemoryBudget) -> bool {
+        self.reservation
+            .as_ref()
+            .is_some_and(|reservation| budget.contains(reservation))
+    }
+    pub(crate) fn device_id(&self) -> usize {
+        self.owner.device.id()
+    }
+    /// Allocation's exposed byte length.
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+    /// Whole allocation as a logical binding.
+    pub fn binding(&self) -> View<'_> {
+        View {
+            owner: self,
+            offset: 0,
+            length: self.bytes,
+        }
+    }
+    /// Checked subrange.
+    pub fn try_slice(&self, offset: usize, length: usize) -> Result<View<'_>> {
+        self.binding().slice(offset, length)
+    }
+    /// Checked subrange, panicking on invalid bounds.
+    pub fn slice(&self, offset: usize, length: usize) -> View<'_> {
+        self.try_slice(offset, length)
+            .expect("slice exceeds allocation")
+    }
+    /// Mapped host address. Dereferencing requires external synchronization.
+    pub fn device_ptr(&self) -> Result<*mut std::ffi::c_void> {
+        Ok(self.native.host_pointer().cast())
+    }
+    pub(crate) fn allocation_address(&self) -> Result<u64> {
+        self.native.device_address(&self.owner.device)
+    }
+}
+/// Trusted native GPU entry and its declaration-order argument layout.
+#[derive(Clone)]
+pub struct Kernel {
+    native: fabric::Kernel,
+    info: ExportInfo,
+    layout: Arc<[(u32, usize)]>,
+    symbol: Arc<str>,
+}
+impl Kernel {
+    pub(crate) fn device_id(&self) -> usize {
+        self.native.device().id()
+    }
+    /// Checked argument and launch metadata.
+    pub fn info(&self) -> &ExportInfo {
+        &self.info
+    }
+    /// Selected native entry name.
+    pub fn symbol(&self) -> &str {
+        &self.symbol
+    }
+    fn from_native(native: fabric::Kernel, symbol: &str) -> Result<Self> {
+        let layout = native.argument_layout()?;
+        let mut info = ExportInfo {
+            workgroup_size: native.workgroup_size(),
+            parameter_count: layout.len() as u32,
+            ..Default::default()
+        };
+        for &(kind, size) in &layout {
+            match kind {
+                1 => {
+                    info.constant_byte_length =
+                        info.constant_byte_length
+                            .checked_add(size as u32)
+                            .ok_or_else(|| Error::Message("constant layout overflow".into()))?
+                }
+                2 => info.binding_count += 1,
+                _ => {
+                    return Err(Error::Unsupported(
+                        "native argument kind is unsupported".into(),
+                    ));
+                }
+            }
+        }
+        Ok(Self {
+            native,
+            info,
+            layout: layout.into(),
+            symbol: symbol.into(),
+        })
+    }
+}
 #[derive(Default)]
-struct BudgetUses(
-    std::collections::HashMap<usize, std::sync::Arc<crate::residency::MemoryReservation>>,
-);
+struct BudgetUses(std::collections::HashMap<usize, Arc<crate::residency::MemoryReservation>>);
 impl BudgetUses {
     fn retain(&mut self, views: &[View<'_>]) {
         for view in views {
             if let Some(reservation) = &view.owner.reservation {
                 self.0
-                    .entry(std::sync::Arc::as_ptr(reservation) as usize)
+                    .entry(Arc::as_ptr(reservation) as usize)
                     .or_insert_with(|| reservation.clone());
             }
         }
@@ -215,291 +310,612 @@ impl BudgetUses {
         self.0.clear();
     }
 }
-
-// Safety: moving/releasing an allocation uses native atomic reference counts.
-// Every operation checks its owning Inner before touching native buffer state.
-// Streams are !Sync, and a buffer used from two streams needs events between
-// conflicting accesses; unordered use yields stale bytes, never invalid memory.
-unsafe impl Send for Buffer {}
-unsafe impl Sync for Buffer {}
-
-/// A binding into a device allocation, borrowed from it.
-///
-/// The borrow keeps the buffer alive and identifies the stream allowed to use
-/// this view. Any stream on the same device may use it, ordered by the caller.
-#[derive(Clone, Copy, Debug)]
-pub struct View<'a> {
-    raw: sys::BufferRef,
-    owner: &'a Buffer,
+struct CachedDispatch {
+    kernel: Kernel,
+    grid: [u32; 3],
+    block: [u32; 3],
+    constants: Constants,
+    bindings: Vec<(fabric::Buffer, usize, usize)>,
+    command: fabric::PreparedGpu,
 }
-
-impl<'a> View<'a> {
-    fn new(raw: sys::BufferRef, owner: &'a Buffer) -> Self {
-        Self { raw, owner }
-    }
-    /// Borrow a region relative to this view, rejecting overflow and overruns.
-    /// An empty region at the end of the view is valid.
-    pub fn slice(self, offset: usize, length: usize) -> Result<Self> {
-        checked_span(offset, length, self.len())?;
-        Ok(Self::new(
-            sys::BufferRef {
-                offset: self.raw.offset + offset,
-                length,
-                ..self.raw
-            },
-            self.owner,
-        ))
-    }
-    /// Byte offset from the start of the owning allocation.
-    #[must_use]
-    pub fn offset(self) -> usize {
-        self.raw.offset
-    }
-    /// The buffer handle from which this view was borrowed.
-    #[must_use]
-    pub fn owner(self) -> &'a Buffer {
-        self.owner
-    }
-    /// The bytes this view covers.
-    #[must_use]
-    pub fn len(self) -> usize {
-        self.raw.length
-    }
-    #[must_use]
-    /// Whether this view covers no bytes.
-    pub fn is_empty(self) -> bool {
-        self.raw.length == 0
+impl CachedDispatch {
+    fn matches(
+        &self,
+        kernel: &Kernel,
+        grid: [u32; 3],
+        block: [u32; 3],
+        constants: &Constants,
+        bindings: &[View<'_>],
+    ) -> bool {
+        self.kernel.native.same_entry(&kernel.native)
+            && self.grid == grid
+            && self.block == block
+            && self.constants.as_bytes() == constants.as_bytes()
+            && self.bindings.len() == bindings.len()
+            && self
+                .bindings
+                .iter()
+                .zip(bindings)
+                .all(|((buffer, offset, length), view)| {
+                    buffer.same_backing(&view.owner.native)
+                        && *offset == view.offset
+                        && *length == view.length
+                })
     }
 }
-
-impl Buffer {
-    pub(crate) fn charged_to(&self, budget: &crate::residency::MemoryBudget) -> bool {
-        self.reservation
+struct CachedTransfer {
+    destination: fabric::Buffer,
+    destination_offset: usize,
+    length: usize,
+    source: Option<(fabric::Buffer, usize)>,
+    value: u8,
+    command: fabric::PreparedGpu,
+}
+/// An ordered GPU stream with explicit prepared commands and bounded pools.
+pub struct Stream {
+    inner: Arc<Inner>,
+    staging: Vec<Buffer>,
+    staging_pool: Vec<Buffer>,
+    scratch: BTreeMap<usize, Vec<Buffer>>,
+    scratch_bytes: usize,
+    scratch_limit: usize,
+    budget: Option<crate::residency::MemoryBudget>,
+    budget_uses: RefCell<BudgetUses>,
+}
+impl Stream {
+    /// Open the first qualified GPU.
+    pub fn open() -> Result<Self> {
+        Device::open(0)?.stream()
+    }
+    /// Stable native device identity.
+    pub fn device_id(&self) -> usize {
+        self.inner.device.id()
+    }
+    /// Stream identity, unique while it remains live.
+    pub fn id(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
+    }
+    /// Compiler deployment key.
+    pub fn target(&self) -> &Target {
+        self.inner.device.target()
+    }
+    /// Attach a shared allocation ceiling.
+    pub fn with_memory_budget(mut self, budget: crate::residency::MemoryBudget) -> Self {
+        self.budget = Some(budget);
+        self
+    }
+    /// Selected allocation ceiling.
+    pub fn memory_budget(&self) -> Option<&crate::residency::MemoryBudget> {
+        self.budget.as_ref()
+    }
+    fn reserve(&self, bytes: usize) -> Result<Option<Arc<crate::residency::MemoryReservation>>> {
+        self.budget
             .as_ref()
-            .is_some_and(|r| budget.contains(r))
+            .map(|budget| budget.reserve(bytes.max(1)).map(Arc::new))
+            .transpose()
     }
-    pub(crate) fn device_id(&self) -> usize {
-        self._device.device as usize
+    fn owns(&self, buffer: &Buffer) -> Result<()> {
+        owns(&self.inner, buffer)
     }
-    /// The actual allocation size, including rounding of empty allocations.
-    pub fn bytes(&self) -> usize {
-        self.bytes
+    /// Allocate initialized native GPU-visible storage with unspecified contents.
+    /// Empty requests round to one.
+    pub fn allocate(&self, bytes: usize) -> Result<Buffer> {
+        let bytes = bytes.max(1);
+        let reservation = self.reserve(bytes)?;
+        let reused = if reservation.is_none() {
+            let mut pool = self
+                .inner
+                .free
+                .lock()
+                .map_err(|_| Error::DeviceLost("allocation pool poisoned".into()))?;
+            pool.iter()
+                .position(|buffer| buffer.len() == bytes)
+                .map(|index| pool.swap_remove(index))
+        } else {
+            None
+        };
+        let native = match reused {
+            Some(native) => native,
+            None => self
+                .inner
+                .device
+                .fabric()
+                .allocate(bytes, std::slice::from_ref(&self.inner.device))?,
+        };
+        Ok(Buffer {
+            native,
+            bytes,
+            owner: self.inner.clone(),
+            reservation,
+            poolable: true,
+        })
     }
-
-    /// Borrow a span, rejecting overflow and allocation overruns.
-    pub fn try_slice(&self, offset: usize, length: usize) -> Result<View<'_>> {
-        self.binding().slice(offset, length)
+    /// Allocate initialized storage containing zero bytes.
+    pub fn allocate_zeroed(&self, bytes: usize) -> Result<Buffer> {
+        let buffer = self.allocate(bytes)?;
+        buffer.native.zero()?;
+        Ok(buffer)
     }
-
-    /// The device address backing this buffer.
-    ///
-    /// Needed to hand the allocation to another driver -- exporting it as a dma-buf for the
-    /// NPU, say -- rather than copying its contents out.
-    pub fn device_ptr(&self) -> Result<*mut std::ffi::c_void> {
-        let mut pointer = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_buffer_get_device_ptr(self.raw, &mut pointer),
-                "hrx_buffer_get_device_ptr",
-            )?;
-        }
-        Ok(pointer)
+    /// Allocate host-visible GPU storage; cross-engine access is explicit at allocation.
+    pub fn allocate_shared(&self, bytes: usize) -> Result<Buffer> {
+        self.allocate(bytes)
     }
-
-    /// The whole allocation.
-    pub(crate) fn allocation_address(&self) -> Result<u64> {
-        let address = sys::interop()?.allocation_address;
-        let mut value = 0;
-        unsafe {
-            check(
-                address(self.raw, &mut value),
-                "querying GPU allocation address",
-            )?;
-        }
-        Ok(value)
-    }
-
     #[cfg(feature = "npu")]
-    pub(crate) fn export_dmabuf(&self) -> Result<(std::os::fd::OwnedFd, u64)> {
-        use std::os::fd::FromRawFd;
-        let export = sys::interop()?.export_dmabuf;
-        let mut descriptor = -1;
-        let mut offset = 0;
-        unsafe {
-            check(
-                export(self.raw, &mut descriptor, &mut offset),
-                "exporting GPU allocation",
-            )?;
-        }
-        if descriptor < 0 {
-            return Err(Error::Message(
-                "native export returned invalid descriptor".into(),
-            ));
-        }
-        Ok((
-            unsafe { std::os::fd::OwnedFd::from_raw_fd(descriptor) },
-            offset,
-        ))
+    pub(crate) fn allocate_for(&self, bytes: usize, devices: &[fabric::Device]) -> Result<Buffer> {
+        let reservation = self.reserve(bytes)?;
+        let native = self.inner.device.fabric().allocate(bytes, devices)?;
+        native.device_address(&self.inner.device)?;
+        Ok(Buffer {
+            native,
+            bytes,
+            owner: self.inner.clone(),
+            reservation,
+            poolable: false,
+        })
     }
-
-    /// Borrow the whole allocation as a device binding.
-    pub fn binding(&self) -> View<'_> {
-        View::new(
-            sys::BufferRef {
-                buffer: self.raw,
-                offset: 0,
-                length: self.bytes,
-            },
-            self,
+    /// Wait for all preceding native work and reclaim transfer staging.
+    pub fn synchronize(&mut self) -> Result<()> {
+        self.inner.wait()?;
+        self.reclaim_staging();
+        self.budget_uses.get_mut().clear();
+        Ok(())
+    }
+    /// Snapshot preceding work without a host wait.
+    pub fn record_event(&mut self) -> Result<Event> {
+        Ok(Event {
+            device: self.device_id(),
+            done: self
+                .inner
+                .last
+                .lock()
+                .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))?
+                .clone(),
+        })
+    }
+    /// Order subsequent stream work after an immutable event.
+    pub fn wait_event(&mut self, event: &Event) -> Result<()> {
+        if event.device != self.device_id() {
+            return Err(Error::Message("event belongs to another device".into()));
+        }
+        if let Some(done) = &event.done {
+            self.inner.submit(&self.inner.queue.prepare_wait(done)?)?;
+        }
+        Ok(())
+    }
+    /// Observe the current native submission prefix.
+    pub fn submit(&mut self) -> Result<Submission<'_>> {
+        Ok(Submission { stream: self })
+    }
+    /// Write a checked range after draining this stream.
+    pub fn upload_blocking(&mut self, dst: View<'_>, bytes: &[u8]) -> Result<()> {
+        self.owns(dst.owner)?;
+        checked_span(0, bytes.len(), dst.len())?;
+        self.synchronize()?;
+        dst.owner.native.write(dst.offset, bytes)
+    }
+    /// Write at an allocation-relative byte offset.
+    pub fn upload_blocking_at(&mut self, dst: &Buffer, offset: usize, bytes: &[u8]) -> Result<()> {
+        self.upload_blocking(dst.try_slice(offset, bytes.len())?, bytes)
+    }
+    /// Read a checked range after draining this stream.
+    pub fn read_blocking(&mut self, src: View<'_>, bytes: &mut [u8]) -> Result<()> {
+        self.owns(src.owner)?;
+        checked_span(0, bytes.len(), src.len())?;
+        self.synchronize()?;
+        src.owner.native.read(src.offset, bytes)
+    }
+    /// Read at an allocation-relative byte offset.
+    pub fn read_blocking_at(
+        &mut self,
+        src: &Buffer,
+        offset: usize,
+        bytes: &mut [u8],
+    ) -> Result<()> {
+        self.read_blocking(src.try_slice(offset, bytes.len())?, bytes)
+    }
+    fn prepare_fill(&self, dst: View<'_>, value: u8) -> Result<fabric::PreparedGpu> {
+        self.owns(dst.owner)?;
+        let mut cache = self
+            .inner
+            .transfer_cache
+            .lock()
+            .map_err(|_| Error::DeviceLost("transfer cache poisoned".into()))?;
+        if let Some(entry) = cache.iter().find(|entry| {
+            entry.destination.same_backing(&dst.owner.native)
+                && entry.destination_offset == dst.offset
+                && entry.length == dst.length
+                && entry.source.is_none()
+                && entry.value == value
+        }) {
+            return Ok(entry.command.clone());
+        }
+        let command =
+            self.inner
+                .queue
+                .prepare_fill(&dst.owner.native, dst.offset, dst.length, value)?;
+        // Other streams may use this device-scoped allocation. Only cache when
+        // its owning stream can evict the entry when the public buffer drops.
+        if Arc::ptr_eq(&dst.owner.owner, &self.inner) && dst.owner.reservation.is_none() {
+            if cache.len() == 128 {
+                cache.remove(0);
+            }
+            cache.push(CachedTransfer {
+                destination: dst.owner.native.clone(),
+                destination_offset: dst.offset,
+                length: dst.length,
+                source: None,
+                value,
+                command: command.clone(),
+            });
+        }
+        Ok(command)
+    }
+    fn prepare_copy(&self, dst: View<'_>, src: View<'_>) -> Result<fabric::PreparedGpu> {
+        self.owns(dst.owner)?;
+        self.owns(src.owner)?;
+        if dst.len() != src.len() {
+            return Err(Error::Message("copy requires equal spans".into()));
+        }
+        let mut cache = self
+            .inner
+            .transfer_cache
+            .lock()
+            .map_err(|_| Error::DeviceLost("transfer cache poisoned".into()))?;
+        if let Some(entry) = cache.iter().find(|entry| {
+            entry.destination.same_backing(&dst.owner.native)
+                && entry.destination_offset == dst.offset
+                && entry.length == dst.length
+                && entry.source.as_ref().is_some_and(|(buffer, offset)| {
+                    buffer.same_backing(&src.owner.native) && *offset == src.offset
+                })
+        }) {
+            return Ok(entry.command.clone());
+        }
+        let command = self.inner.queue.prepare_copy(
+            &dst.owner.native,
+            dst.offset,
+            &src.owner.native,
+            src.offset,
+            src.length,
+        )?;
+        if Arc::ptr_eq(&dst.owner.owner, &self.inner)
+            && Arc::ptr_eq(&src.owner.owner, &self.inner)
+            && dst.owner.reservation.is_none()
+            && src.owner.reservation.is_none()
+        {
+            if cache.len() == 128 {
+                cache.remove(0);
+            }
+            cache.push(CachedTransfer {
+                destination: dst.owner.native.clone(),
+                destination_offset: dst.offset,
+                length: dst.length,
+                source: Some((src.owner.native.clone(), src.offset)),
+                value: 0,
+                command: command.clone(),
+            });
+        }
+        Ok(command)
+    }
+    /// Enqueue a native byte-pattern fill.
+    pub fn fill(&self, dst: View<'_>, value: u8) -> Result<()> {
+        self.budget_uses.borrow_mut().retain(&[dst]);
+        self.inner.submit(&self.prepare_fill(dst, value)?)
+    }
+    /// Enqueue a native copy between equal, non-overlapping ranges.
+    pub fn copy(&self, dst: View<'_>, src: View<'_>) -> Result<()> {
+        self.budget_uses.borrow_mut().retain(&[dst, src]);
+        self.inner.submit(&self.prepare_copy(dst, src)?)
+    }
+    /// Retain an owned staging copy of host bytes and enqueue a GPU transfer.
+    pub fn upload(&mut self, dst: View<'_>, bytes: &[u8]) -> Result<()> {
+        self.owns(dst.owner)?;
+        checked_span(0, bytes.len(), dst.len())?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        if self.staging.len() >= 8
+            || self
+                .staging
+                .iter()
+                .map(|b| b.bytes)
+                .sum::<usize>()
+                .saturating_add(bytes.len())
+                > STAGING_LIMIT
+        {
+            self.synchronize()?;
+        }
+        let staging = if let Some(index) = self
+            .staging_pool
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.bytes >= bytes.len())
+            .min_by_key(|(_, b)| b.bytes)
+            .map(|(index, _)| index)
+        {
+            self.staging_pool.swap_remove(index)
+        } else {
+            self.allocate(bytes.len())?
+        };
+        staging.native.write(0, bytes)?;
+        self.copy(
+            dst.slice(0, bytes.len())?,
+            staging.try_slice(0, bytes.len())?,
+        )?;
+        self.staging.push(staging);
+        Ok(())
+    }
+    /// Enqueue a checked upload at an allocation-relative offset.
+    pub fn upload_at(&mut self, dst: &Buffer, offset: usize, bytes: &[u8]) -> Result<()> {
+        self.upload(dst.try_slice(offset, bytes.len())?, bytes)
+    }
+    fn reclaim_staging(&mut self) {
+        let mut cached = self.staging_pool.iter().map(|b| b.bytes).sum::<usize>();
+        for buffer in self.staging.drain(..) {
+            if buffer.bytes > STAGING_LIMIT {
+                continue;
+            }
+            while self.staging_pool.len() >= 8
+                || buffer.bytes > STAGING_LIMIT.saturating_sub(cached)
+            {
+                let index = self
+                    .staging_pool
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, b)| b.bytes)
+                    .map(|(i, _)| i)
+                    .unwrap();
+                cached -= self.staging_pool.swap_remove(index).bytes;
+            }
+            cached += buffer.bytes;
+            self.staging_pool.push(buffer);
+        }
+    }
+    /// Load a trusted native code object from disk.
+    ///
+    /// # Safety
+    /// Native code must obey its declared memory and argument contract.
+    pub unsafe fn load(&self, path: &Path, symbol: &str) -> Result<Kernel> {
+        Kernel::from_native(
+            unsafe { self.inner.device.load_bytes(&std::fs::read(path)?, symbol) }?,
+            symbol,
         )
     }
-
-    /// Borrow a span within the allocation.
+    /// Load a compiler artifact for this exact device target.
     ///
-    /// # Panics
-    /// Panics if offset arithmetic overflows or the span exceeds the allocation.
-    /// Use [`Buffer::try_slice`] to return an error instead.
-    pub fn slice(&self, offset: usize, length: usize) -> View<'_> {
-        self.try_slice(offset, length)
-            .expect("slice past the allocation or overflow")
+    /// # Safety
+    /// Native code must obey its declared memory and argument contract.
+    pub unsafe fn load_artifact(&self, artifact: &crate::loom::Artifact) -> Result<Kernel> {
+        Kernel::from_native(
+            unsafe { self.inner.device.load(artifact) }?,
+            artifact.symbol(),
+        )
+    }
+    unsafe fn prepare_dispatch(
+        &self,
+        kernel: &Kernel,
+        grid: [u32; 3],
+        block: [u32; 3],
+        constants: &Constants,
+        bindings: &[View<'_>],
+    ) -> Result<fabric::PreparedGpu> {
+        if kernel.device_id() != self.device_id() {
+            return Err(Error::Message("kernel belongs to another device".into()));
+        }
+        validate_export_launch(&kernel.info, grid, block)?;
+        if constants.len != kernel.info.constant_byte_length as usize
+            || bindings.len() != kernel.info.binding_count as usize
+        {
+            return Err(Error::Message(
+                "kernel binding or constant byte count mismatch".into(),
+            ));
+        }
+        for view in bindings {
+            self.owns(view.owner)?;
+        }
+        let mut args = Vec::with_capacity(kernel.layout.len());
+        let mut scalar = 0;
+        let mut binding = 0;
+        for &(kind, size) in kernel.layout.iter() {
+            if kind == 1 {
+                args.push(fabric::Argument::Value(
+                    &constants.bytes[scalar..scalar + size],
+                ));
+                scalar += size;
+            } else {
+                let view = bindings[binding];
+                args.push(fabric::Argument::Buffer(&view.owner.native, view.offset));
+                binding += 1;
+            }
+        }
+        unsafe {
+            self.inner
+                .queue
+                .prepare(&kernel.native, grid, block.map(|v| v as u16), &args)
+        }
+    }
+    /// Enqueue a kernel invocation with declaration-order constants and buffers.
+    ///
+    /// # Safety
+    /// Dimensions, constants, and actual kernel accesses must obey each binding's range.
+    pub unsafe fn dispatch(
+        &self,
+        kernel: &Kernel,
+        grid: [u32; 3],
+        block: [u32; 3],
+        constants: &Constants,
+        bindings: &[View<'_>],
+    ) -> Result<()> {
+        self.budget_uses.borrow_mut().retain(bindings);
+        if self.budget.is_none()
+            && bindings.iter().all(|view| {
+                Arc::ptr_eq(&view.owner.owner, &self.inner) && view.owner.reservation.is_none()
+            })
+        {
+            let mut cache = self
+                .inner
+                .dispatch_cache
+                .lock()
+                .map_err(|_| Error::DeviceLost("dispatch cache poisoned".into()))?;
+            if let Some(entry) = cache
+                .iter()
+                .find(|entry| entry.matches(kernel, grid, block, constants, bindings))
+            {
+                return self.inner.submit(&entry.command);
+            }
+            let command =
+                unsafe { self.prepare_dispatch(kernel, grid, block, constants, bindings) }?;
+            self.inner.submit(&command)?;
+            if cache.len() == 64 {
+                cache.remove(0);
+            }
+            cache.push(CachedDispatch {
+                kernel: kernel.clone(),
+                grid,
+                block,
+                constants: constants.clone(),
+                bindings: bindings
+                    .iter()
+                    .map(|view| (view.owner.native.clone(), view.offset, view.length))
+                    .collect(),
+                command,
+            });
+            Ok(())
+        } else {
+            self.inner.submit(&unsafe {
+                self.prepare_dispatch(kernel, grid, block, constants, bindings)
+            }?)
+        }
+    }
+    /// Reuse scratch storage under this queue's execution order.
+    pub fn scratch(&mut self, bytes: usize) -> Result<Buffer> {
+        let choice = self
+            .scratch
+            .range(bytes.max(1)..=bytes.saturating_mul(2).max(1))
+            .next()
+            .map(|(&size, _)| size);
+        if let Some(size) = choice {
+            let list = self.scratch.get_mut(&size).unwrap();
+            let buffer = list.pop().unwrap();
+            if list.is_empty() {
+                self.scratch.remove(&size);
+            }
+            self.scratch_bytes -= buffer.bytes;
+            Ok(buffer)
+        } else {
+            self.allocate(bytes)
+        }
+    }
+    /// Return this stream's allocation after recording its last use.
+    pub fn recycle(&mut self, buffer: Buffer) -> Result<()> {
+        if !Arc::ptr_eq(&buffer.owner, &self.inner) {
+            return Err(Error::Message("scratch belongs to another stream".into()));
+        }
+        if buffer.bytes <= self.scratch_limit.saturating_sub(self.scratch_bytes) {
+            self.scratch_bytes += buffer.bytes;
+            self.scratch.entry(buffer.bytes).or_default().push(buffer);
+        }
+        Ok(())
+    }
+    /// Bound retained scratch storage, evicting large entries first.
+    pub fn set_scratch_limit(&mut self, bytes: usize) {
+        self.scratch_limit = bytes;
+        while self.scratch_bytes > bytes {
+            if let Some((_, list)) = self.scratch.pop_last() {
+                self.scratch_bytes -= list.iter().map(|b| b.bytes).sum::<usize>();
+            } else {
+                break;
+            }
+        }
+    }
+    /// Queue an owned readback.
+    pub fn read(&mut self, source: View<'_>) -> Result<Readback> {
+        let buffer = self.allocate(source.len())?;
+        if !source.is_empty() {
+            self.copy(buffer.try_slice(0, source.len())?, source)?;
+        }
+        Ok(Readback {
+            buffer,
+            length: source.len(),
+        })
     }
 }
-
-impl Drop for Buffer {
+impl Drop for Stream {
     fn drop(&mut self) {
-        unsafe { sys::hrx_buffer_release(self.raw) }
-    }
-}
-
-/// A loaded executable export with immutable dispatch metadata.
-/// Kernels can be dispatched on any stream on their device; buffer handles belong
-/// to individual streams.
-pub struct Kernel {
-    /// Shared by every clone, so cloning is two atomics rather than a call
-    /// across the FFI boundary. A cache that hands a kernel out per dispatch
-    /// clones it on every launch, so `Kernel: Clone` is only worth advertising
-    /// over `Arc<Kernel>` if it is no more expensive.
-    executable: std::sync::Arc<Executable>,
-    ordinal: u32,
-    info: sys::ExportInfo,
-    symbol: std::sync::Arc<str>,
-}
-
-/// The native executable, released once the last kernel naming it is dropped.
-struct Executable {
-    raw: sys::Executable,
-    /// As for a buffer: the executable names its device.
-    device: std::sync::Arc<Inner>,
-}
-
-// Safety: the same assertion `Kernel` carries, moved to the field that actually
-// holds the native handle. Executable metadata is immutable and the native
-// reference count is atomic, so sharing one across threads is sound; dispatch
-// still requires serialized access to a command stream.
-unsafe impl Send for Executable {}
-unsafe impl Sync for Executable {}
-
-impl Drop for Executable {
-    fn drop(&mut self) {
-        unsafe { sys::hrx_executable_release(self.raw) }
-    }
-}
-
-// Safety: executable metadata is immutable and native reference counts are
-// atomic. Dispatch requires serialized access to a command stream.
-unsafe impl Send for Kernel {}
-unsafe impl Sync for Kernel {}
-
-impl Kernel {
-    pub(crate) fn device_id(&self) -> usize {
-        self.executable.device.device as usize
-    }
-    /// Native export metadata, including argument counts and workgroup dimensions.
-    pub fn info(&self) -> &ExportInfo {
-        &self.info
-    }
-    /// The loaded export name.
-    pub fn symbol(&self) -> &str {
-        &self.symbol
-    }
-}
-
-/// Cloning shares the native executable, so a kernel can be cached and handed
-/// out by value instead of behind an `Arc`. Export metadata is immutable, and
-/// the borrowed `ExportInfo::name` stays valid while any clone is alive.
-impl Clone for Kernel {
-    fn clone(&self) -> Self {
-        Self {
-            executable: self.executable.clone(),
-            ordinal: self.ordinal,
-            info: self.info,
-            symbol: self.symbol.clone(),
+        if !self.inner.drain_for_drop() {
+            std::mem::forget(std::mem::take(&mut self.staging));
+            std::mem::forget(std::mem::take(self.budget_uses.get_mut()));
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn compiled_workgroup_dimensions_are_enforced() {
-        let info = super::ExportInfo {
-            workgroup_size: [64, 2, 1],
-            ..Default::default()
-        };
-        assert!(super::validate_export_launch(&info, [1; 3], [64, 2, 1]).is_ok());
-        assert!(super::validate_export_launch(&info, [1; 3], [128, 1, 1]).is_err());
-        assert!(super::validate_export_launch(&info, [0, 1, 1], [64, 2, 1]).is_err());
-        let dynamic = super::ExportInfo {
-            workgroup_size: [0, 2, 1],
-            ..Default::default()
-        };
-        assert!(super::validate_export_launch(&dynamic, [1; 3], [32, 2, 1]).is_ok());
-        assert!(super::validate_export_launch(&dynamic, [1; 3], [32, 1, 1]).is_err());
+/// Immutable native completion point.
+#[derive(Clone)]
+pub struct Event {
+    device: usize,
+    done: Option<fabric::Completion>,
+}
+impl Event {
+    /// Poll terminal completion.
+    pub fn is_complete(&self) -> Result<bool> {
+        self.done
+            .as_ref()
+            .map_or(Ok(true), fabric::Completion::is_complete)
     }
-    /// The bounds arithmetic, without a device: `offset + length` must not wrap into a pass.
-    #[test]
-    fn a_slice_past_the_allocation_is_refused_even_when_the_sum_wraps() {
-        let checked = |offset, length, bytes| super::checked_span(offset, length, bytes).is_ok();
-        assert!(checked(0, 8, 8));
-        assert!(checked(4, 4, 8));
-        assert!(!checked(4, 5, 8));
-        // the wrapping case: 8 bytes must not accept an offset near the top of the address space
-        assert!(!checked(usize::MAX, 2, 8));
-        assert!(!checked(usize::MAX - 1, 4, 8));
+    /// Wait on the host for preceding work.
+    pub fn synchronize(&self) -> Result<()> {
+        self.done.as_ref().map_or(Ok(()), fabric::Completion::wait)
     }
 }
-
-/// Buffers are bound to their device, not to the stream that allocated them.
-///
-/// The allocator is asked for `queue_affinity: u64::MAX` and executables are
-/// already device-scoped, so a stricter check here would be conservatism rather
-/// than a constraint. Ordering conflicting access across streams is the caller's
-/// job, and [`Stream::record_event`] / [`Stream::wait_event`] are the tools for
-/// it: a buffer written by one stream and read by another with no event between
-/// them yields whichever bytes the device happened to hold.
-fn owns(inner: &std::sync::Arc<Inner>, buffer: &Buffer) -> Result<()> {
-    if inner.device == buffer._device.device {
+/// Borrowed completion observer that also reclaims completed staging.
+#[must_use]
+pub struct Submission<'a> {
+    stream: &'a mut Stream,
+}
+impl Submission<'_> {
+    /// Poll submitted work and reclaim its completed staging.
+    pub fn is_complete(&mut self) -> Result<bool> {
+        let done = self
+            .stream
+            .inner
+            .last
+            .lock()
+            .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))?
+            .as_ref()
+            .map_or(Ok(true), fabric::Completion::is_complete)?;
+        if done {
+            self.stream.reclaim_staging();
+            self.stream.budget_uses.get_mut().clear();
+        }
+        Ok(done)
+    }
+    /// Wait and reclaim staging.
+    pub fn wait(self) -> Result<()> {
+        self.stream.synchronize()
+    }
+}
+/// Owned destination retained through native readback completion.
+#[must_use]
+pub struct Readback {
+    buffer: Buffer,
+    length: usize,
+}
+impl Readback {
+    /// Wait on the originating stream and return initialized bytes.
+    pub fn wait(self, stream: &mut Stream) -> Result<Vec<u8>> {
+        if !Arc::ptr_eq(&self.buffer.owner, &stream.inner) {
+            return Err(Error::Message("readback belongs to another stream".into()));
+        }
+        stream.synchronize()?;
+        let mut bytes = vec![0; self.length];
+        self.buffer.native.read(0, &mut bytes)?;
+        Ok(bytes)
+    }
+}
+fn owns(inner: &Arc<Inner>, buffer: &Buffer) -> Result<()> {
+    if inner.device.id() == buffer.device_id() {
         Ok(())
     } else {
         Err(Error::Message("buffer belongs to another device".into()))
-    }
-}
-
-// Keep common dispatches on the stack without imposing a new binding limit.
-fn raw_bindings<'a>(
-    views: &[View<'_>],
-    stack: &'a mut [std::mem::MaybeUninit<sys::BufferRef>; 32],
-) -> std::borrow::Cow<'a, [sys::BufferRef]> {
-    if views.len() <= stack.len() {
-        for (out, view) in stack.iter_mut().zip(views) {
-            out.write(view.raw);
-        }
-        // Only the prefix written above is exposed, and BufferRef is Copy.
-        std::borrow::Cow::Borrowed(unsafe {
-            std::slice::from_raw_parts(stack.as_ptr().cast(), views.len())
-        })
-    } else {
-        std::borrow::Cow::Owned(views.iter().map(|v| v.raw).collect())
     }
 }
 pub(crate) fn checked_span(offset: usize, length: usize, capacity: usize) -> Result<()> {
@@ -524,9 +940,8 @@ pub(crate) fn validate_launch(grid: [u32; 3], block: [u32; 3]) -> Result<()> {
         Ok(())
     }
 }
-
 pub(crate) fn validate_export_launch(
-    info: &sys::ExportInfo,
+    info: &ExportInfo,
     grid: [u32; 3],
     block: [u32; 3],
 ) -> Result<()> {
@@ -537,714 +952,15 @@ pub(crate) fn validate_export_launch(
         .zip(block)
         .any(|(&expected, actual)| expected != 0 && expected != actual)
     {
-        return Err(Error::Message(format!(
+        Err(Error::Message(format!(
             "workgroup size {block:?} disagrees with compiled size {:?}",
             info.workgroup_size
-        )));
-    }
-    Ok(())
-}
-
-/// A borrowed device registry entry. Opening a stream never acquires ownership
-/// of the native device, and dropping a model never shuts down HRX globally.
-#[derive(Clone, Debug)]
-pub struct Device {
-    index: i32,
-    target: Target,
-}
-impl Device {
-    /// Whether this native library exposes shared-allocation interop ABI 1.
-    /// This checks the native API, not whether a particular NPU driver can import.
-    pub fn supports_shared_interop(&self) -> Result<bool> {
-        match sys::interop() {
-            Ok(_) => Ok(true),
-            Err(Error::Unsupported(_)) => Ok(false),
-            Err(error) => Err(error),
-        }
-    }
-
-    /// Validate a device index without creating a native stream.
-    pub fn open(index: i32) -> Result<Self> {
-        let (_, target) = open_device(index)?;
-        Ok(Self { index, target })
-    }
-    /// Open a device only when it reports the architecture required by a workload.
-    pub fn open_for(index: i32, expected: &str) -> Result<Self> {
-        let device = Self::open(index)?;
-        if device.target.as_str() != expected {
-            return Err(Error::Message(format!(
-                "workload requires {expected}, found {}",
-                device.target.as_str()
-            )));
-        }
-        Ok(device)
-    }
-    /// Architecture reported by the selected device.
-    pub fn target(&self) -> &Target {
-        &self.target
-    }
-    /// Create an independent ordered stream on this device.
-    pub fn stream(&self) -> Result<Stream> {
-        Stream::new(self.index)
-    }
-}
-
-/// An ordered command stream. Mutating operations require exclusive access.
-/// Prepared kernels and allocations can be reused without a compiler/cache lookup.
-pub struct Stream {
-    inner: std::sync::Arc<Inner>,
-    // Native stream fields are unsynchronized. Stream is Send, but not Sync.
-    _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
-    // Native command buffers retain HAL storage, not the hrx_buffer wrapper.
-    // Releasing a mapped wrapper unmaps it (buffer.c::hrx_buffer_release).
-    // Upload staging must therefore retain its wrapper through completion.
-    // Readbacks are unmapped until wait; ordinary/scratch buffers are never
-    // mapped by this API, so native retention suffices for their early release.
-    staging: Vec<Buffer>,
-    staging_pool: Vec<Buffer>,
-    scratch: std::collections::BTreeMap<usize, Vec<Buffer>>,
-    scratch_bytes: usize,
-    scratch_limit: usize,
-    budget: Option<crate::residency::MemoryBudget>,
-    // Native commands may retain storage after the Rust buffer is dropped.
-    // Their charges survive until this stream is drained, including uses of
-    // buffers allocated by another stream or imported into a tracked runtime.
-    budget_uses: std::cell::RefCell<BudgetUses>,
-}
-impl Stream {
-    /// Charge subsequent allocations (including native upload/readback staging)
-    /// against a shared residency ceiling. Existing allocations are unchanged.
-    /// Charges remain with buffers, queued uses and recorded graphs, and leak
-    /// with quarantined native storage after an uncertain failure. The ceiling
-    /// covers requested extents, not native allocator rounding or code objects.
-    pub fn with_memory_budget(mut self, budget: crate::residency::MemoryBudget) -> Self {
-        self.budget = Some(budget);
-        self
-    }
-
-    /// Allocation ceiling for this stream, including transfer staging.
-    pub fn memory_budget(&self) -> Option<&crate::residency::MemoryBudget> {
-        self.budget.as_ref()
-    }
-
-    fn reserve(
-        &self,
-        bytes: usize,
-    ) -> Result<Option<std::sync::Arc<crate::residency::MemoryReservation>>> {
-        self.budget
-            .as_ref()
-            .map(|budget| budget.reserve(bytes.max(1)).map(std::sync::Arc::new))
-            .transpose()
-    }
-    /// Architecture reported by this stream's device.
-    pub fn target(&self) -> &Target {
-        &self.inner.target
-    }
-
-    /// Submit preceding work and record a single immutable completion event.
-    /// Recording does not wait on the host and does not reclaim upload staging.
-    pub fn record_event(&mut self) -> Result<Event> {
-        let mut raw = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_event_create(self.inner.device, sys::EVENT_FLAG_DISABLE_TIMING, &mut raw),
-                "create event",
-            )?;
-            let event = Event {
-                raw,
-                inner: self.inner.clone(),
-            };
-            check(
-                sys::hrx_event_record(raw, self.inner.stream),
-                "record event",
-            )?;
-            Ok(event)
-        }
-    }
-
-    /// Queue a device-side dependency before subsequent work on this stream.
-    /// The event must come from the same device. This call does not wait on the host.
-    pub fn wait_event(&mut self, event: &Event) -> Result<()> {
-        if self.inner.device != event.inner.device {
-            return Err(Error::Message("event belongs to another device".into()));
-        }
-        unsafe {
-            check(
-                sys::hrx_stream_wait_event(self.inner.stream, event.raw),
-                "wait event",
-            )
-        }
-    }
-    /// Open an ordered stream on device zero.
-    pub fn open() -> Result<Self> {
-        Device::open(0)?.stream()
-    }
-    /// Identifies the device this stream runs on, for callers that keep
-    /// per-device state. Kernels are device-scoped, so a cache of loaded
-    /// executables is only valid for the device that loaded them.
-    pub fn device_id(&self) -> usize {
-        self.inner.device as usize
-    }
-    /// Identifies this stream, for callers that keep per-stream state.
-    ///
-    /// Buffers are device-scoped, so nothing here rejects one used on a sibling
-    /// stream — correct, because events can order that. What events cannot fix
-    /// is *reuse*: a pool handing a buffer out again relies on the queue that
-    /// used it last running in order, which holds within a stream and not
-    /// across them. A caller pooling allocations needs to say which stream a
-    /// block came from, and this is how. Unique among live streams; a value may
-    /// repeat once its stream is dropped.
-    pub fn id(&self) -> usize {
-        std::sync::Arc::as_ptr(&self.inner) as usize
-    }
-    /// Allocate storage owned by this stream; zero bytes is rounded to one.
-    pub fn allocate(&self, bytes: usize) -> Result<Buffer> {
-        let reservation = self.reserve(bytes)?;
-        let mut buffer = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_allocator_allocate_buffer(
-                    sys::hrx_device_allocator(self.inner.device),
-                    sys::BufferParams {
-                        memory_type: sys::MEMORY_TYPE_DEVICE_LOCAL,
-                        access: sys::MEMORY_ACCESS_ALL,
-                        usage: sys::BUFFER_USAGE_DEFAULT,
-                        queue_affinity: u64::MAX,
-                    },
-                    bytes.max(1),
-                    &mut buffer,
-                ),
-                "hrx_buffer_allocate",
-            )?;
-        }
-        Ok(Buffer {
-            raw: buffer,
-            bytes: bytes.max(1),
-            _device: self.inner.clone(),
-            reservation,
-        })
-    }
-    /// Allocate device-local storage and enqueue a zero fill over its requested size.
-    pub fn allocate_zeroed(&self, bytes: usize) -> Result<Buffer> {
-        let buffer = self.allocate(bytes)?;
-        if bytes != 0 {
-            self.fill(buffer.try_slice(0, bytes)?, 0)?;
-        }
-        Ok(buffer)
-    }
-    /// Import host memory the caller owns as a device-visible buffer, without copying.
-    ///
-    /// On an APU the GPU and the NPU address the same physical pages, so importing one
-    /// host allocation into both runtimes is the basis of zero-copy handoff between them:
-    /// the same pages can simultaneously back an XRT BO driving the NPU.
-    ///
-    /// # Safety
-    ///
-    /// `pointer` must be page-aligned, cover at least `bytes`, and stay allocated and
-    /// unmoved for the whole life of the returned buffer -- the buffer borrows the memory
-    /// and never frees it. The host must not read or write those bytes while device work
-    /// touching them is in flight.
-    pub unsafe fn import_host(
-        &self,
-        pointer: *mut std::ffi::c_void,
-        bytes: usize,
-    ) -> Result<Buffer> {
-        let reservation = self.reserve(bytes)?;
-        let mut buffer = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_allocator_import_buffer(
-                    sys::hrx_device_allocator(self.inner.device),
-                    sys::BufferParams {
-                        // Host-resident pages the device reads in place, rather than a
-                        // device-local allocation the runtime would have to copy into.
-                        memory_type: sys::MEMORY_TYPE_HOST_LOCAL
-                            | sys::MEMORY_TYPE_HOST_COHERENT
-                            | sys::MEMORY_TYPE_DEVICE_VISIBLE,
-                        access: sys::MEMORY_ACCESS_ALL,
-                        usage: sys::BUFFER_USAGE_DEFAULT,
-                        queue_affinity: u64::MAX,
-                    },
-                    pointer,
-                    bytes,
-                    &mut buffer,
-                ),
-                "hrx_allocator_import_buffer",
-            )?;
-        }
-        Ok(Buffer {
-            raw: buffer,
-            bytes,
-            _device: self.inner.clone(),
-            reservation,
-        })
-    }
-
-    /// Submit and wait for all work, then reclaim completed upload staging.
-    pub fn synchronize(&mut self) -> Result<()> {
-        self.synchronize_native()?;
-        self.reclaim_staging();
-        self.budget_uses.get_mut().clear();
+        )))
+    } else {
         Ok(())
     }
-    /// Drain pending work, then upload bytes at the start of a view and wait for completion.
-    /// The input must fit within the view. Completed staging is reclaimed.
-    pub fn upload_blocking(&mut self, dst: View<'_>, bytes: &[u8]) -> Result<()> {
-        self.owns(dst.owner)?;
-        checked_span(0, bytes.len(), dst.len())?;
-        self.synchronize()?;
-        if bytes.is_empty() {
-            return Ok(());
-        }
-        unsafe {
-            check(
-                sys::hrx_synchronous_h2d(
-                    self.inner.device,
-                    bytes.as_ptr().cast(),
-                    dst.raw.buffer,
-                    dst.raw.offset,
-                    bytes.len(),
-                ),
-                "hrx_synchronous_h2d",
-            )
-        }
-    }
-    /// Synchronously upload at a checked byte offset into an allocation.
-    pub fn upload_blocking_at(&mut self, dst: &Buffer, offset: usize, bytes: &[u8]) -> Result<()> {
-        self.upload_blocking(dst.try_slice(offset, bytes.len())?, bytes)
-    }
-    /// Drain all pending work before a synchronous read and reclaim staging.
-    pub fn read_blocking(&mut self, src: View<'_>, bytes: &mut [u8]) -> Result<()> {
-        self.owns(src.owner)?;
-        checked_span(0, bytes.len(), src.len())?;
-        self.synchronize()?;
-        if bytes.is_empty() {
-            return Ok(());
-        }
-        unsafe {
-            check(
-                sys::hrx_synchronous_d2h(
-                    self.inner.device,
-                    src.raw.buffer,
-                    src.raw.offset,
-                    bytes.as_mut_ptr().cast(),
-                    bytes.len(),
-                ),
-                "hrx_synchronous_d2h",
-            )
-        }
-    }
-    /// Synchronously read at a checked byte offset from an allocation.
-    pub fn read_blocking_at(
-        &mut self,
-        src: &Buffer,
-        offset: usize,
-        bytes: &mut [u8],
-    ) -> Result<()> {
-        self.read_blocking(src.try_slice(offset, bytes.len())?, bytes)
-    }
-    /// Queue a byte-pattern fill over a nonempty view owned by this stream.
-    pub fn fill(&self, dst: View<'_>, value: u8) -> Result<()> {
-        self.owns(dst.owner)?;
-        if dst.is_empty() {
-            return Err(Error::Message("empty stream fill".into()));
-        }
-        self.budget_uses.borrow_mut().retain(&[dst]);
-        unsafe {
-            check(
-                sys::hrx_stream_fill_buffer(
-                    self.inner.stream,
-                    dst.raw.buffer,
-                    dst.raw.offset,
-                    dst.len(),
-                    &value as *const u8 as *const c_void,
-                    1,
-                ),
-                "hrx_stream_fill_buffer",
-            )
-        }
-    }
-    /// Queue a copy between equal, nonempty views owned by this stream.
-    pub fn copy(&self, dst: View<'_>, src: View<'_>) -> Result<()> {
-        self.owns(dst.owner)?;
-        self.owns(src.owner)?;
-        if dst.len() != src.len() || dst.is_empty() {
-            return Err(Error::Message(
-                "stream copy requires equal nonempty spans".into(),
-            ));
-        }
-        self.budget_uses.borrow_mut().retain(&[dst, src]);
-        unsafe {
-            check(
-                sys::hrx_stream_copy_buffer(
-                    self.inner.stream,
-                    src.raw.buffer,
-                    src.raw.offset,
-                    dst.raw.buffer,
-                    dst.raw.offset,
-                    src.len(),
-                ),
-                "hrx_stream_copy_buffer",
-            )
-        }
-    }
-    /// Copy the input into runtime-owned staging, then enqueue an actual GPU
-    /// buffer copy. The caller's slice is no longer referenced when this returns.
-    /// Bytes are written at the start of the view and must fit within it.
-    /// Staging pressure may submit or wait for prior work to bound memory use.
-    pub fn upload(&mut self, dst: View<'_>, bytes: &[u8]) -> Result<()> {
-        self.owns(dst.owner)?;
-        checked_span(0, bytes.len(), dst.len())?;
-        if bytes.is_empty() {
-            return Ok(());
-        }
-        // Submit/query only under pressure, allowing uploads to batch.
-        let next_capacity = self
-            .staging_pool
-            .iter()
-            .filter(|b| b.bytes >= bytes.len())
-            .map(|b| b.bytes)
-            .min()
-            .unwrap_or(bytes.len());
-        if !self.staging.is_empty()
-            && (self.staging.len() >= 8
-                || self
-                    .staging
-                    .iter()
-                    .map(|b| b.bytes)
-                    .sum::<usize>()
-                    .saturating_add(next_capacity)
-                    > STAGING_LIMIT)
-            && !self.submit()?.is_complete()?
-        {
-            self.synchronize()?;
-        }
-        let staging = if let Some(i) = self
-            .staging_pool
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| b.bytes >= bytes.len())
-            .min_by_key(|(_, b)| b.bytes)
-            .map(|(i, _)| i)
-        {
-            self.staging_pool.swap_remove(i)
-        } else {
-            self.allocate_host(bytes.len())?
-        };
-        let raw = staging.raw;
-        self.budget_uses.get_mut().retain(&[dst, staging.binding()]);
-        unsafe {
-            let mut pointer = std::ptr::null_mut();
-            check(
-                sys::hrx_buffer_get_device_ptr(raw, &mut pointer),
-                "map staging",
-            )?;
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer.cast::<u8>(), bytes.len());
-            // Retain before enqueue: even a partially recorded command on failure
-            // must not outlive the wrapper or its mapping.
-            self.staging.push(staging);
-            check(
-                sys::hrx_stream_copy_buffer(
-                    self.inner.stream,
-                    raw,
-                    0,
-                    dst.raw.buffer,
-                    dst.raw.offset,
-                    bytes.len(),
-                ),
-                "enqueue upload",
-            )
-        }
-    }
-    /// Enqueue an upload at a checked byte offset into an allocation.
-    pub fn upload_at(&mut self, dst: &Buffer, offset: usize, bytes: &[u8]) -> Result<()> {
-        self.upload(dst.try_slice(offset, bytes.len())?, bytes)
-    }
-    /// Allocate a host-local, device-visible buffer.
-    ///
-    /// Unlike [`Stream::allocate`], the runtime hands out a device pointer for these, so
-    /// the allocation can be exported to another driver -- which is what lets one buffer
-    /// serve both the GPU and the NPU. Device-local memory is faster for GPU-only work.
-    pub fn allocate_shared(&self, bytes: usize) -> Result<Buffer> {
-        self.allocate_host(bytes)
-    }
-
-    fn allocate_host(&self, bytes: usize) -> Result<Buffer> {
-        let reservation = self.reserve(bytes)?;
-        let mut raw = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_allocator_allocate_buffer(
-                    sys::hrx_device_allocator(self.inner.device),
-                    sys::BufferParams {
-                        memory_type: sys::MEMORY_TYPE_HOST_LOCAL
-                            | sys::MEMORY_TYPE_DEVICE_VISIBLE
-                            | sys::MEMORY_TYPE_HOST_COHERENT,
-                        access: sys::MEMORY_ACCESS_ALL,
-                        usage: sys::BUFFER_USAGE_DEFAULT | sys::BUFFER_USAGE_MAPPING_SCOPED,
-                        queue_affinity: u64::MAX,
-                    },
-                    bytes.max(1),
-                    &mut raw,
-                ),
-                "allocate staging",
-            )?;
-        }
-        Ok(Buffer {
-            raw,
-            bytes,
-            _device: self.inner.clone(),
-            reservation,
-        })
-    }
-    fn reclaim_staging(&mut self) {
-        let mut cached = self.staging_pool.iter().map(|b| b.bytes).sum::<usize>();
-        for buffer in self.staging.drain(..) {
-            if buffer.bytes > STAGING_LIMIT {
-                continue;
-            }
-            // A pool filled by tiny uploads must adapt when larger uploads
-            // arrive. Otherwise every later large staging allocation is thrown
-            // away while the unusable small allocations remain cached forever.
-            // All entries here have completed their queued copies.
-            while self.staging_pool.len() >= 8
-                || buffer.bytes > STAGING_LIMIT.saturating_sub(cached)
-            {
-                let smallest = self
-                    .staging_pool
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, b)| b.bytes)
-                    .map(|(i, _)| i)
-                    .expect("nonempty staging pool exceeds its limit");
-                cached -= self.staging_pool.swap_remove(smallest).bytes;
-            }
-            cached += buffer.bytes;
-            self.staging_pool.push(buffer);
-        }
-    }
-    /// Submit pending commands before querying completion; native query alone
-    /// does not include the unsubmitted command buffer.
-    pub fn submit(&mut self) -> Result<Submission<'_>> {
-        unsafe {
-            check(sys::hrx_stream_flush(self.inner.stream), "submit")?;
-        }
-        Ok(Submission { stream: self })
-    }
-    /// Load a native code object and select one export by name.
-    ///
-    /// # Safety
-    /// The code object must be trusted native machine code.
-    pub unsafe fn load(&self, path: &Path, symbol: &str) -> Result<Kernel> {
-        let c_path = CString::new(path.as_os_str().as_encoded_bytes())
-            .map_err(|_| Error::Message(format!("{} contains a NUL", path.display())))?;
-        let c_family = TARGET_FAMILY;
-        let c_key = self.inner.target.as_c_str();
-        unsafe {
-            let mut executable = std::ptr::null_mut();
-            check(
-                sys::hrx_executable_load_file(
-                    self.inner.device,
-                    c_path.as_ptr(),
-                    c_family.as_ptr(),
-                    c_key.as_ptr(),
-                    &mut executable,
-                ),
-                format_args!("loading {}", path.display()),
-            )?;
-            self.loaded_export(executable, symbol)
-        }
-    }
-    /// Load a compiled artifact directly, without a filesystem round trip.
-    ///
-    /// # Safety
-    /// The artifact must be trusted native code, as for [`Stream::load`].
-    pub unsafe fn load_artifact(&self, artifact: &crate::loom::Artifact) -> Result<Kernel> {
-        if artifact.target() != self.inner.target.as_str() {
-            return Err(Error::Message(
-                "artifact target does not match this runtime".into(),
-            ));
-        }
-        let bytes = artifact.bytes();
-        let mut executable = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_executable_load_data(
-                    self.inner.device,
-                    bytes.as_ptr().cast(),
-                    bytes.len(),
-                    TARGET_FAMILY.as_ptr(),
-                    self.inner.target.as_c_str().as_ptr(),
-                    &mut executable,
-                ),
-                "loading compiled artifact",
-            )?;
-            self.loaded_export(executable, artifact.symbol())
-        }
-    }
-
-    /// Queue a kernel invocation with explicitly packed constants and borrowed bindings.
-    ///
-    /// # Safety
-    /// Kernel, dimensions, constants and binding spans must agree. GPU addressing
-    /// is not sandboxed by a binding's length.
-    pub unsafe fn dispatch(
-        &self,
-        kernel: &Kernel,
-        grid: [u32; 3],
-        block: [u32; 3],
-        constants: &Constants,
-        bindings: &[View<'_>],
-    ) -> Result<()> {
-        if kernel.executable.device.device != self.inner.device {
-            return Err(Error::Message("kernel belongs to another device".into()));
-        }
-        for view in bindings {
-            owns(&self.inner, view.owner)?;
-        }
-        let mut binding_storage = [std::mem::MaybeUninit::uninit(); 32];
-        let raw_bindings = raw_bindings(bindings, &mut binding_storage);
-        validate_export_launch(&kernel.info, grid, block)?;
-        if kernel.info.binding_count as usize != bindings.len()
-            || kernel.info.constant_byte_length as usize != constants.len
-        {
-            return Err(Error::Message(
-                "kernel binding or constant byte count mismatch".into(),
-            ));
-        }
-        let config = sys::DispatchConfig {
-            workgroup_count: grid,
-            workgroup_size: block,
-            subgroup_size: sys::SUBGROUP_SIZE_FROM_EXECUTABLE,
-        };
-        self.budget_uses.borrow_mut().retain(bindings);
-        unsafe {
-            check(
-                sys::hrx_stream_dispatch(
-                    self.inner.stream,
-                    kernel.executable.raw,
-                    kernel.ordinal,
-                    &config,
-                    constants.bytes.as_ptr().cast(),
-                    constants.len,
-                    raw_bindings.as_ptr(),
-                    bindings.len(),
-                    0,
-                ),
-                "dispatch",
-            )
-        }
-    }
-
-    /// Reuse a cached allocation or allocate new scratch storage. Reuse follows
-    /// the stream's command order and requires no host wait.
-    /// Return it explicitly with [`Stream::recycle`] after recording its last use.
-    /// Dropping a buffer releases it rather than returning it to this pool.
-    pub fn scratch(&mut self, bytes: usize) -> Result<Buffer> {
-        let choice = self
-            .scratch
-            .range(bytes.max(1)..=bytes.saturating_mul(2).max(1))
-            .next()
-            .map(|(&size, _)| size);
-        if let Some(size) = choice {
-            let buffers = self.scratch.get_mut(&size).unwrap();
-            let buffer = buffers.pop().unwrap();
-            if buffers.is_empty() {
-                self.scratch.remove(&size);
-            }
-            self.scratch_bytes -= buffer.bytes;
-            Ok(buffer)
-        } else {
-            self.allocate(bytes)
-        }
-    }
-    /// Return an allocation to this stream's bounded scratch pool after recording
-    /// its final use. A later scratch request may reuse its storage.
-    /// Returns an error for a buffer another stream allocated: a scratch pool is
-    /// one stream's private free list, even though the buffer itself is usable
-    /// from any stream on the device.
-    /// Recycling needs mutable stream access; there is no automatic return on drop.
-    pub fn recycle(&mut self, buffer: Buffer) -> Result<()> {
-        if !std::sync::Arc::ptr_eq(&buffer._device, &self.inner) {
-            return Err(Error::Message("scratch belongs to another stream".into()));
-        }
-        if buffer.bytes <= self.scratch_limit.saturating_sub(self.scratch_bytes) {
-            self.scratch_bytes += buffer.bytes;
-            self.scratch.entry(buffer.bytes).or_default().push(buffer);
-        }
-        Ok(())
-    }
-    /// Set the scratch byte budget, evicting the largest size classes as needed.
-    pub fn set_scratch_limit(&mut self, bytes: usize) {
-        self.scratch_limit = bytes;
-        while self.scratch_bytes > bytes {
-            // Evict the largest size class first, preserving smaller reusable buffers.
-            if let Some((_, buffers)) = self.scratch.pop_last() {
-                self.scratch_bytes -= buffers.iter().map(|b| b.bytes).sum::<usize>();
-            } else {
-                break;
-            }
-        }
-    }
 }
-
-/// An immutable stream completion point. Native queues retain its semaphore
-/// after a wait is enqueued, so dropping the event never cancels a dependency.
-/// This is a synchronization primitive; the pinned runtime has no GPU timestamps.
-pub struct Event {
-    raw: sys::Event,
-    inner: std::sync::Arc<Inner>,
-}
-// The recorded event is immutable and retains its native device and semaphore.
-unsafe impl Send for Event {}
-unsafe impl Sync for Event {}
-impl Event {
-    /// Query completion of the work preceding this event.
-    pub fn is_complete(&self) -> Result<bool> {
-        let mut complete = false;
-        unsafe {
-            check(sys::hrx_event_query(self.raw, &mut complete), "query event")?;
-        }
-        Ok(complete)
-    }
-    /// Wait on the host for the work preceding this event.
-    pub fn synchronize(&self) -> Result<()> {
-        unsafe { check(sys::hrx_event_synchronize(self.raw), "synchronize event") }
-    }
-}
-impl Drop for Event {
-    fn drop(&mut self) {
-        unsafe { sys::hrx_event_release(self.raw) }
-    }
-}
-
-/// A borrowed submission fence. Waiting also releases completed staging. Drop
-/// does not wait; the stream continues to own everything needed by queued work.
-#[must_use]
-pub struct Submission<'a> {
-    stream: &'a mut Stream,
-}
-impl Submission<'_> {
-    /// Query submitted work; successful completion reclaims upload staging.
-    pub fn is_complete(&mut self) -> Result<bool> {
-        let mut done = false;
-        unsafe {
-            check(
-                sys::hrx_stream_query(self.stream.inner.stream, &mut done),
-                "query submission",
-            )?;
-        }
-        if done {
-            self.stream.reclaim_staging();
-            self.stream.budget_uses.get_mut().clear();
-        }
-        Ok(done)
-    }
-    /// Wait for this submission and reclaim completed upload staging.
-    pub fn wait(self) -> Result<()> {
-        self.stream.synchronize()
-    }
-}
+const STAGING_LIMIT: usize = 64 * 1024 * 1024;
 
 /// Explicit scalar widths, packed in declaration order for HRX binding dispatch.
 /// Unlike direct kernargs this format has no implicit alignment or pointer slots.
@@ -1348,252 +1064,120 @@ macro_rules! scalars {
     };
 }
 scalars!(u32 => 4, i32 => 4, f32 => 4, u64 => 8, i64 => 8, f64 => 8);
-impl Drop for Stream {
-    fn drop(&mut self) {
-        if (!self.staging.is_empty() || !self.budget_uses.get_mut().0.is_empty())
-            && self.synchronize_native().is_err()
-        {
-            // A failed wait provides no proof that mapped staging is idle.
-            std::mem::forget(std::mem::take(&mut self.staging));
-            std::mem::forget(std::mem::take(self.budget_uses.get_mut()));
-        }
-    }
-}
 
-/// A recorded operation, used to declare what later operations depend on.
-///
-/// Copy and cheap: it is an index into its own graph, not a native handle, so it
-/// never borrows the graph and can be held across recording calls. A node from
-/// another graph is rejected rather than silently indexing the wrong recording.
+/// A dependency node branded with its recording's identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Node {
     graph: u64,
     index: u32,
 }
-
 static NEXT_GRAPH_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// A recording of GPU work as a dependency graph, replayed as a unit.
-///
-/// Every operation states what it comes after. Nothing is implicit: `&[]` records
-/// work that may run as soon as the graph starts, and `&[a, b]` records work that
-/// waits for both. The runtime schedules the result — `graph_analysis.c` does a
-/// topological sort, partitions it, and detects independent workstreams, running
-/// up to eight concurrently — so declaring only the edges that exist is what lets
-/// it overlap anything.
-///
-/// Dependencies affect barriers and partitioning; there is no fixed cost per
-/// edge. The pinned scheduler considers additional workstreams only after the
-/// first 16 recordable nodes of a partition, and an empty join node ends that
-/// partition. Declaring branches permits overlap but does not guarantee it.
-///
-/// A dependency can only name an already-recorded node, so a recording is
-/// acyclic by construction and every edge points forward. That also keeps
-/// instantiation on the runtime's linear fast path. Naming the same node twice
-/// in one list is collapsed rather than rejected, so `after` may be assembled
-/// from overlapping stage outputs.
-///
-/// Addresses, constants and shapes are fixed at record time. Native capture and
-/// graph-exec update are unimplemented in the pinned revision rather than merely
-/// unwrapped: `hrx_graph_exec_update` is a 17-byte stub and
-/// `hrx_stream_capture_status` is 3 bytes, so changing a recording means
-/// recording a new one.
+/// Owned native commands being recorded under checked dependency edges.
 pub struct Graph<'a> {
-    raw: sys::Graph,
-    // Brands this graph's nodes so another graph's cannot be resolved here.
+    stream: &'a Stream,
     id: u64,
-    nodes: Vec<sys::GraphNode>,
-    inner: std::sync::Arc<Inner>,
-    _resources: std::marker::PhantomData<(&'a Buffer, &'a Kernel)>,
+    nodes: Vec<(Recorded<'a>, Option<u32>)>,
+    budget_uses: BudgetUses,
+}
+enum Recorded<'a> {
+    Fill(View<'a>, u8),
+    Copy(View<'a>, View<'a>),
+    Prepared(fabric::PreparedGpu),
+    Join,
+}
+/// Reusable prepared GPU graph and its last immutable completion point.
+pub struct GraphExec {
+    inner: Arc<Inner>,
+    commands: Option<fabric::PreparedGpu>,
+    last: Option<fabric::Completion>,
+    failed: bool,
     budget_uses: BudgetUses,
 }
 impl Stream {
-    /// Begin recording while borrowing this stream and the recorded resources.
-    /// `finish` instantiates an owned executable and ends those borrows.
-    ///
-    /// ```compile_fail
-    /// fn escape() -> hrx::Result<hrx::Graph<'static>> {
-    ///     let stream = hrx::Stream::open()?;
-    ///     stream.graph()
-    /// }
-    /// ```
+    /// Begin a dependency-checked recording borrowing this stream.
     pub fn graph(&self) -> Result<Graph<'_>> {
-        let mut raw = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_graph_create(self.inner.device, 0, &mut raw),
-                "create graph",
-            )?;
-        }
         Ok(Graph {
-            raw,
+            stream: self,
             id: NEXT_GRAPH_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             nodes: Vec::new(),
-            inner: self.inner.clone(),
-            _resources: std::marker::PhantomData,
             budget_uses: BudgetUses::default(),
         })
     }
-    /// Replay an instantiated graph on its original stream.
-    ///
-    /// A native submission failure may leave partial work in flight. Such a
-    /// graph cannot be replayed again and its native resources are retained on
-    /// drop because completion is unknown. Rejecting a foreign stream does not
-    /// invalidate the graph.
+    /// Replay fixed native commands on the originating stream.
     pub fn launch(&mut self, graph: &mut GraphExec) -> Result<()> {
-        if !std::sync::Arc::ptr_eq(&graph.inner, &self.inner) {
+        if !Arc::ptr_eq(&graph.inner, &self.inner) {
             return Err(Error::Message("graph belongs to another stream".into()));
         }
-        if matches!(graph.completion, GraphCompletion::Failed) {
-            return Err(Error::Message(
-                "graph has an untracked failed launch".into(),
+        if graph.failed {
+            return Err(Error::DeviceLost(
+                "graph has an unretired failed launch".into(),
             ));
         }
-        // A native launch can fail after submitting only part of its work. In
-        // that case the stream timeline does not cover everything submitted:
-        // neither an older fence nor a later successful launch makes release safe.
-        graph.completion = GraphCompletion::Failed;
-        unsafe {
-            check(
-                sys::hrx_graph_exec_launch(graph.raw, self.inner.stream),
-                "launch graph",
-            )?;
-            let mut point = sys::TimelinePoint::default();
-            check(
-                sys::hrx_stream_get_timeline_position(self.inner.stream, &mut point),
-                "snapshot graph completion",
-            )?;
-            graph.completion = GraphCompletion::Submitted(point);
-            Ok(())
+        graph.failed = true;
+        if let Some(command) = &graph.commands {
+            self.inner.submit(command)?;
         }
+        graph.last = self
+            .inner
+            .last
+            .lock()
+            .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))?
+            .clone();
+        graph.failed = false;
+        Ok(())
     }
 }
 impl<'a> Graph<'a> {
-    /// Translate caller-facing nodes into native handles, rejecting foreign ones.
-    /// Small fan-in stays on the stack, as dispatch bindings do.
-    fn resolve<'s>(
-        &self,
-        after: &[Node],
-        stack: &'s mut [std::mem::MaybeUninit<sys::GraphNode>; 16],
-    ) -> Result<std::borrow::Cow<'s, [sys::GraphNode]>> {
-        let handle = |node: &Node| -> Result<sys::GraphNode> {
+    fn validate_dependencies(&self, after: &[Node]) -> Result<()> {
+        for node in after {
             if node.graph != self.id || node.index as usize >= self.nodes.len() {
                 return Err(Error::Message(
                     "dependency node belongs to another graph".into(),
                 ));
             }
-            Ok(self.nodes[node.index as usize])
-        };
-        // The native sort counts in-degree per entry but clears it once, so a
-        // repeated dependency would strand a node. Collapsing here keeps the
-        // caller free to assemble `after` from overlapping stage outputs.
-        if after.len() <= stack.len() {
-            // Small fan-in is the common case and never allocates: dedupe runs
-            // against indices already on the stack, beside the handles themselves.
-            let mut seen = [0u32; 16];
-            let mut count = 0;
-            for node in after {
-                let raw = handle(node)?;
-                if seen[..count].contains(&node.index) {
-                    continue;
-                }
-                seen[count] = node.index;
-                stack[count].write(raw);
-                count += 1;
-            }
-            // Only the prefix written above is exposed, and a node handle is Copy.
-            Ok(std::borrow::Cow::Borrowed(unsafe {
-                std::slice::from_raw_parts(stack.as_ptr().cast(), count)
-            }))
-        } else {
-            let mut unique: Vec<sys::GraphNode> = Vec::with_capacity(after.len());
-            for node in after {
-                let raw = handle(node)?;
-                if !unique.contains(&raw) {
-                    unique.push(raw);
-                }
-            }
-            // Native in-degree is 16-bit; only a heap-sized fan-in can reach it.
-            if unique.len() > u16::MAX as usize {
-                return Err(Error::Message("too many graph dependencies".into()));
-            }
-            Ok(std::borrow::Cow::Owned(unique))
         }
+        if self.nodes.len() >= u32::MAX as usize {
+            return Err(Error::Message("graph node capacity exceeded".into()));
+        }
+        Ok(())
     }
-    fn record(&mut self, raw: sys::GraphNode) -> Node {
+    fn record(&mut self, command: Recorded<'a>, after: &[Node]) -> Node {
         let index = self.nodes.len() as u32;
-        self.nodes.push(raw);
+        self.nodes
+            .push((command, after.iter().map(|node| node.index).max()));
         Node {
             graph: self.id,
             index,
         }
     }
-    /// Record a byte-pattern fill over a nonempty span on this device.
+    /// Record a byte fill after checked predecessor nodes.
     pub fn fill(&mut self, after: &[Node], dst: View<'a>, pattern: u8) -> Result<Node> {
-        owns(&self.inner, dst.owner)?;
+        self.validate_dependencies(after)?;
+        self.stream.owns(dst.owner)?;
         if dst.is_empty() {
             return Err(Error::Message("empty graph fill".into()));
         }
         self.budget_uses.retain(&[dst]);
-        let attrs = sys::GraphFill {
-            dst: dst.raw,
-            pattern: pattern.into(),
-            pattern_size: 1,
-        };
-        let mut storage = [std::mem::MaybeUninit::uninit(); 16];
-        let deps = self.resolve(after, &mut storage)?;
-        let mut next = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_graph_add_fill_buffer_node(
-                    self.raw,
-                    deps.as_ptr(),
-                    deps.len(),
-                    &attrs,
-                    &mut next,
-                ),
-                "record fill",
-            )?;
-        }
-        Ok(self.record(next))
+        Ok(self.record(Recorded::Fill(dst, pattern), after))
     }
-    /// Record a copy between equal, nonempty spans on this device.
+    /// Record a non-overlapping byte copy after checked predecessor nodes.
     pub fn copy(&mut self, after: &[Node], dst: View<'a>, src: View<'a>) -> Result<Node> {
-        owns(&self.inner, dst.owner)?;
-        owns(&self.inner, src.owner)?;
+        self.validate_dependencies(after)?;
+        self.stream.owns(dst.owner)?;
+        self.stream.owns(src.owner)?;
         if dst.len() != src.len() || dst.is_empty() {
             return Err(Error::Message(
                 "graph copy requires equal nonempty spans".into(),
             ));
         }
         self.budget_uses.retain(&[dst, src]);
-        let attrs = sys::GraphCopy {
-            src: src.raw,
-            dst: dst.raw,
-        };
-        let mut storage = [std::mem::MaybeUninit::uninit(); 16];
-        let deps = self.resolve(after, &mut storage)?;
-        let mut next = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_graph_add_copy_buffer_node(
-                    self.raw,
-                    deps.as_ptr(),
-                    deps.len(),
-                    &attrs,
-                    &mut next,
-                ),
-                "record copy",
-            )?;
-        }
-        Ok(self.record(next))
+        Ok(self.record(Recorded::Copy(dst, src), after))
     }
-    /// Record a kernel invocation.
+    /// Record a fixed native kernel invocation.
     ///
     /// # Safety
-    /// As [`Stream::dispatch`]. Constants, addresses and grid are fixed for every
-    /// replay. Nodes that access overlapping spans, with at least one write,
-    /// must be ordered through `after`. Shared read-only weights need no edge.
+    /// Kernel accesses must obey bindings and constants; dependency edges must
+    /// order conflicting accesses for every replay.
     pub unsafe fn dispatch(
         &mut self,
         after: &[Node],
@@ -1603,215 +1187,71 @@ impl<'a> Graph<'a> {
         constants: &Constants,
         bindings: &[View<'a>],
     ) -> Result<Node> {
-        if kernel.executable.device.device != self.inner.device {
-            return Err(Error::Message("kernel belongs to another device".into()));
-        }
-        for view in bindings {
-            owns(&self.inner, view.owner)?;
-        }
-        let mut binding_storage = [std::mem::MaybeUninit::uninit(); 32];
-        let raw_bindings = raw_bindings(bindings, &mut binding_storage);
-        validate_export_launch(&kernel.info, grid, block)?;
-        if kernel.info.binding_count as usize != bindings.len()
-            || kernel.info.constant_byte_length as usize != constants.len
-        {
-            return Err(Error::Message(
-                "graph binding or constant byte count mismatch".into(),
-            ));
-        }
-        // graph.c copies constants and binding descriptors into its arena, but
-        // those descriptors only borrow HAL resources until instantiation. Thus
-        // buffers/kernels borrow for recording, while constants borrow for this call.
+        self.validate_dependencies(after)?;
+        let command = unsafe {
+            self.stream
+                .prepare_dispatch(kernel, grid, block, constants, bindings)
+        }?;
         self.budget_uses.retain(bindings);
-        let attrs = sys::GraphKernel {
-            executable: kernel.executable.raw,
-            ordinal: kernel.ordinal,
-            config: sys::DispatchConfig {
-                workgroup_count: grid,
-                workgroup_size: block,
-                subgroup_size: sys::SUBGROUP_SIZE_FROM_EXECUTABLE,
-            },
-            constants: constants.bytes.as_ptr().cast(),
-            constants_size: constants.len,
-            bindings: raw_bindings.as_ptr(),
-            binding_count: bindings.len(),
-            flags: 0,
-        };
-        let mut storage = [std::mem::MaybeUninit::uninit(); 16];
-        let deps = self.resolve(after, &mut storage)?;
-        let mut next = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_graph_add_kernel_node(
-                    self.raw,
-                    deps.as_ptr(),
-                    deps.len(),
-                    &attrs,
-                    &mut next,
-                ),
-                "record kernel",
-            )?;
-        }
-        Ok(self.record(next))
+        Ok(self.record(Recorded::Prepared(command), after))
     }
-    /// Record a node that does no work and exists only to collect dependencies.
-    ///
-    /// The pinned runtime gives this node its own partition and queue barrier.
-    /// For one consumer, pass the producer nodes directly to that operation.
-    /// A join can express a shared dependency, but is not necessarily cheaper.
+    /// Record a dependency join with no native payload.
     pub fn join(&mut self, after: &[Node]) -> Result<Node> {
-        let mut storage = [std::mem::MaybeUninit::uninit(); 16];
-        let deps = self.resolve(after, &mut storage)?;
-        let mut next = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_graph_add_empty_node(self.raw, deps.as_ptr(), deps.len(), &mut next),
-                "record join",
-            )?;
-        }
-        Ok(self.record(next))
+        self.validate_dependencies(after)?;
+        Ok(self.record(Recorded::Join, after))
     }
-    /// Instantiate the recording, retaining native resources independently of its
-    /// borrows. A cyclic graph is rejected here.
-    pub fn finish(mut self) -> Result<GraphExec> {
-        let mut raw = std::ptr::null_mut();
-        unsafe {
-            check(
-                sys::hrx_graph_instantiate(self.raw, 0, &mut raw),
-                "instantiate graph",
-            )?;
+    /// Transfer recorded commands and allocation charges into owned replay state.
+    pub fn finish(self) -> Result<GraphExec> {
+        let mut ordered = Vec::new();
+        let mut completed = 0usize;
+        for (index, (node, dependency)) in self.nodes.into_iter().enumerate() {
+            let command = match node {
+                Recorded::Fill(dst, value) => self.stream.prepare_fill(dst, value)?,
+                Recorded::Copy(dst, src) => self.stream.prepare_copy(dst, src)?,
+                Recorded::Prepared(command) => command,
+                Recorded::Join => continue,
+            };
+            let barrier = dependency.is_some_and(|node| node as usize >= completed);
+            if barrier {
+                completed = index;
+            }
+            ordered.push((command, barrier));
         }
+        let commands = if ordered.is_empty() {
+            None
+        } else {
+            // Graph edges order conflicting accesses; all binding backing is retained.
+            Some(unsafe { self.stream.inner.queue.prepare_batch(&ordered) }?)
+        };
         Ok(GraphExec {
-            raw,
-            inner: self.inner.clone(),
-            completion: GraphCompletion::Idle,
-            budget_uses: std::mem::take(&mut self.budget_uses),
+            inner: self.stream.inner.clone(),
+            commands,
+            last: None,
+            failed: false,
+            budget_uses: self.budget_uses,
         })
     }
 }
-impl Drop for Graph<'_> {
-    fn drop(&mut self) {
-        unsafe {
-            sys::hrx_graph_release(self.raw);
-        }
-    }
-}
-/// An instantiated graph. Native instantiation retains HAL allocations and
-/// executables; the Arc keeps their device and originating stream alive.
-/// Recording borrows its inputs until finish; replay no longer borrows them.
-/// Drop waits for its last replay, without submitting or waiting for later
-/// stream work. A graph that has never been launched is released immediately.
-pub struct GraphExec {
-    raw: sys::GraphExec,
-    inner: std::sync::Arc<Inner>,
-    completion: GraphCompletion,
-    budget_uses: BudgetUses,
-}
-
-enum GraphCompletion {
-    Idle,
-    // The semaphore is borrowed from the stream retained by GraphExec::inner.
-    Submitted(sys::TimelinePoint),
-    Failed,
-}
-// Send rests on native behaviour, not on anything the compiler checks. What is
-// asserted: an instantiated graph owns its recorded HAL resources and semaphore
-// state, so moving the handle between threads and launching from the receiving
-// one is sound. Rust contributes only exclusivity — launch takes `&mut` — and
-// `Arc::ptr_eq` in `Stream::launch`, which rejects a foreign stream but says
-// nothing about threads. `independent_streams_move_between_threads` exercises
-// this and is evidence, not proof; a native revision that made replay
-// thread-affine would invalidate the impl without failing to compile.
-// Drop waits only on a captured semaphore/value pair, never on mutable stream
-// state: the original Stream may be recording on another thread by then.
-unsafe impl Send for GraphExec {}
 impl Drop for GraphExec {
     fn drop(&mut self) {
-        // Unlike a buffer, whose storage the command buffer retains, releasing
-        // an executable graph that is still replaying frees native structures
-        // the device is reading: the observed failure is an AMDGPU memory
-        // access fault, not an error a caller could handle. Wait for the last
-        // replay's immutable completion point, without flushing or reading the
-        // stream's current position. A failed launch or wait is no proof the
-        // replay is idle, so the native graph leaks rather than freeing early.
-        let drained = match self.completion {
-            GraphCompletion::Idle => true,
-            GraphCompletion::Submitted(point) => check(
-                unsafe { sys::hrx_semaphore_wait(point.semaphore, point.value, u64::MAX) },
-                "wait for graph completion",
-            )
-            .is_ok(),
-            GraphCompletion::Failed => false,
-        };
-        if drained {
-            unsafe { sys::hrx_graph_exec_release(self.raw) };
-        } else {
+        if self.failed
+            || self.last.as_ref().is_some_and(|done| {
+                !done
+                    .wait_timeout(std::time::Duration::from_secs(10))
+                    .unwrap_or(false)
+            })
+        {
             std::mem::forget(std::mem::take(&mut self.budget_uses));
         }
     }
 }
-
-/// Owned host-visible destination of a queued download. Dropping it before
-/// completion is safe: the native command buffer retains its unmapped storage.
-#[must_use]
-pub struct Readback {
-    buffer: Buffer,
-}
-impl Stream {
-    /// Queue a download into owned, initially unmapped host-visible storage.
-    pub fn read(&mut self, source: View<'_>) -> Result<Readback> {
-        self.owns(source.owner)?;
-        let buffer = self.allocate_host(source.len())?;
-        let raw = buffer.raw;
-        self.budget_uses
-            .get_mut()
-            .retain(&[source, buffer.binding()]);
-        unsafe {
-            if !source.is_empty() {
-                check(
-                    sys::hrx_stream_copy_buffer(
-                        self.inner.stream,
-                        source.raw.buffer,
-                        source.raw.offset,
-                        raw,
-                        0,
-                        source.len(),
-                    ),
-                    "enqueue readback",
-                )?;
-            }
-            Ok(Readback { buffer })
-        }
+impl std::fmt::Debug for Device {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Device")
+            .field("target", self.target())
+            .finish_non_exhaustive()
     }
 }
-impl Readback {
-    /// Wait on the originating stream and return initialized download bytes.
-    pub fn wait(self, stream: &mut Stream) -> Result<Vec<u8>> {
-        if !std::sync::Arc::ptr_eq(&self.buffer._device, &stream.inner) {
-            return Err(Error::Message("readback belongs to another stream".into()));
-        }
-        stream.synchronize()?;
-        let mut bytes = Vec::with_capacity(self.buffer.bytes);
-        if self.buffer.bytes != 0 {
-            let mut pointer = std::ptr::null_mut();
-            unsafe {
-                check(
-                    sys::hrx_buffer_get_device_ptr(self.buffer.raw, &mut pointer),
-                    "map completed readback",
-                )?;
-                std::ptr::copy_nonoverlapping(
-                    pointer.cast::<u8>(),
-                    bytes.as_mut_ptr(),
-                    self.buffer.bytes,
-                );
-                // The copy initialized exactly this many bytes of spare capacity.
-                bytes.set_len(self.buffer.bytes);
-            }
-        }
-        Ok(bytes)
-    }
-}
-
 impl std::fmt::Debug for Buffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Buffer")
@@ -1819,7 +1259,6 @@ impl std::fmt::Debug for Buffer {
             .finish_non_exhaustive()
     }
 }
-
 impl std::fmt::Debug for Kernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Kernel")
@@ -1827,7 +1266,6 @@ impl std::fmt::Debug for Kernel {
             .finish_non_exhaustive()
     }
 }
-
 impl std::fmt::Debug for Stream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Stream")
@@ -1835,7 +1273,6 @@ impl std::fmt::Debug for Stream {
             .finish_non_exhaustive()
     }
 }
-
 impl std::fmt::Debug for Graph<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Graph")
@@ -1843,71 +1280,50 @@ impl std::fmt::Debug for Graph<'_> {
             .finish_non_exhaustive()
     }
 }
-
 impl std::fmt::Debug for GraphExec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GraphExec").finish_non_exhaustive()
     }
 }
-
 impl std::fmt::Debug for Readback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Readback").finish_non_exhaustive()
     }
 }
-
 impl std::fmt::Debug for Submission<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Submission").finish_non_exhaustive()
     }
 }
 
-const STAGING_LIMIT: usize = 64 * 1024 * 1024;
-
 #[cfg(test)]
-mod graph_completion_tests {
-    use super::*;
-
+mod tests {
     #[test]
-    #[ignore = "requires gfx1151"]
-    fn dropping_a_graph_on_another_thread_does_not_submit_pending_work() -> Result<()> {
-        let mut stream = Stream::open()?;
-        let buffer = stream.allocate(4096)?;
-        let mut graph = stream.graph()?;
-        graph.fill(&[], buffer.binding(), 1)?;
-        let mut replay = graph.finish()?;
-        // A later replay must replace the earlier completion point.
-        stream.launch(&mut replay)?;
-        stream.launch(&mut replay)?;
-        let mut before = sys::TimelinePoint::default();
-        unsafe {
-            check(
-                sys::hrx_stream_get_timeline_position(stream.inner.stream, &mut before),
-                "snapshot timeline before drop",
-            )?;
-        }
-        stream.fill(buffer.binding(), 2)?;
-        std::thread::scope(|scope| {
-            let dropper = scope.spawn(move || drop(replay));
-            for _ in 0..64 {
-                stream.fill(buffer.binding(), 3).unwrap();
-            }
-            dropper.join().unwrap();
-        });
-        let mut after = sys::TimelinePoint::default();
-        unsafe {
-            check(
-                sys::hrx_stream_get_timeline_position(stream.inner.stream, &mut after),
-                "snapshot timeline after drop",
-            )?;
-        }
-        // This is deterministic even if the threads never overlap: the old
-        // destructor flushes the pending fill and advances this timeline.
-        assert_eq!(after.value, before.value, "drop submitted unrelated work");
-        let mut actual = [0; 4096];
-        stream.read_blocking(buffer.binding(), &mut actual)?;
-        assert_eq!(actual, [3; 4096]);
-        Ok(())
+    fn compiled_workgroup_dimensions_are_enforced() {
+        let info = super::ExportInfo {
+            workgroup_size: [64, 2, 1],
+            ..Default::default()
+        };
+        assert!(super::validate_export_launch(&info, [1; 3], [64, 2, 1]).is_ok());
+        assert!(super::validate_export_launch(&info, [1; 3], [128, 1, 1]).is_err());
+        assert!(super::validate_export_launch(&info, [0, 1, 1], [64, 2, 1]).is_err());
+        let dynamic = super::ExportInfo {
+            workgroup_size: [0, 2, 1],
+            ..Default::default()
+        };
+        assert!(super::validate_export_launch(&dynamic, [1; 3], [32, 2, 1]).is_ok());
+        assert!(super::validate_export_launch(&dynamic, [1; 3], [32, 1, 1]).is_err());
+    }
+    /// The bounds arithmetic, without a device: `offset + length` must not wrap into a pass.
+    #[test]
+    fn a_slice_past_the_allocation_is_refused_even_when_the_sum_wraps() {
+        let checked = |offset, length, bytes| super::checked_span(offset, length, bytes).is_ok();
+        assert!(checked(0, 8, 8));
+        assert!(checked(4, 4, 8));
+        assert!(!checked(4, 5, 8));
+        // the wrapping case: 8 bytes must not accept an offset near the top of the address space
+        assert!(!checked(usize::MAX, 2, 8));
+        assert!(!checked(usize::MAX - 1, 4, 8));
     }
 }
 
@@ -1922,7 +1338,7 @@ mod staging_tests {
         let mut owner = device.stream()?;
         let mut other = device.stream()?;
         let private = other.scratch(4096)?;
-        let private_raw = private.raw;
+        let private_raw = private.allocation_address()?;
         other.recycle(private)?;
 
         // Buffers are device-scoped, so another stream may read and write this one.
@@ -1944,7 +1360,7 @@ mod staging_tests {
         );
         assert!(owner.scratch.is_empty());
         assert_eq!(other.scratch_bytes, 4096);
-        assert_eq!(other.scratch(4096)?.raw, private_raw);
+        assert_eq!(other.scratch(4096)?.allocation_address()?, private_raw);
         Ok(())
     }
 
@@ -1954,20 +1370,20 @@ mod staging_tests {
         let mut stream = Stream::open()?;
         let buffer = stream.allocate(1024)?;
         stream.upload(buffer.binding(), &[7; 1024])?;
-        let original = stream.staging[0].raw;
+        let original = stream.staging[0].allocation_address()?;
         let mut output = [0; 1024];
         stream.read_blocking(buffer.binding(), &mut output)?;
         assert_eq!(output, [7; 1024]);
         assert!(stream.staging.is_empty());
         stream.upload(buffer.binding(), &[9; 1024])?;
-        assert_eq!(stream.staging[0].raw, original);
+        assert_eq!(stream.staging[0].allocation_address()?, original);
         stream.upload_blocking(buffer.binding(), &[11; 1024])?;
         assert!(stream.staging.is_empty());
         stream.upload(buffer.binding(), &[12; 512])?;
-        assert_eq!(stream.staging[0].raw, original);
+        assert_eq!(stream.staging[0].allocation_address()?, original);
         stream.synchronize()?;
         stream.upload(buffer.binding(), &[13; 1024])?;
-        stream.synchronize_native()?; // Establish completion without the cleanup being tested.
+        stream.inner.wait()?; // Establish completion without the cleanup being tested.
         assert!(stream.submit()?.is_complete()?);
         assert!(stream.staging.is_empty());
         for _ in 0..32 {
@@ -1989,10 +1405,10 @@ mod staging_tests {
             stream.upload(buffer.binding(), &vec![7; size])?;
         }
         assert_eq!(stream.staging.len(), 3);
-        let medium = stream.staging[1].raw;
+        let medium = stream.staging[1].allocation_address()?;
         stream.synchronize()?;
         stream.upload(buffer.binding(), &[9; 1500])?;
-        assert_eq!(stream.staging[0].raw, medium);
+        assert_eq!(stream.staging[0].allocation_address()?, medium);
         for _ in 0..7 {
             stream.upload(buffer.binding(), &[11; 1024])?;
         }
@@ -2016,11 +1432,11 @@ mod staging_tests {
 
         let source = vec![0x35; 1 << 20];
         stream.upload(buffer.binding(), &source)?;
-        let large = stream.staging[0].raw;
+        let large = stream.staging[0].allocation_address()?;
         stream.synchronize()?;
         let replacement = vec![0xa9; source.len()];
         stream.upload(buffer.binding(), &replacement)?;
-        assert_eq!(stream.staging[0].raw, large);
+        assert_eq!(stream.staging[0].allocation_address()?, large);
         let mut output = vec![0; source.len()];
         stream.read_blocking(buffer.try_slice(0, output.len())?, &mut output)?;
         assert_eq!(output, replacement);

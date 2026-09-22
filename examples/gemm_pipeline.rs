@@ -1,6 +1,8 @@
 //! Real GPU preprocessing -> BF16 NPU GEMM -> GPU f32 epilogue.
-//! Usage: gemm_pipeline <row-major-bf16.xclbin> <instructions.bin> M K N
-//! Artifacts must implement A[M,K] * B[K,N] -> C[M,N] f32, using MLIR_AIE.
+//! Usage: gemm_pipeline [<gemm.loom> <symbol> M K N]
+//! With no arguments, runs the included native 8x8 BF16/BFP16 fixture.
+//! Source must implement A[M,K] * B[K,N] -> C[M,N] f32 with three buffer bindings.
+//! The specialization defines gemm.m, gemm.k and gemm.n.
 use hrx::{
     Result,
     benchmark::percentile,
@@ -57,9 +59,21 @@ fn gpu_kernel(
 }
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
+    let args = if args.len() == 1 {
+        vec![
+            args[0].clone(),
+            String::new(),
+            "gemm".into(),
+            "8".into(),
+            "8".into(),
+            "8".into(),
+        ]
+    } else {
+        args
+    };
     if args.len() != 6 {
         return Err(hrx::Error::Message(
-            "usage: gemm_pipeline <row-major-bf16.xclbin> <instructions.bin> M K N".into(),
+            "usage: gemm_pipeline <gemm.loom> <symbol> M K N".into(),
         ));
     }
     let parse = |i: usize| {
@@ -76,10 +90,28 @@ fn main() -> Result<()> {
     };
     let (a_bytes, b_bytes, c_bytes) = (extent(m, k, 2)?, extent(k, n, 2)?, extent(m, n, 4)?);
     let runtime = Runtime::new()?;
-    let program = unsafe { runtime.npu(0)?.load_program(&args[1]) }?;
+    let device = runtime.npu(0)?;
+    let (source, spec) = if args[1].is_empty() {
+        (
+            include_str!("../tests/kernels/gemm_bf16.xdna.loom").to_string(),
+            hrx::loom::Specialization::new("gemm"),
+        )
+    } else {
+        (
+            std::fs::read_to_string(&args[1])?,
+            hrx::loom::Specialization::new(&args[2])
+                .with_config("gemm.m", m.to_string())
+                .with_config("gemm.k", k.to_string())
+                .with_config("gemm.n", n.to_string()),
+        )
+    };
+    let artifact = hrx::loom::Compiler::for_target(None, device.target())?
+        .module(&source)
+        .compile(&spec)?;
     let npu = unsafe {
-        program.kernel(
-            &std::fs::read(&args[2])?,
+        device.load_artifact(
+            &artifact,
+            1,
             KernelContract {
                 bindings: vec![
                     binding(a_bytes, Access::Read),
@@ -112,7 +144,7 @@ fn main() -> Result<()> {
         m * n,
         vec![binding(c_bytes, Access::ReadWrite)],
     )?;
-    let allocate = |bytes| runtime.allocate(bytes, MemoryPlacement::Shared(program.clone()));
+    let allocate = |bytes| runtime.allocate(bytes, MemoryPlacement::Shared(device.clone()));
     let weights = allocate(b_bytes)?;
     let ones = allocate(a_bytes)?;
     for buffer in [&weights, &ones] {

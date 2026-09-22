@@ -267,26 +267,17 @@ impl Graph {
     #[cfg(feature = "npu")]
     pub fn npu(&mut self, kernel: &crate::npu::NpuKernel, bindings: &[BufferView]) -> Result<Node> {
         kernel.contract().check(bindings)?;
-        for (index, (binding, group)) in bindings.iter().zip(&kernel.inner.groups).enumerate() {
-            let storage = &binding.buffer.storage;
-            let address = storage
-                .bo
+        for (binding, contract) in bindings.iter().zip(&kernel.contract().bindings) {
+            let native = binding
+                .buffer
+                .storage
+                .native
                 .as_ref()
-                .ok_or_else(|| Error::Unsupported("missing NPU import".into()))?
-                .address()
-                .map_err(Error::Message)?;
-            let contract = &kernel.contract().bindings[index];
+                .ok_or_else(|| Error::Unsupported("binding has no native storage".into()))?;
+            let address = native.device_address(&kernel.inner.device)?;
             if !(address + binding.offset() as u64).is_multiple_of(contract.alignment as u64) {
                 return Err(Error::Message(
                     "NPU allocation does not satisfy kernel alignment".into(),
-                ));
-            }
-            if storage.npu_device != Some(kernel.inner.program.inner.device)
-                || storage.group.map(crate::npu::raw::memory_bank)
-                    != Some(crate::npu::raw::memory_bank(*group))
-            {
-                return Err(Error::Unsupported(
-                    "NPU binding device or host memory bank differs from the program".into(),
                 ));
             }
         }
@@ -323,32 +314,29 @@ impl Graph {
             if let Description::Npu(kernel, bindings) = &self.entries[index].operation {
                 let arguments = bindings
                     .iter()
-                    .map(|view| {
-                        let bo = view.buffer.storage.bo.as_ref().ok_or_else(|| {
-                            Error::Unsupported("NPU binding lacks an import".into())
-                        })?;
-                        if view.offset() == 0 && view.len() == bo.len() {
-                            Ok(bo.clone())
-                        } else {
-                            bo.sub(view.len(), view.offset()).map_err(Error::Message)
-                        }
+                    .map(|view| -> Result<_> {
+                        Ok(crate::fabric::XdnaBinding {
+                            buffer: view.buffer.storage.native.as_ref().ok_or_else(|| {
+                                Error::Unsupported("missing native XDNA backing".into())
+                            })?,
+                            offset: view.offset(),
+                            length: view.len(),
+                        })
                     })
                     .collect::<Result<Vec<_>>>()?;
-                // HostOnly/imported BOs are device-global. Graph::npu checked
-                // their device and argument memory bank; sub-BOs retain that mapping.
-                // PreparedRun retains both the dispatch and allocation contexts.
+                // Native preparation validates the image's own range/usage contracts.
+                // Every invocation submits the complete establishing command.
                 let run = unsafe {
-                    crate::npu::raw::PreparedRun::new(
-                        &kernel.inner.program.inner.context,
-                        &kernel.inner.instructions,
-                        arguments,
+                    kernel.inner.device.prepare_xdna(
+                        &kernel.inner.artifact,
+                        kernel.inner.columns,
+                        &arguments,
                     )
-                }
-                .map_err(Error::Message)?;
+                }?;
                 operations.push(Operation {
                     lane: GpuLane::Compute,
                     copy_bytes: 0,
-                    backend: Backend::Npu(Mutex::new(run)),
+                    backend: Backend::Npu(Mutex::new(run), kernel.clone()),
                     uses: self.entries[index].uses.clone(),
                     dependencies: Vec::new(),
                 });
@@ -518,7 +506,7 @@ pub(super) enum Backend {
     Gpu(Box<Mutex<(crate::gpu::Stream, crate::gpu::GraphExec)>>),
     Scoped(Arc<Mutex<ScopedGpu>>, Vec<BufferView>),
     #[cfg(feature = "npu")]
-    Npu(Mutex<crate::npu::raw::PreparedRun>),
+    Npu(Mutex<crate::fabric::XdnaProgram>, crate::npu::NpuKernel),
     #[cfg(test)]
     Mock(Engine, Arc<dyn Fn() -> Result<()> + Send + Sync>),
 }
@@ -541,7 +529,7 @@ impl Operation {
         match &self.backend {
             Backend::Gpu(_) | Backend::Scoped(..) | Backend::Copies(..) => Engine::Gpu,
             #[cfg(feature = "npu")]
-            Backend::Npu(_) => Engine::Npu,
+            Backend::Npu(..) => Engine::Npu,
             #[cfg(test)]
             Backend::Mock(engine, _) => *engine,
         }
@@ -592,7 +580,9 @@ impl Operation {
                 callback.lock().unwrap_or_else(|e| e.into_inner())(&views)?;
             }
             #[cfg(feature = "npu")]
-            Backend::Npu(run) => run.lock().unwrap_or_else(|e| e.into_inner()).execute()?,
+            Backend::Npu(run, _kernel) => {
+                unsafe { run.lock().unwrap_or_else(|e| e.into_inner()).dispatch() }?.wait()?
+            }
             #[cfg(test)]
             Backend::Mock(_, action) => action()?,
         }

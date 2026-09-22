@@ -24,6 +24,7 @@ pub const LOOMC_EMIT_OPTION_KEY_COMPILE_REPORT_IDENTIFIER: &[u8; 31] =
 pub const LOOMC_ARTIFACT_FORMAT_LINK_DEPENDENCY_REPORT_JSON: &[u8; 33] =
     b"loom-link-dependency-report-json\0";
 pub const LOOMC_ARTIFACT_FORMAT_AMDGPU_HSACO: &[u8; 13] = b"amdgpu-hsaco\0";
+pub const LOOMC_ARTIFACT_FORMAT_XDNA: &[u8; 5] = b"xdna\0";
 #[doc = " Host allocation and container size type.\n\n Values have the same range as C `size_t`. Public ABI fields use this\n spelling so bindings can mirror one Loom-specific type name rather than\n repeating the C standard library type across the API."]
 pub type loomc_host_size_t = usize;
 #[repr(C)]
@@ -684,6 +685,61 @@ pub type loomc_module_function_export_flag_bits_e = ::std::os::raw::c_uint;
 pub const LOOMC_MODULE_GLOBAL_FLAG_PUBLIC: loomc_module_global_flag_bits_e = 1;
 #[doc = " Module global metadata flag bits."]
 pub type loomc_module_global_flag_bits_e = ::std::os::raw::c_uint;
+#[doc = " Prefer target-low assembly syntax using each function's representation\n contract, with canonical text as a lossless fallback."]
+pub const LOOMC_MODULE_TEXT_PRESENTATION_DEFAULT: loomc_module_text_presentation_e = 0;
+#[doc = " Force canonical text with descriptor-backed target-low operations printed\n as ordinary `low.op<...>` operations."]
+pub const LOOMC_MODULE_TEXT_PRESENTATION_GENERIC: loomc_module_text_presentation_e = 1;
+#[doc = " Require descriptor-backed target-low assembly syntax for every\n self-describing target-low function. Serialization fails when a function\n has no lossless assembly spelling for its representation contract."]
+pub const LOOMC_MODULE_TEXT_PRESENTATION_LOW_ASM: loomc_module_text_presentation_e = 2;
+#[doc = " Text presentation policy used when serializing `.loom` text."]
+pub type loomc_module_text_presentation_e = ::std::os::raw::c_uint;
+#[doc = " Text presentation policy used when serializing `.loom` text."]
+pub use self::loomc_module_text_presentation_e as loomc_module_text_presentation_t;
+#[doc = " Module serialization options.\n\n Callers zero-initialize this descriptor, set `type` to\n `LOOMC_STRUCTURE_TYPE_MODULE_SERIALIZE_OPTIONS`, set `structure_size` to\n `sizeof(loomc_module_serialize_options_t)`, and fill the requested fields."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct loomc_module_serialize_options_t {
+    #[doc = " Structure type. Must be `LOOMC_STRUCTURE_TYPE_MODULE_SERIALIZE_OPTIONS`\n when nonzero."]
+    pub type_: loomc_structure_type_t,
+    #[doc = " Size of this structure in bytes."]
+    pub structure_size: loomc_host_size_t,
+    #[doc = " Extension chain for future serialization options."]
+    pub next: *const ::std::os::raw::c_void,
+    #[doc = " Output source format. Unknown selects textual `.loom`."]
+    pub format: loomc_source_format_t,
+    #[doc = " Identifier to attach to a returned source. Empty uses a format-specific\n default. Path and `FILE*` serialization do not interpret this field."]
+    pub identifier: loomc_string_view_t,
+    #[doc = " Presentation policy for textual `.loom` output."]
+    pub text_presentation: loomc_module_text_presentation_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of loomc_module_serialize_options_t"]
+        [::std::mem::size_of::<loomc_module_serialize_options_t>() - 56usize];
+    ["Alignment of loomc_module_serialize_options_t"]
+        [::std::mem::align_of::<loomc_module_serialize_options_t>() - 8usize];
+    ["Offset of field: loomc_module_serialize_options_t::type_"]
+        [::std::mem::offset_of!(loomc_module_serialize_options_t, type_) - 0usize];
+    ["Offset of field: loomc_module_serialize_options_t::structure_size"]
+        [::std::mem::offset_of!(loomc_module_serialize_options_t, structure_size) - 8usize];
+    ["Offset of field: loomc_module_serialize_options_t::next"]
+        [::std::mem::offset_of!(loomc_module_serialize_options_t, next) - 16usize];
+    ["Offset of field: loomc_module_serialize_options_t::format"]
+        [::std::mem::offset_of!(loomc_module_serialize_options_t, format) - 24usize];
+    ["Offset of field: loomc_module_serialize_options_t::identifier"]
+        [::std::mem::offset_of!(loomc_module_serialize_options_t, identifier) - 32usize];
+    ["Offset of field: loomc_module_serialize_options_t::text_presentation"]
+        [::std::mem::offset_of!(loomc_module_serialize_options_t, text_presentation) - 48usize];
+};
+impl Default for loomc_module_serialize_options_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
 #[doc = " Prepared immutable pass program.\n\n Pass programs are separate from compilers so JITs and autotuners can cache\n common pipelines, choose among several prepared programs per invocation, or\n sweep pipeline configurations without constructing many compiler handles.\n Pass programs remain target-independent. Target-aware predicates resolve\n each function's durable target when the program executes.\n\n @thread_safety\n Pass programs are immutable after creation and may be shared across worker\n threads. Retain/release operations are safe from multiple threads."]
 #[repr(C)]
 #[derive(Debug)]
@@ -781,6 +837,57 @@ const _: () = {
         [::std::mem::offset_of!(loomc_compile_options_t, config_module) - 48usize];
 };
 impl Default for loomc_compile_options_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Does not request a compile report."]
+pub const LOOMC_COMPILE_REPORT_MODE_NONE: loomc_compile_report_mode_e = 0;
+#[doc = " Requests stable target, status, artifact, and summary compiler facts."]
+pub const LOOMC_COMPILE_REPORT_MODE_SUMMARY: loomc_compile_report_mode_e = 1;
+#[doc = " Requests summary facts plus detail rows when producers support them."]
+pub const LOOMC_COMPILE_REPORT_MODE_DETAILS: loomc_compile_report_mode_e = 2;
+#[doc = " Compile report detail mode."]
+pub type loomc_compile_report_mode_e = ::std::os::raw::c_uint;
+#[doc = " Compile report detail mode."]
+pub use self::loomc_compile_report_mode_e as loomc_compile_report_mode_t;
+#[doc = " Compile report emission options.\n\n Attach this descriptor through `loomc_emit_options_t::next`. The descriptor\n controls JSON report production for the emitted target artifact. It does not\n run compilation passes, force target analyses, or write filesystem paths."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct loomc_compile_report_options_t {
+    #[doc = " Structure type. Must be `LOOMC_STRUCTURE_TYPE_COMPILE_REPORT_OPTIONS`\n when nonzero."]
+    pub type_: loomc_structure_type_t,
+    #[doc = " Size of this structure in bytes."]
+    pub structure_size: loomc_host_size_t,
+    #[doc = " Next invocation option extension."]
+    pub next: *const ::std::os::raw::c_void,
+    #[doc = " Selected report detail mode."]
+    pub mode: loomc_compile_report_mode_t,
+    #[doc = " Result artifact identifier for the compile report JSON. Empty derives\n from the emitted artifact identifier by appending `.compile-report.json`."]
+    pub identifier: loomc_string_view_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of loomc_compile_report_options_t"]
+        [::std::mem::size_of::<loomc_compile_report_options_t>() - 48usize];
+    ["Alignment of loomc_compile_report_options_t"]
+        [::std::mem::align_of::<loomc_compile_report_options_t>() - 8usize];
+    ["Offset of field: loomc_compile_report_options_t::type_"]
+        [::std::mem::offset_of!(loomc_compile_report_options_t, type_) - 0usize];
+    ["Offset of field: loomc_compile_report_options_t::structure_size"]
+        [::std::mem::offset_of!(loomc_compile_report_options_t, structure_size) - 8usize];
+    ["Offset of field: loomc_compile_report_options_t::next"]
+        [::std::mem::offset_of!(loomc_compile_report_options_t, next) - 16usize];
+    ["Offset of field: loomc_compile_report_options_t::mode"]
+        [::std::mem::offset_of!(loomc_compile_report_options_t, mode) - 24usize];
+    ["Offset of field: loomc_compile_report_options_t::identifier"]
+        [::std::mem::offset_of!(loomc_compile_report_options_t, identifier) - 32usize];
+};
+impl Default for loomc_compile_report_options_t {
     fn default() -> Self {
         let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
         unsafe {
@@ -1520,6 +1627,173 @@ impl Default for loomc_amdgpu_profile_options_t {
         }
     }
 }
+#[doc = " 32-bit int; 64-bit long and pointers."]
+pub const LOOMC_CXX_DATA_MODEL_LP64: loomc_cxx_data_model_e = 0;
+#[doc = " 32-bit int and long; 64-bit pointers."]
+pub const LOOMC_CXX_DATA_MODEL_LLP64: loomc_cxx_data_model_e = 1;
+#[doc = " 32-bit int, long, and pointers."]
+pub const LOOMC_CXX_DATA_MODEL_ILP32: loomc_cxx_data_model_e = 2;
+#[doc = " Source integer and pointer layout, independent of the importing process."]
+pub type loomc_cxx_data_model_e = ::std::os::raw::c_uint;
+#[doc = " Source integer and pointer layout, independent of the importing process."]
+pub use self::loomc_cxx_data_model_e as loomc_cxx_data_model_t;
+#[doc = " Permit approximate mathematical functions (Loom's AFN contract)."]
+pub const LOOMC_CXX_IMPORT_FLAG_APPROXIMATE_FUNCTIONS: loomc_cxx_import_flag_bits_e = 1;
+#[doc = " Omit the embedded system include root; use caller paths/providers only."]
+pub const LOOMC_CXX_IMPORT_FLAG_NO_BUILTIN_INCLUDES: loomc_cxx_import_flag_bits_e = 2;
+#[doc = " Explicit source permissions and include delivery policy."]
+pub type loomc_cxx_import_flag_bits_e = ::std::os::raw::c_uint;
+#[doc = " Bitmask of loomc_cxx_import_flag_bits_t values."]
+pub type loomc_cxx_import_flags_t = u32;
+#[doc = " Resolves a candidate include path to immutable source bytes.\n\n Paths follow ordinary quote, user, system, and include_next search rules.\n Candidate paths use generic '/' separators on every host.\n Return OK with a NULL output for a missing candidate. Other failures return\n status with a NULL output. A found source uses UNKNOWN format; its contents\n supply the header and the candidate path determines include identity.\n\n @param user_data Caller state from the provider descriptor.\n @param path Candidate path borrowed for this callback.\n @param out_source Receives one retained source or NULL for a missing path.\n @return OK for found/missing candidates, or a provider failure status.\n\n @ownership\n A successful non-NULL output transfers one retained reference to the\n importer. A cache can retain its own reference and return another. The\n importer releases the reference once it has copied the bytes.\n\n @thread_safety\n Calls are synchronous and sequential within one import. A provider shared\n by concurrent imports must synchronize its own mutable state."]
+pub type loomc_cxx_source_provider_fn_t = ::std::option::Option<
+    unsafe extern "C" fn(
+        user_data: *mut ::std::os::raw::c_void,
+        path: loomc_string_view_t,
+        out_source: *mut *mut loomc_source_t,
+    ) -> loomc_status_t,
+>;
+#[doc = " Optional source provider replacing filesystem include reads."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct loomc_cxx_source_provider_t {
+    #[doc = " Callback, or NULL to read ordinary filesystem paths."]
+    pub fn_: loomc_cxx_source_provider_fn_t,
+    #[doc = " Caller-owned state borrowed until import returns."]
+    pub user_data: *mut ::std::os::raw::c_void,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of loomc_cxx_source_provider_t"]
+        [::std::mem::size_of::<loomc_cxx_source_provider_t>() - 16usize];
+    ["Alignment of loomc_cxx_source_provider_t"]
+        [::std::mem::align_of::<loomc_cxx_source_provider_t>() - 8usize];
+    ["Offset of field: loomc_cxx_source_provider_t::fn_"]
+        [::std::mem::offset_of!(loomc_cxx_source_provider_t, fn_) - 0usize];
+    ["Offset of field: loomc_cxx_source_provider_t::user_data"]
+        [::std::mem::offset_of!(loomc_cxx_source_provider_t, user_data) - 8usize];
+};
+impl Default for loomc_cxx_source_provider_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Preprocessor definition applied after the frontend's predefined macros."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct loomc_cxx_define_t {
+    #[doc = " Macro name, including parameters for a function-like macro."]
+    pub name: loomc_string_view_t,
+    #[doc = " Replacement token text; empty defines an empty macro."]
+    pub value: loomc_string_view_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of loomc_cxx_define_t"][::std::mem::size_of::<loomc_cxx_define_t>() - 32usize];
+    ["Alignment of loomc_cxx_define_t"][::std::mem::align_of::<loomc_cxx_define_t>() - 8usize];
+    ["Offset of field: loomc_cxx_define_t::name"]
+        [::std::mem::offset_of!(loomc_cxx_define_t, name) - 0usize];
+    ["Offset of field: loomc_cxx_define_t::value"]
+        [::std::mem::offset_of!(loomc_cxx_define_t, value) - 16usize];
+};
+impl Default for loomc_cxx_define_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Configuration for one source translation unit.\n\n Zero initialization selects C++26, LP64, strict math, visible definitions\n as roots, and the embedded facade system root when built into the library.\n All strings, arrays, and callback state are borrowed until import returns."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct loomc_cxx_import_options_t {
+    #[doc = " Structure type; LOOMC_STRUCTURE_TYPE_CXX_IMPORT_OPTIONS when nonzero."]
+    pub type_: loomc_structure_type_t,
+    #[doc = " Size of this structure in bytes, or zero."]
+    pub structure_size: loomc_host_size_t,
+    #[doc = " Reserved extension chain. Must be NULL."]
+    pub next: *const ::std::os::raw::c_void,
+    #[doc = " Frontend standard spelling, such as c23 or c++26. Empty selects c++26."]
+    pub standard: loomc_string_view_t,
+    #[doc = " Source ABI triple, independent of output target selection."]
+    pub triple: loomc_string_view_t,
+    #[doc = " Source integer and pointer layout."]
+    pub data_model: loomc_cxx_data_model_t,
+    #[doc = " Source permissions and include delivery flags."]
+    pub flags: loomc_cxx_import_flags_t,
+    #[doc = " Optional include provider; embedded headers are resolved separately."]
+    pub source_provider: loomc_cxx_source_provider_t,
+    #[doc = " User include directories, searched after quoted local includes."]
+    pub include_paths: *const loomc_string_view_t,
+    #[doc = " Number of user include directories."]
+    pub include_path_count: loomc_host_size_t,
+    #[doc = " System include directories, searched before the embedded system root."]
+    pub system_include_paths: *const loomc_string_view_t,
+    #[doc = " Number of system include directories."]
+    pub system_include_path_count: loomc_host_size_t,
+    #[doc = " Ordered macro definitions."]
+    pub defines: *const loomc_cxx_define_t,
+    #[doc = " Number of macro definitions."]
+    pub define_count: loomc_host_size_t,
+    #[doc = " Qualified source function names to export. Empty exports visible concrete\n definitions; reached helpers remain private when roots are explicit."]
+    pub roots: *const loomc_string_view_t,
+    #[doc = " Number of explicitly selected roots."]
+    pub root_count: loomc_host_size_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of loomc_cxx_import_options_t"]
+        [::std::mem::size_of::<loomc_cxx_import_options_t>() - 144usize];
+    ["Alignment of loomc_cxx_import_options_t"]
+        [::std::mem::align_of::<loomc_cxx_import_options_t>() - 8usize];
+    ["Offset of field: loomc_cxx_import_options_t::type_"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, type_) - 0usize];
+    ["Offset of field: loomc_cxx_import_options_t::structure_size"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, structure_size) - 8usize];
+    ["Offset of field: loomc_cxx_import_options_t::next"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, next) - 16usize];
+    ["Offset of field: loomc_cxx_import_options_t::standard"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, standard) - 24usize];
+    ["Offset of field: loomc_cxx_import_options_t::triple"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, triple) - 40usize];
+    ["Offset of field: loomc_cxx_import_options_t::data_model"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, data_model) - 56usize];
+    ["Offset of field: loomc_cxx_import_options_t::flags"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, flags) - 60usize];
+    ["Offset of field: loomc_cxx_import_options_t::source_provider"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, source_provider) - 64usize];
+    ["Offset of field: loomc_cxx_import_options_t::include_paths"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, include_paths) - 80usize];
+    ["Offset of field: loomc_cxx_import_options_t::include_path_count"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, include_path_count) - 88usize];
+    ["Offset of field: loomc_cxx_import_options_t::system_include_paths"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, system_include_paths) - 96usize];
+    ["Offset of field: loomc_cxx_import_options_t::system_include_path_count"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, system_include_path_count) - 104usize];
+    ["Offset of field: loomc_cxx_import_options_t::defines"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, defines) - 112usize];
+    ["Offset of field: loomc_cxx_import_options_t::define_count"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, define_count) - 120usize];
+    ["Offset of field: loomc_cxx_import_options_t::roots"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, roots) - 128usize];
+    ["Offset of field: loomc_cxx_import_options_t::root_count"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, root_count) - 136usize];
+};
+impl Default for loomc_cxx_import_options_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
 pub struct Loomc {
     __library: ::libloading::Library,
     pub loomc_allocator_system: unsafe extern "C" fn() -> loomc_allocator_t,
@@ -1545,6 +1819,8 @@ pub struct Loomc {
         out_source: *mut *mut loomc_source_t,
     ) -> loomc_status_t,
     pub loomc_source_release: unsafe extern "C" fn(source: *mut loomc_source_t),
+    pub loomc_source_identifier:
+        unsafe extern "C" fn(source: *const loomc_source_t) -> loomc_string_view_t,
     pub loomc_context_create: unsafe extern "C" fn(
         options: *const loomc_context_options_t,
         allocator: loomc_allocator_t,
@@ -1573,6 +1849,12 @@ pub struct Loomc {
     pub loomc_workspace_trim: unsafe extern "C" fn(workspace: *mut loomc_workspace_t),
     pub loomc_workspace_release: unsafe extern "C" fn(workspace: *mut loomc_workspace_t),
     pub loomc_module_release: unsafe extern "C" fn(module: *mut loomc_module_t),
+    pub loomc_module_serialize_to_source: unsafe extern "C" fn(
+        module: *const loomc_module_t,
+        options: *const loomc_module_serialize_options_t,
+        allocator: loomc_allocator_t,
+        out_source: *mut *mut loomc_source_t,
+    ) -> loomc_status_t,
     pub loomc_pass_program_release: unsafe extern "C" fn(pass_program: *mut loomc_pass_program_t),
     pub loomc_compiler_create: unsafe extern "C" fn(
         context: *mut loomc_context_t,
@@ -1652,6 +1934,25 @@ pub struct Loomc {
         allocator: loomc_allocator_t,
         out_profile: *mut *mut loomc_target_profile_t,
     ) -> loomc_status_t,
+    pub loomc_target_environment_create_xdna: unsafe extern "C" fn(
+        allocator: loomc_allocator_t,
+        out_target_environment: *mut *mut loomc_target_environment_t,
+    ) -> loomc_status_t,
+    pub loomc_target_profile_create_xdna: unsafe extern "C" fn(
+        target_environment: *mut loomc_target_environment_t,
+        device_key: loomc_string_view_t,
+        allocator: loomc_allocator_t,
+        out_profile: *mut *mut loomc_target_profile_t,
+    ) -> loomc_status_t,
+    pub loomc_module_import_cxx: unsafe extern "C" fn(
+        context: *mut loomc_context_t,
+        workspace: *mut loomc_workspace_t,
+        source: *const loomc_source_t,
+        options: *const loomc_cxx_import_options_t,
+        allocator: loomc_allocator_t,
+        out_module: *mut *mut loomc_module_t,
+        out_result: *mut *mut loomc_result_t,
+    ) -> loomc_status_t,
 }
 impl Loomc {
     pub unsafe fn new<P>(path: P) -> Result<Self, ::libloading::Error>
@@ -1679,6 +1980,9 @@ impl Loomc {
         let loomc_status_format = __library.get(b"loomc_status_format\0").map(|sym| *sym)?;
         let loomc_source_create = __library.get(b"loomc_source_create\0").map(|sym| *sym)?;
         let loomc_source_release = __library.get(b"loomc_source_release\0").map(|sym| *sym)?;
+        let loomc_source_identifier = __library
+            .get(b"loomc_source_identifier\0")
+            .map(|sym| *sym)?;
         let loomc_context_create = __library.get(b"loomc_context_create\0").map(|sym| *sym)?;
         let loomc_context_release = __library.get(b"loomc_context_release\0").map(|sym| *sym)?;
         let loomc_result_release = __library.get(b"loomc_result_release\0").map(|sym| *sym)?;
@@ -1701,6 +2005,9 @@ impl Loomc {
             .get(b"loomc_workspace_release\0")
             .map(|sym| *sym)?;
         let loomc_module_release = __library.get(b"loomc_module_release\0").map(|sym| *sym)?;
+        let loomc_module_serialize_to_source = __library
+            .get(b"loomc_module_serialize_to_source\0")
+            .map(|sym| *sym)?;
         let loomc_pass_program_release = __library
             .get(b"loomc_pass_program_release\0")
             .map(|sym| *sym)?;
@@ -1741,6 +2048,15 @@ impl Loomc {
         let loomc_target_profile_create_amdgpu = __library
             .get(b"loomc_target_profile_create_amdgpu\0")
             .map(|sym| *sym)?;
+        let loomc_target_environment_create_xdna = __library
+            .get(b"loomc_target_environment_create_xdna\0")
+            .map(|sym| *sym)?;
+        let loomc_target_profile_create_xdna = __library
+            .get(b"loomc_target_profile_create_xdna\0")
+            .map(|sym| *sym)?;
+        let loomc_module_import_cxx = __library
+            .get(b"loomc_module_import_cxx\0")
+            .map(|sym| *sym)?;
         Ok(Loomc {
             __library,
             loomc_allocator_system,
@@ -1751,6 +2067,7 @@ impl Loomc {
             loomc_status_format,
             loomc_source_create,
             loomc_source_release,
+            loomc_source_identifier,
             loomc_context_create,
             loomc_context_release,
             loomc_result_release,
@@ -1763,6 +2080,7 @@ impl Loomc {
             loomc_workspace_trim,
             loomc_workspace_release,
             loomc_module_release,
+            loomc_module_serialize_to_source,
             loomc_pass_program_release,
             loomc_compiler_create,
             loomc_compile_module,
@@ -1781,6 +2099,9 @@ impl Loomc {
             loomc_linker_release,
             loomc_target_environment_create_amdgpu,
             loomc_target_profile_create_amdgpu,
+            loomc_target_environment_create_xdna,
+            loomc_target_profile_create_xdna,
+            loomc_module_import_cxx,
         })
     }
     #[doc = " Returns a process-global system allocator.\n\n @return Allocator backed by the process heap."]
@@ -1834,6 +2155,13 @@ impl Loomc {
     #[doc = " Releases `source` from one owner.\n\n @param source Source to release. Passing `NULL` is allowed.\n\n @thread_safety\n Retain/release operations are safe to perform from multiple threads. The\n source is destroyed when the final reference is released."]
     pub unsafe fn loomc_source_release(&self, source: *mut loomc_source_t) {
         (self.loomc_source_release)(source)
+    }
+    #[doc = " Returns the source identifier.\n\n @param source Source to inspect.\n @return Borrowed identifier view owned by `source`.\n\n @lifetime\n The returned view remains valid until `source` is released."]
+    pub unsafe fn loomc_source_identifier(
+        &self,
+        source: *const loomc_source_t,
+    ) -> loomc_string_view_t {
+        (self.loomc_source_identifier)(source)
     }
     #[doc = " Creates a reusable Loom API context.\n\n @param options Context options, or `NULL` for defaults.\n @param allocator Host allocator used for context-owned storage.\n @param out_context Receives one retained context on success.\n @return OK when the context was created.\n\n @ownership\n The caller owns the returned reference and releases it with\n `loomc_context_release`.\n\n @thread_safety\n The returned context is immutable and may be shared across prepared tools\n and worker threads."]
     pub unsafe fn loomc_context_create(
@@ -1906,6 +2234,16 @@ impl Loomc {
     #[doc = " Releases an opaque module from one owner.\n\n @param module Module to release. Passing `NULL` is allowed.\n\n @thread_safety\n Retain/release operations are intended to be safe from multiple threads. The\n module is destroyed when the final reference is released."]
     pub unsafe fn loomc_module_release(&self, module: *mut loomc_module_t) {
         (self.loomc_module_release)(module)
+    }
+    #[doc = " Serializes a module into an immutable source handle.\n\n @param module Module to serialize.\n @param options Serialization options. `NULL` selects textual `.loom`.\n @param allocator Host allocator used for source-owned storage.\n @param out_source Receives one retained source on success.\n @return OK when serialization succeeded.\n\n @ownership\n The caller owns the returned source and releases it with\n `loomc_source_release`. Serialized bytes are owned by that source and remain\n valid until the source is released.\n\n @par Resolved Targets\n When a prior compilation retained resolved function targets outside the\n module IR, serialization first projects them into a derived module without\n mutating the source. The resulting source is self-contained and can be\n deserialized in a fresh context without the original profiles.\n Serialization fails when an exact target definition cannot be materialized;\n it never silently emits the less-specific authored target.\n\n @thread_safety\n Serialization is read-only with respect to `module`. Concurrent\n serialization of the same module is valid when the caller guarantees that no\n mutating operation is active."]
+    pub unsafe fn loomc_module_serialize_to_source(
+        &self,
+        module: *const loomc_module_t,
+        options: *const loomc_module_serialize_options_t,
+        allocator: loomc_allocator_t,
+        out_source: *mut *mut loomc_source_t,
+    ) -> loomc_status_t {
+        (self.loomc_module_serialize_to_source)(module, options, allocator, out_source)
     }
     #[doc = " Releases a pass program from one owner.\n\n @param pass_program Pass program to release. Passing `NULL` is allowed.\n\n @thread_safety\n Retain/release operations are safe from multiple threads. The pass program\n is destroyed when the final reference is released."]
     pub unsafe fn loomc_pass_program_release(&self, pass_program: *mut loomc_pass_program_t) {
@@ -2079,6 +2417,44 @@ impl Loomc {
             options,
             allocator,
             out_profile,
+        )
+    }
+    #[doc = " Creates a target environment containing the AIE2P XDNA compiler and emitter.\n\n @param allocator Host allocator used for target-environment storage.\n @param out_target_environment Receives one retained environment on success.\n @return OK when the target environment was created.\n\n @ownership\n The caller releases the returned reference with\n `loomc_target_environment_release`. The environment can be shared by\n compiler instances and workspaces across JIT invocations."]
+    pub unsafe fn loomc_target_environment_create_xdna(
+        &self,
+        allocator: loomc_allocator_t,
+        out_target_environment: *mut *mut loomc_target_environment_t,
+    ) -> loomc_status_t {
+        (self.loomc_target_environment_create_xdna)(allocator, out_target_environment)
+    }
+    #[doc = " Creates an immutable profile for a supported AIE2P device key.\n\n The key identifies the array geometry and register/configuration ABI, for\n example `amd.xdna.strix_halo.17f0_11`. This is an offline lookup; it does\n not probe hardware. Unknown keys fail instead of assuming a compatible\n device. Supply the profile through ordinary\n `loomc_target_specialization_options_t` function or target-declaration\n bindings. The compiled function versions retain their device facts through\n emission, so no separate emit profile is needed.\n\n @param target_environment Environment containing the AIE2P target package.\n @param device_key Exact device key; the view need not be NUL-terminated.\n @param allocator Host allocator used for the profile handle.\n @param out_profile Receives one retained profile on success, NULL on\n failure.\n @return OK on success; invalid argument for an unsupported key or\n environment.\n\n @ownership\n The caller releases the returned reference with\n `loomc_target_profile_release`. The profile copies the device key and\n retains the target environment. The profile is immutable and may be reused\n across threads and compilations."]
+    pub unsafe fn loomc_target_profile_create_xdna(
+        &self,
+        target_environment: *mut loomc_target_environment_t,
+        device_key: loomc_string_view_t,
+        allocator: loomc_allocator_t,
+        out_profile: *mut *mut loomc_target_profile_t,
+    ) -> loomc_status_t {
+        (self.loomc_target_profile_create_xdna)(
+            target_environment,
+            device_key,
+            allocator,
+            out_profile,
+        )
+    }
+    #[doc = " Imports C/C++ source into a verified High IR module, without cleanup passes.\n\n @param context Immutable context containing the core dialects.\n @param workspace Workspace backing the returned module's arena storage.\n @param source Source with UNKNOWN format. Its identifier labels diagnostics\n and supplies the main file's path for quoted include lookup.\n @param options Source configuration, or NULL for defaults.\n @param allocator Host allocator for public handles and temporary adapters.\n @param out_module Receives one owned module on successful source admission.\n @param out_result Receives one owned result with retained diagnostics.\n @return OK for successful import or diagnosed source rejection. Rejection\n returns a failed result and NULL module. Infrastructure/API failures return\n non-OK status and NULL outputs. C++ exceptions never cross this boundary.\n\n @ownership\n Release outputs with loomc_module_release and loomc_result_release. The\n module retains its context/workspace. The result owns diagnostic contents.\n\n @lifetime\n Source/include bytes, options, and callback state may be released on return.\n Neither the module nor the result retains borrowed frontend or AST storage.\n\n @thread_safety\n Each import requires exclusive access to its workspace. Concurrent imports\n may share an immutable context and immutable source handles."]
+    pub unsafe fn loomc_module_import_cxx(
+        &self,
+        context: *mut loomc_context_t,
+        workspace: *mut loomc_workspace_t,
+        source: *const loomc_source_t,
+        options: *const loomc_cxx_import_options_t,
+        allocator: loomc_allocator_t,
+        out_module: *mut *mut loomc_module_t,
+        out_result: *mut *mut loomc_result_t,
+    ) -> loomc_status_t {
+        (self.loomc_module_import_cxx)(
+            context, workspace, source, options, allocator, out_module, out_result,
         )
     }
 }

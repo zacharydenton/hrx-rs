@@ -9,14 +9,13 @@ pub mod benchmark;
 mod buffer_pool;
 pub mod bundle;
 mod dependency_frontier;
+pub mod fabric;
 pub mod image;
 pub mod inference;
 pub mod jobs;
 pub mod plan_cache;
 pub mod residency;
 mod runtime;
-#[allow(dead_code)]
-mod sys;
 mod target;
 pub mod tensor;
 pub use access_graph::{AccessGraph, AccessView};
@@ -32,7 +31,7 @@ pub use execution::{Access, Completion, Runtime};
 pub mod gpu {
     pub use crate::runtime::*;
 }
-pub use target::{TARGET_FAMILY, TARGET_KEY, Target};
+pub use target::{TARGET_KEY, Target};
 pub mod loom;
 #[cfg(feature = "npu")]
 pub mod npu;

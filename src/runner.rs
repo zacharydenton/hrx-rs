@@ -11,7 +11,7 @@
 //! index), cycling between timed launches. This measures streaming weight traffic instead of repeatedly
 //! hitting one matrix.
 //!
-//! It runs on libhrx rather than HIP, so a kernel test needs no ROCm headers or hipcc. Timing is wall
+//! It runs on libamdf, so a kernel test needs no ROCm headers or hipcc. Timing is wall
 //! clock around a synchronised run of `--repeat` launches, reported as one JSON line on stdout for a
 //! harness to parse.
 use std::path::PathBuf;

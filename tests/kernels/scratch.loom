@@ -1,0 +1,34 @@
+amdgpu.target<gfx11-generic> @target {subgroup_size = 32}
+kernel.def target(@target) export("scratch") @scratch() {
+  %one = index.constant 1 : index
+  %threads = index.constant 64 : index
+  kernel.launch.config workgroups(%one, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%output: buffer, %indices: buffer) {
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %count = index.constant 64 : index
+  %zero_bytes = index.constant 0 : offset
+  %bytes = index.constant 256 : offset
+  %three = scalar.constant 3 : i32
+  %lane = kernel.workitem.id<x> : index
+  %lane_value = index.cast %lane : index to i32
+  %storage = buffer.alloca<private> align(16) %bytes : buffer
+  %values = buffer.view %storage[%zero_bytes] : buffer -> view<64xi32>
+  %out_global = buffer.assume.memory_space<global> %output : buffer
+  %out = buffer.view %out_global[%zero_bytes] : buffer -> view<64xi32>
+  %in_global = buffer.assume.memory_space<global> %indices : buffer
+  %in = buffer.view %in_global[%zero_bytes] : buffer -> view<64xi32>
+  scf.for %i = [%zero to %count step %one] {
+    %iv = index.cast %i : index to i32
+    %product = scalar.muli %iv, %three : i32
+    %value = scalar.addi %product, %lane_value : i32
+    view.store %value, %values[%i] : i32, view<64xi32>
+    scf.yield
+  }
+  %input = view.load %in[%lane] : view<64xi32> -> i32
+  %index = index.cast %input : i32 to index
+  %bounded = index.assume %index [range(%index, 0, 63)] : index
+  %selected = view.load %values[%bounded] : view<64xi32> -> i32
+  view.store %selected, %out[%lane] : i32, view<64xi32>
+  kernel.return
+}

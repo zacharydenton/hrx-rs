@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare two stream_bench executables, alternating process order on the same native runtime."""
+"""Compare two stream_bench executables, alternating process order with explicit native runtime directories."""
 import argparse
 import json
 import os
@@ -10,6 +10,9 @@ import subprocess
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('baseline', type=Path)
 parser.add_argument('candidate', type=Path)
+parser.add_argument('--start-pair', type=int, default=0)
+parser.add_argument('--baseline-runtime', type=Path)
+parser.add_argument('--candidate-runtime', type=Path)
 parser.add_argument('--runs', type=int, default=5)
 parser.add_argument('--samples', type=int, default=31)
 parser.add_argument('--max-ratio', type=float, default=1.05, help='reference cost ratio; enforced only with --strict')
@@ -21,10 +24,16 @@ environment = os.environ.copy()
 environment['HRX_BENCH_SAMPLES'] = str(args.samples)
 executables = {'baseline': args.baseline.resolve(), 'candidate': args.candidate.resolve()}
 measurements = {arm: [] for arm in executables}
-for pair in range(args.runs):
+for pair in range(args.start_pair, args.start_pair + args.runs):
     for arm in (['baseline', 'candidate'] if pair % 2 == 0 else ['candidate', 'baseline']):
-        result = subprocess.run([str(executables[arm])], env=environment, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        arm_environment = environment.copy()
+        runtime = getattr(args, arm + '_runtime')
+        if runtime:
+            arm_environment['HRX_RUNTIME_DIR'] = str(runtime.resolve())
+            for key in ['HRX_AMDF_LIBRARY', 'HRX_FABRIC_LIBRARY', 'HRX_LOOM_LIBRARY']:
+                arm_environment.pop(key, None)
+        result = subprocess.run([str(executables[arm])], env=arm_environment, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=60)
         record = json.loads(result.stdout)
         measurements[arm].append(record)
         print(json.dumps({'pair': pair, 'arm': arm, 'metrics': record}), flush=True)

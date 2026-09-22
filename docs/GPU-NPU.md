@@ -1,230 +1,89 @@
-# Coordinated GPU and NPU execution
+# Native GPU and NPU execution
 
-`hrx::execution` is the coordinated API. `hrx::gpu` exposes the existing low-level
-GPU API; its historical root-level names remain available. The old
-`hrx::npu::Shared` API has been replaced. It could not safely retain memory across
-BO clones or coordinate host access with pending device work.
-
-Create a `Runtime`, load trusted GPU/NPU specializations, allocate `Buffer`s, and
-build a `Graph`. `prepare()` creates native GPU graphs, NPU run objects and bounded
-completion slots. `submit()` returns a `Completion` supporting `wait()`,
-`wait_timeout()`, `is_complete()` and standard Rust `Future` without Tokio.
-
-```rust,no_run
-use hrx::execution::{MemoryPlacement, Runtime};
-# fn main() -> hrx::Result<()> {
-let runtime = Runtime::new()?;
-let buffer = runtime.allocate(4096, MemoryPlacement::GpuLocal)?;
-let mut graph = runtime.graph();
-graph.fill(buffer.view(), 7)?;
-let executable = graph.prepare()?;
-executable.submit()?.wait()?;
-# Ok(())
-# }
-```
-
-For NPU work, load an xclbin through `runtime.npu(0)?.load_program(path)` and bind
-its instruction bytes using `program.kernel(instructions, contract)`. Both are
-unsafe trust boundaries. Compiling code or verifying a checksum does not prove
-that its DMA descriptors obey the declared argument extents. Each
-`BindingContract` declares bytes, alignment, access and layout; scalar bytes and
-GPU launch dimensions are fixed when the specialization is loaded. Native buffer
-addresses are checked against alignment requirements during graph construction.
-
-`MemoryPlacement::Shared(program.clone())` allocates GPU-visible memory, exports
-it as a dma-buf and imports it into XRT once. Nonzero HSA export offsets are
-preserved with retained sub-buffer mappings. The same buffer binds directly to
-GPU arithmetic kernels and NPU kernels. `NpuLocal(program.clone())` is host-mapped
-NPU storage; `GpuLocal` avoids NPU setup for GPU-only work. Unsupported sharing
-returns an error. Layout conversion and explicit copies remain visible operations.
-
-Use `map_read()` and `map_write()` on host-mapped allocations. Their guards
-retain access until dropped. Blocking mappings wait for pending device work;
-`try_map_*` returns `Busy`. A conflicting live host guard returns `Busy` rather
-than waiting, including when a graph tries to use its allocation. Do not keep a
-mapping live while submitting work that needs the same bytes.
-
-The scheduler infers dependencies from overlapping reads/writes, including
-conflicts across prepared graphs and repeated submissions. Cross-engine cache
-maintenance currently reserves the entire shared allocation. Use separate
-allocations for independently pipelined chunks. Two workers allow one native GPU region and one native NPU region in flight.
-Either worker can continue a ready chain across devices, avoiding an unnecessary
-thread handoff while preserving independent progress on the other engine. Serial
-chains wake one worker; independent regions wake its peer. Host mapping waiters
-have a separate wakeup path. Blocking `Completion::wait()` can execute ready
-regions from its own submission, preserving the same dependency and engine
-limits. `Future::poll` and `wait_timeout()` leave device execution to workers.
-Cross-submission reservations are currently
-at whole-graph granularity; they favor correctness over maximum overlap between
-partially dependent graphs.
-
-A prepared graph has two completion slots by default. Increase
-`RuntimeOptions::graph_slots` for a deeper queue. A retained completion observer
-keeps its slot reserved even after completion; drop completed observers to recycle
-slots. Submission capacity exhaustion is `Busy`, never an implicit allocation.
-Dropping an observer detaches it. `wait_timeout()` does not cancel execution;
-`cancel()` prevents unscheduled nodes and drains running work. NPU native waits
-have a 60-second watchdog and attempt a synchronous abort on failure. If native
-completion becomes uncertain, allocations are poisoned and quarantined until
-process exit; the library does not free memory beneath DMA.
-
-`Runtime::statistics()` reports allocations, imports, submission/completion counts,
-explicit copy bytes, cache-maintenance extents and retained memory. These counters
-cover the coordinated API, not calls through the low-level GPU or raw XRT APIs.
+Version 0.8 uses libamdf for both engines. Enable `npu` for the tracked XDNA
+execution API; Loom compilation for both targets is always available. The
+qualified hardware is gfx1151 and Strix Halo NPU5 (`17f0`, revision `11`) on
+Linux x86_64. Other profiles fail explicitly at device admission.
 
 ## Native setup
 
-Cargo builds and rustdoc need no XRT installation, Python, ROCm SDK or C++ compiler.
-Install the CLI with GPU and NPU support:
-
-```bash
-cargo install --path . --locked --features npu
+```sh
+cargo install hrx-rs --version 0.8.0 --locked --features npu
 hrx prepare
 hrx doctor
 ```
 
-These commands use the current source checkout. Omit `--features npu` for
-GPU-only builds. The native runtimes and corresponding sources are published in
-the [GPU release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260922-hrx-update)
-and [NPU release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260910-gpu-npu).
+One verified archive supplies libamdf, the executable bridge, and Loom.
+The host supplies drivers, firmware, permissions, glibc 2.43+, and compatible
+C/C++ runtimes. No ROCm SDK, XRT, Python, IRON, or external NPU compiler is used.
+For offline installation, use `HRX_OFFLINE=1 hrx prepare native.tar.gz` with the
+archive matching `bundle.json`. `HRX_RUNTIME_DIR` selects a trusted local build;
+`HRX_AMDF_LIBRARY`, `HRX_FABRIC_LIBRARY`, and `HRX_LOOM_LIBRARY` override individual
+libraries. Overrides bypass distribution integrity checks.
 
-`hrx prepare` downloads and verifies both manifests: `bundle.json` contains GPU
-interop ABI 1 and Loom, and `npu-bundle.json` contains the NPU shim, matching XRT
-core libraries, the XDNA plugin and libuuid. APIs also provision their runtime
-on first use. Precompiled NPU programs require no IRON, Python, vendor ONNX
-Runtime, Ryzen AI SDK or `xdna-vision` installation. NPU kernel compilation is
-an optional, separately configured toolchain as described below.
+## Compilation
 
-The host still supplies Linux x86_64, its normal C/C++ runtime libraries,
-`amdgpu`/KFD, the `amdxdna` kernel driver, NPU firmware and device permissions.
-These are system prerequisites; Cargo cannot supply kernel drivers or firmware.
-The NPU binaries are built against Ubuntu 26.04 (glibc 2.43 and GCC 15 runtime).
-The GPU/Loom libraries are also built against Ubuntu 26.04.
+`loom::Compiler::for_target(None, &Target::xdna())` creates an offline compiler
+for the exact NPU profile. Compile a pipeline export with `Specialization` and
+load its `.xdna` artifact through `execution::NpuDevice::load_artifact`.
+Supply the column count and a trusted `KernelContract` describing buffer
+lengths, alignment, and access modes. Native images establish complete device
+state on each invocation, including when contexts time-share the array.
 
-For an offline install, provide the two matching archives:
+`CxxSource` supplies named C23/C++26 translation units and explicit virtual
+headers. `Compiler::sources` links them with Loom modules. Supported vector
+workers can be written in C++ while Loom supplies the XDNA pipeline. There is
+no implicit host filesystem include search. Unsupported language/target
+operations produce compiler diagnostics with source identity.
 
-```bash
-HRX_OFFLINE=1 hrx prepare /path/to/gpu.tar.gz /path/to/npu.tar.gz
-HRX_OFFLINE=1 hrx doctor
+Request `ReportMode::Summary` or `Details` on a specialization. Reports retain
+the native JSON schema, compiler identity, target, backend, and processor mode.
+Missing resource fields remain unknown. `hrx report show` and `report diff`
+inspect saved reports and reject comparisons with incompatible identities.
+CU/WGP policies apply to AMDGPU only.
+
+## Memory and scheduling
+
+`execution::Runtime` owns GPU/NPU lanes and prepares reusable dependency graphs.
+Use `MemoryPlacement::Shared(device)` for one backing accessible by both
+engines, or `NpuLocal(device)` for NPU storage. GPU-owned allocations are adopted
+through native dma-buf export/import. Aliases retain the original allocation,
+share access guards, and perform the required visibility transitions.
+Caller-owned GPU host-page registration is no longer exposed by `Stream`.
+
+Host map guards prevent conflicting device use. Graph contracts infer hazards;
+independent lanes can overlap within configured run capacity. Completion handles
+support waits and futures. A timeout does not cancel accepted native work or
+release its storage. Failed retirement or teardown quarantines the ownership
+chain. Submission hot paths reuse prepared native commands and buffers.
+
+Memory budgets cover declared buffers, model reservations, and executable image
+charges. They do not represent process RSS or driver/private queue overhead.
+Private workspace requirements must be included in a model reservation.
+
+Compiled code is trusted native code: loading and defining contracts are unsafe.
+Bounds checks validate image structure and binding ranges, not arbitrary program
+behavior. Do not load untrusted GPU/NPU programs.
+
+## Runnable validation
+
+```sh
+bash scripts/test-npu-hardware.sh
+cargo run --release --features npu --example shared_roundtrip
+cargo run --release --features npu --example shared_bench
+cargo run --release --features npu --example gemm_pipeline
 ```
 
-Passing only the GPU archive still resolves the NPU runtime from its cache or
-download URL. Set `HRX_OFFLINE=1` to forbid downloads. The GPU directory is printed
-to stdout as soon as it is ready; a subsequent NPU failure reports its error on
-stderr and returns a nonzero exit status, leaving the verified GPU cache usable.
+The default GEMM example runs an included 8x8 BF16/BFP16 native matrix fixture
+between GPU preprocessing and a GPU epilogue, including concurrent requests.
+It is a correctness and scheduling example, not a large model GEMM benchmark.
+`tests/native_execution.rs` separately checks nonuniform matrices against a CPU
+oracle and mixed C++/Loom NPU workers with changed inputs. Launch buffer lists
+must contain only used bindings: the pinned compiler's unused-middle-binding
+relocation is rejected by the native image validator.
 
-`hrx prepare-npu` prepares only the NPU runtime; its optional `MANIFEST [ARCHIVE]`
-arguments support custom components. `HRX_NPU_BUNDLE_MANIFEST` selects a mirror or
-custom pinned runtime, and `HRX_OFFLINE=1` forbids network provisioning.
-`HRX_NPU_RUNTIME_DIR` and `HRX_RUNTIME_DIR` select trusted development runtimes.
-`hrx doctor` reports accessible devices and probes installed runtimes without
-provisioning. It checks the NPU shim ABI and linked dependencies; loading a
-particular program remains a separate hardware check.
+## Migration from 0.7
 
-Maintainers can rebuild with `scripts/build-npu-runtime.sh`; see
-[native/NPU-RELEASE.md](../native/NPU-RELEASE.md). To develop only the shim with
-installed XRT headers/libraries, use `scripts/build-npu-shim.sh`. GPU development
-overlays remain available through `scripts/build-interop-overlay.py`.
-
-## NPU compilation
-
-Enable `npu`. `npu::compiler::Compiler` runs an IRON generator or AIE MLIR
-project in a private subprocess workspace. It never initializes a GPU or NPU.
-Compiler input generators are trusted host programs, not sandboxed code.
-
-Pin an installed toolchain in its configured environment:
-
-```bash
-python3 scripts/pin-npu-toolchain.py \
-  --python /absolute/ironenv/bin/python \
-  --aiecc /absolute/ironenv/bin/aiecc \
-  --backend Peano --output toolchain.json
-cargo run --features npu --example compile_npu -- toolchain.json 262144
-```
-
-For Chess, source its installed environment first and select `--backend Chess`.
-The pinning tool inventories its support files and records child-only environment
-settings. Add `--identity-root` for dependencies outside the virtual environment.
-No proprietary compiler is downloaded or redistributed. Project generators must
-honor their selected backend (`HRX_AIE_BACKEND`) and declare all source/header
-inputs. Incomplete dependency declarations require `cacheable: false`.
-
-`Compiler::compile_all()` bounds concurrency and preserves input order. Cache
-identities include source contents, dependencies, specialization arguments,
-contract and pinned compiler/environment identities. Hits verify output digests;
-changed tools are rejected. Failed processes retain `build.log`; timeouts kill
-the compiler process group. Artifacts contain `x.xclbin`, `x.bin`, `manifest.json`,
-source snapshots and diagnostics. Load an artifact only after asserting its
-native-code contract. NPU artifact caching uses the shared kernel cache's `npu/`
-subdirectory and participates in `hrx gc`. Uncacheable artifacts own temporary
-workspaces that disappear when the last artifact handle is dropped.
-
-## Reproduction and qualification
-
-`native/npu/fixtures/passthrough.py` is pinned from MLIR-AIE commit `0d49a88`.
-Build it for `-d npu2 -n 262144`, then run:
-
-```bash
-cargo run --release --features npu --example shared_roundtrip -- \
-  PATH/x.xclbin PATH/x.bin 1048576
-HRX_TEST_NPU_DIR=PATH cargo test --release --all-features \
-  --test heterogeneous -- --ignored --test-threads=1
-```
-
-The hardware test runs GPU BF16 arithmetic, an NPU DMA program, then GPU BF16
-arithmetic, checking every element with alternating inputs across repeated
-executions. `shared_bench` measures real warm NPU dispatch latency. The ignored
-library test `heterogeneous_latency_against_direct_backend` alternates coordinated
-submissions with direct execution of the same prepared native regions, checks
-output, and verifies that allocation/import counts and copy bytes do not grow.
-These fixtures establish execution and coherence; they do not claim that every
-model benefits from using both devices.
-
-### Published runtime and alignment checks
-
-The coordinated `Graph::gpu` path requires the allocation-address query in interop
-ABI 1 even for `GpuLocal` buffers: checking view offsets alone does not prove base
-pointer alignment. The published GPU bundle pinned by this crate includes this query. The
-low-level `hrx::gpu` API and coordinated GPU fill/copy operations do not gain this
-requirement. No NPU device is required for coordinated GPU-only graphs.
-
-NPU host-only and imported buffers may be passed between resident program contexts
-on the same device when their memory banks match the argument. The graph validates
-those properties and retains both contexts; it does not require context identity.
-
-## Existing Stream code and GPU-only transfers
-
-`MemoryPlacement::HostVisible` provides coherent host-local storage without an
-NPU. Map it with the same guards used for shared storage, then record a graph
-copy into or out of `GpuLocal` memory. Mapping and submission retain their usual
-mutual-exclusion rules.
-
-`Runtime::adopt_gpu_kernel` retains an already-loaded GPU executable with its
-fixed contract. It does not reopen an artifact or copy its code. The unsafe
-`adopt_gpu_buffer` transfers an initialized allocation into the coordinated
-runtime; prior uses must have completed and old pointers or recordings must no
-longer access it. `Shared(program)` imports that allocation once into XRT.
-
-For incremental integrations, `Runtime::with_gpu_access` lends GPU views to a
-callback running on an existing Stream. Declare every access with `GpuAccess`.
-The runtime reserves whole allocations, waits for conflicting coordinated work,
-and establishes cache visibility before entering the callback. It drains the
-supplied Stream before releasing reservations, including on error or panic.
-Uncertain completion poisons and quarantines the allocations. The callback is
-unsafe because raw pointers and recorded uses must not escape onto later work
-or other streams. Use one callback for a complete GPU stage, rather than wrapping
-every dispatch and synchronizing after each kernel.
-
-Graph preparation now tracks interval frontiers and retains compact summaries
-for replay. Repeated writes form a chain rather than depending on every prior
-writer. Shared storage still reserves the entire allocation; separate pipeline
-slots must use separate allocations. `cargo run --release --example graph_prepare`
-compares construction with an explicit dependency chain.
-
-For Chess, source the installed compiler environment before running
-`scripts/pin-npu-toolchain.py --backend Chess`. The recorder preserves PATH
-precedence and captures the Chess data/include/library environment. If a local
-`xchesscc_wrapper` lives outside the virtualenv and `AIETOOLS_ROOT`, include its
-directory with `--identity-root`. The intrinsic wrapper shipped by MLIR-AIE must
-match the installed Chess release; record the toolchain after that setup is
-complete. Compiler binaries and license settings stay in the local manifest.
+Compiler API callers must replace boolean report arguments with `ReportMode`,
+serialize `CompileReport` with serde_json for text output, and include
+`processor_mode` when constructing `CompilerOptions` without struct defaults.

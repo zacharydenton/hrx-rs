@@ -8,24 +8,19 @@ Add the crate with Cargo; the runtime and compiler download automatically on
 first use, with pinned versions and verified hashes. GPU execution and Loom
 compilation need no Python environment, HIP headers, or `hipcc`.
 
-The **GPU runtime and Loom compiler together are a 7.6 MB download**. The optional
-**NPU runtime adds 4.3 MB**, including XRT. These are the compressed archives in
-the [current native release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260922-hrx-update),
-separate from Cargo dependencies and any model weights your application uses.
+The unified native bundle contains **libamdf, Loom, and the executable bridge**.
+It compiles and executes GPU and NPU programs without a vendor SDK or external
+compiler toolchain. Native libraries download only on first use.
 
 - **Build with Cargo:** no GPU SDK, C++ compiler, or native-library download at build time.
 - **Compile and reuse:** Loom kernels compile in process and share a verified disk cache across applications.
 - **Control execution:** owned buffers, ordered streams, events, and reusable graphs keep data and work on the device.
-- **Use the NPU too:** run precompiled XDNA2 programs without Python or a Ryzen AI SDK installation, and coordinate GPU/NPU work through one API.
+- **Use the NPU too:** compile and run native XDNA programs in process, and coordinate GPU/NPU work through one API.
 
 Tested on **AMD Strix Halo (`gfx1151`)**, on Linux x86_64. The host supplies the
 kernel drivers and compatible system libraries; see [requirements and setup](#cli-and-native-setup).
-Other AMD GPU targets, including `gfx1100` and `gfx90a`, are untested.
-`Target::new` validates architecture names and accepts both; it does not check
-hardware support. The bundled native libraries are built for `gfx1151`, so
-other targets may fail during device initialization, compilation, or executable
-loading. They require a compatible native runtime/compiler build, selected with
-`HRX_BUNDLE_MANIFEST` or the local library overrides below.
+The qualified NPU target is `amd.xdna.strix_halo.17f0_11`. Native device admission
+rejects other profiles. Ubuntu 26.04 is the distribution baseline.
 
 The package is `hrx-rs`; Rust imports and the primary CLI use `hrx`.
 Native licenses, source provenance, and rebuild instructions are documented in
@@ -67,18 +62,17 @@ that an application can index with hrxdb.
 The coordinated API is `hrx::execution`: owned shared buffers, checked kernel
 contracts, inferred dependencies, reusable GPU/NPU graphs, and completion handles
 that support blocking waits and Rust `Future`. `hrx::gpu` exposes the existing
-low-level GPU API. Enable `npu` for XDNA2 execution and integrated IRON/AIE
-compilation; Cargo builds need no native tools.
+low-level GPU API. Enable `npu` for native XDNA execution; Cargo builds need no native tools.
 
 `execution::Runtime` runs at most one region per upload, compute, download and
 NPU lane, even across independent graphs. Independent lanes can overlap when
 the hardware permits; memory hazards remain ordered across every lane.
 Increasing `RuntimeOptions::max_submissions` raises queue capacity only. The low-level
-`gpu::Stream::graph` API can use up to eight native workstreams.
+`gpu::Stream::graph` API batches independent dispatches and inserts dependency barriers.
 
 See [the GPU/NPU guide](docs/GPU-NPU.md) for the trust boundary, host mapping guards,
 shared native runtime setup, compiler pinning, and runnable hardware validation.
-The published GPU and NPU bundles include the matching shared-memory runtime.
+The unified bundle includes both native device backends.
 
 ## Use from Rust
 
@@ -86,7 +80,7 @@ Requires Rust 1.91 or later.
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.7.1", features = ["npu"] }
+hrx = { package = "hrx-rs", version = "0.8.0", features = ["npu"] }
 ```
 
 ```rust,no_run
@@ -113,7 +107,7 @@ Events coordinate streams. `Stream::graph` records work as a dependency graph:
 each operation names its predecessors, and `&[]` starts an independent branch.
 Pass branch endings directly to their consumer. `join` collects dependencies
 in an empty node, which adds a native partition and queue barrier. The runtime
-can schedule independent nodes on up to eight workstreams; the graph's shape
+can batch independent nodes without intervening barriers; the graph's shape
 and GPU resource use determine whether execution overlaps. Loading kernels,
 dispatching them, and sharing buffers across streams are unsafe: callers must
 validate code, arguments, memory access, and synchronization.
@@ -228,42 +222,30 @@ too.
 GPU execution requires Linux x86_64, the AMD `amdgpu`/KFD kernel driver,
 the system C/C++ runtimes and `libatomic`, and access to `/dev/kfd` and the render
 device. You do not need a system ROCm SDK or PyTorch installation: HRX supplies
-its own pinned user-space runtime, including HSA, and the Loom compiler.
+its own pinned native runtime and the Loom compiler.
 
 Install the CLI, including optional NPU support:
 
 ```sh
-cargo install hrx-rs --version 0.7.1 --locked --features npu
+cargo install hrx-rs --version 0.8.0 --locked --features npu
 hrx prepare
 hrx doctor
 ```
 
-`hrx prepare` downloads and verifies the GPU and NPU archives pinned in
-[bundle.json](bundle.json) and [npu-bundle.json](npu-bundle.json).
-GPU, compiler and NPU APIs also provision their runtime on first use.
-For a matching local archive, run `hrx prepare /path/to/bundle.tar.gz`.
-Once prepared, `HRX_OFFLINE=1` disables network provisioning.
-
-This provisions both user-space runtimes, including XRT; no separate
-XRT, Python or Ryzen AI SDK installation is needed for precompiled NPU programs.
-Compiling new NPU programs uses an [optional external IRON/AIE toolchain](docs/GPU-NPU.md#npu-compilation).
-Linux GPU/NPU drivers, firmware and device permissions remain host prerequisites.
-The bundled runtimes target Ubuntu 26.04 LTS: hosts need glibc 2.43 or newer
-and compatible C/C++ runtime libraries. Stock Ubuntu 24.04 is not supported by
-these bundles. The current LTS is the selected distribution baseline.
-See [the installation guide](docs/GPU-NPU.md#native-setup).
-
-With NPU support enabled, supplying only a local GPU archive still lets `prepare`
-download the NPU runtime. For an offline installation, use
-`HRX_OFFLINE=1 hrx prepare /path/to/gpu.tar.gz /path/to/npu.tar.gz`.
-`prepare` prints the verified GPU directory to stdout before preparing the NPU;
-an NPU provisioning failure still produces a nonzero exit status.
+`hrx prepare` downloads and verifies the unified archive pinned in
+[bundle.json](bundle.json). GPU, compiler, and NPU APIs also provision it on first
+use. For offline installation, run `HRX_OFFLINE=1 hrx prepare native.tar.gz`
+with the matching archive. Linux drivers, firmware, and permissions remain host
+prerequisites. The bundle targets Ubuntu 26.04, requiring glibc 2.43+ and compatible
+C/C++ runtimes. See [the native setup guide](docs/GPU-NPU.md#native-setup).
 
 | Setting | Purpose |
 | --- | --- |
 | `HRX_RUNTIME_DIR` | Use a trusted local directory of native libraries, bypassing bundle verification |
 | `HRX_BUNDLE_MANIFEST` | Use a local JSON manifest for a mirror or custom bundle |
 | `HRX_OFFLINE` | Disable network provisioning when set |
+| `HRX_AMDF_LIBRARY` | Override the path to `libamdf.so` |
+| `HRX_FABRIC_LIBRARY` | Override the path to `libhrx_fabric.so` |
 | `HRX_LOOM_LIBRARY` | Override the path to `libloomc.so` |
 
 Caches live at `$XDG_CACHE_HOME/hrx`, or `$HOME/.cache/hrx` when that is unset,
@@ -279,7 +261,7 @@ could distinguish, and two models that compile the same kernel compile it once.
 read for DAYS (default 30), by access time, so entries written by any release are
 dated the same way.
 
-The only optional Cargo feature is `npu`, enabling NPU execution, compilation,
+The only optional Cargo feature is `npu`, enabling NPU execution
 and cross-device probes. GPU execution, Loom compilation, downloads and the
 `hrx` CLI are always available; native libraries still load only on first use.
 `HRX_OFFLINE=1` controls offline provisioning independently of Cargo features.

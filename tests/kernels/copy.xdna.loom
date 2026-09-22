@@ -1,0 +1,29 @@
+aie2p.target<array> @array_target
+aie2p.target<core> @core_target
+config.decl @copy.packets : %value: index where [range(%value, 1, 16384)]
+pipeline.def<kernel> public retain target(@array_target) @copy() launch(%input: buffer, %output: buffer) {
+  %packets = config.get @copy.packets : index
+  %one = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %one : index -> group
+  %input_view = buffer.view %input[%base] : buffer -> view<[%packets]x1024xi32>
+  %output_view = buffer.view %output[%base] : buffer -> view<[%packets]x1024xi32>
+  %records = pipeline.read %input_view on %workers : view<[%packets]x1024xi32>, group -> pipeline.flow<tile<1024xi32>>
+  %copies = pipeline.stage @copy_record on %workers(%records) : (group, pipeline.flow<tile<1024xi32>>) -> (pipeline.flow<tile<1024xi32>>)
+  pipeline.write %copies to %output_view : pipeline.flow<tile<1024xi32>>, view<[%packets]x1024xi32>
+  pipeline.return
+}
+func.def target(@core_target) @copy_record(%input: buffer, %output: buffer) {
+  %source, %destination = buffer.assume.alignment %input, %output {minimum_alignment = 64} : buffer, buffer
+  %base = index.constant 0 : offset
+  %input_view = buffer.view %source[%base] : buffer -> view<1024xi32>
+  %output_view = buffer.view %destination[%base] : buffer -> view<1024xi32>
+  %zero = index.constant 0 : index
+  %step = index.constant 16 : index
+  %count = index.constant 1024 : index
+  scf.for %i = [%zero to %count step %step] {
+    %value = vector.load %input_view[%i] : view<1024xi32> -> vector<16xi32>
+    vector.store %value, %output_view[%i] : vector<16xi32>, view<1024xi32>
+  }
+  func.return
+}

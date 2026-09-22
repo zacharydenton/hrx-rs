@@ -1,0 +1,33 @@
+diff --git a/build_tools/cmake/iree_third_party_helpers.cmake b/build_tools/cmake/iree_third_party_helpers.cmake
+index a77d448bc..20eb1b681 100644
+--- a/build_tools/cmake/iree_third_party_helpers.cmake
++++ b/build_tools/cmake/iree_third_party_helpers.cmake
+@@ -242,6 +242,14 @@ function(iree_populate_locked_file dep_name out_file)
+   cmake_path(GET _download_file PARENT_PATH _download_directory)
+   file(MAKE_DIRECTORY "${_download_directory}")
+ 
++  if(EXISTS "${_download_file}")
++    file(SHA256 "${_download_file}" _cached_sha256)
++    if(_cached_sha256 STREQUAL _sha256)
++      set(${out_file} "${_download_file}" PARENT_SCOPE)
++      return()
++    endif()
++  endif()
++
+   set(_download_errors)
+   foreach(_url IN LISTS _urls)
+     file(DOWNLOAD
+diff --git a/loom/binding/c/CMakeLists.txt b/loom/binding/c/CMakeLists.txt
+index 86129cef6..c602bafa2 100644
+--- a/loom/binding/c/CMakeLists.txt
++++ b/loom/binding/c/CMakeLists.txt
+@@ -345,6 +345,9 @@ endif()
+ if(LOOM_TARGET_ARCH_AMDGPU AND LOOM_EMIT_AMDGPU)
+   _loomc_add_shared_component(loom_binding_c_target_amdgpu_amdgpu)
+ endif()
++if(LOOM_TARGET_ARCH_XDNA AND LOOM_EMIT_XDNA)
++  _loomc_add_shared_component(loom_binding_c_target_amd_xdna_xdna)
++endif()
+ 
+ foreach(_loomc_object_target IN LISTS _loomc_object_targets)
+   target_compile_definitions("${_loomc_object_target}" PRIVATE

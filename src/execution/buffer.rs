@@ -5,8 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-/// Explicit storage placement. Shared storage requires a resident NPU program
-/// to create its device mapping once, before execution.
+/// Explicit access domains prepared before device execution.
 #[derive(Clone)]
 pub enum MemoryPlacement {
     /// GPU pool memory for GPU-only work.
@@ -14,12 +13,12 @@ pub enum MemoryPlacement {
     /// Coherent host-local memory mapped for guarded CPU access and GPU copies.
     /// Does not require an NPU or its runtime.
     HostVisible,
-    /// NPU host-only memory, bound to the program's host memory group.
+    /// Host-mapped memory admitted for one native XDNA device.
     #[cfg(feature = "npu")]
-    NpuLocal(crate::npu::NpuProgram),
-    /// One exportable GPU allocation, imported into the NPU without copying.
+    NpuLocal(super::NpuDevice),
+    /// One native allocation admitted for both GPU and XDNA access.
     #[cfg(feature = "npu")]
-    Shared(crate::npu::NpuProgram),
+    Shared(super::NpuDevice),
 }
 #[derive(Default)]
 pub(super) struct HostState {
@@ -46,7 +45,6 @@ impl Visibility {
             visible: [true, false, false],
         }
     }
-    #[cfg(any(test, feature = "npu"))]
     pub fn sync_to_device(&self, consumer: Engine) -> bool {
         self.writer == Engine::Host || consumer == Engine::Npu
     }
@@ -58,18 +56,10 @@ impl Visibility {
 }
 pub(super) struct Storage {
     pub accounted: bool,
-    // Imported mappings drop before descriptor and backing GPU allocation.
-    #[cfg(feature = "npu")]
-    pub bo: Option<crate::npu::raw::Bo>,
-    #[cfg(feature = "npu")]
-    pub descriptor: Option<std::os::fd::OwnedFd>,
+    pub native: Option<crate::fabric::Buffer>,
     pub gpu: Option<crate::gpu::Buffer>,
     pub pointer: *mut u8,
     pub bytes: usize,
-    #[cfg(feature = "npu")]
-    pub npu_device: Option<i32>,
-    #[cfg(feature = "npu")]
-    pub group: Option<i32>,
     pub shared: bool,
     pub host: Mutex<HostState>,
     pub visibility: Mutex<Visibility>,
@@ -310,13 +300,12 @@ impl Storage {
         if visibility.visible[engine as usize] {
             return Ok(());
         }
-        #[cfg(feature = "npu")]
-        if let Some(bo) = &self.bo {
+        if let Some(native) = &self.native {
             // Only cross-engine transitions require maintenance. Producer work
             // has already completed before this method can be reached. Host-dirty
             // lines must be flushed even when the consumer is the GPU.
-            bo.sync(visibility.sync_to_device(engine), self.bytes)
-                .map_err(Error::Message)?;
+            // Scheduler has retired producer use and reserved this consumer.
+            unsafe { native.cache_control(visibility.sync_to_device(engine), 0, self.bytes) }?;
             self.runtime
                 .core
                 .counters
@@ -409,21 +398,19 @@ impl Drop for WriteGuard<'_> {
 
 impl Drop for Storage {
     fn drop(&mut self) {
-        #[cfg(feature = "npu")]
         if self
             .visibility
             .get_mut()
             .unwrap_or_else(|e| e.into_inner())
             .writer
             == Engine::Host
-            && let Some(bo) = &self.bo
-            && bo.sync(true, self.bytes).is_err()
+            && let Some(native) = &self.native
+            && unsafe { native.cache_control(true, 0, self.bytes) }.is_err()
         {
             // Do not release pages while failed cache maintenance could leave
             // CPU writes able to reach a later allocation of those pages.
             std::mem::forget((
-                self.bo.take(),
-                self.descriptor.take(),
+                self.native.take(),
                 self.gpu.take(),
                 self._reservation.take(),
             ));

@@ -1,15 +1,15 @@
 [package]
 name = "hrx-rs"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT AND Apache-2.0 AND (Apache-2.0 WITH LLVM-exception)"
-description = "Owned GPU and NPU execution with Loom and IRON compilation"
+description = "Owned native AMD GPU and NPU execution with Loom compilation"
 repository = "https://github.com/zacharydenton/hrx-rs"
 readme = "README.md"
 keywords = ["gpu", "npu", "amdgpu", "compute", "loom"]
 categories = ["hardware-support", "science"]
-include = ["/src/**", "/docs/**", "/tests/**", "/examples/**", "/native/**", "/patches/**", "/scripts/**", "/Cargo.toml", "/Cargo.lock", "/bundle.json", "/npu-bundle.json", "/README.md", "/CHANGELOG.md", "/LICENSE", "/NOTICE", "/THIRD-PARTY.md", "/THIRD-PARTY.json", "/VALIDATION.md", "!**/__pycache__/**", "!**/*.pyc"]
+include = ["/src/**", "/docs/**", "/tests/**", "/examples/**", "/native/**", "/patches/**", "/scripts/**", "/Cargo.toml", "/Cargo.lock", "/bundle.json", "/README.md", "/CHANGELOG.md", "/LICENSE", "/NOTICE", "/THIRD-PARTY.md", "/THIRD-PARTY.json", "/VALIDATION.md", "!**/__pycache__/**", "!**/*.pyc"]
 
 # docs.rs has no GPU and no native bundle. Nothing here initializes either at
 # build time, so documenting every feature is safe.
@@ -21,7 +21,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 name = "hrx"
 
 [features]
-# NPU execution, compilation and cross-device probes. XRT loads on first use.
+# Native XDNA execution and tracked cross-device scheduling.
 npu = []
 
 [dependencies]
@@ -44,10 +44,6 @@ memmap2 = "0.9"
 
 [[example]]
 name = "unified_probe"
-required-features = ["npu"]
-
-[[example]]
-name = "dmabuf_probe"
 required-features = ["npu"]
 
 [[example]]

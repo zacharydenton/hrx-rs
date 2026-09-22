@@ -1,0 +1,11 @@
+--- a/libamdf/src/gpu/umd/kfd/target/pm4_queue.c
++++ b/libamdf/src/gpu/umd/kfd/target/pm4_queue.c
+@@ -10,7 +10,7 @@
+ 
+ enum {
+   AMDF_GPU_KFD_PM4_PAGE_SIZE = 4096,
+-  AMDF_GPU_KFD_PM4_RING_BYTE_LENGTH = 4096,
++  AMDF_GPU_KFD_PM4_RING_BYTE_LENGTH = 1024 * 1024,
+   AMDF_GPU_KFD_PM4_END_OF_PIPE_BYTE_LENGTH = 4096,
+   AMDF_GPU_KFD_PM4_DOORBELL_MAPPING_BYTE_LENGTH = 8192,
+   AMDF_GPU_KFD_PM4_DEBUG_BYTE_LENGTH_PER_WAVE = 32,

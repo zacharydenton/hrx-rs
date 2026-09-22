@@ -18,7 +18,7 @@ fn index_reuse_cache_repair_and_diagnostics() -> hrx::Result<()> {
     let c = Compiler::resolve(None)?;
     let m = c.module(SOURCE);
     let mut request = spec();
-    request.set_report(true);
+    request.set_report(hrx::loom::ReportMode::Summary);
     let a = m.compile(&request)?;
     assert!(a.bytes().starts_with(b"\x7fELF"));
     assert!(a.report().is_some());

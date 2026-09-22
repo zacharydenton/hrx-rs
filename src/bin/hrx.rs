@@ -1,5 +1,7 @@
 //! Native bundle provisioning and Loom compilation CLI.
 use hrx::{Error, Result};
+#[path = "hrx/compile.rs"]
+mod compile;
 #[path = "hrx/pack.rs"]
 mod pack;
 fn main() -> std::process::ExitCode {
@@ -34,17 +36,22 @@ fn dispatch(args: &[String]) -> Result<()> {
             let cached = hrx::bundle::cache_root()?
                 .join("runtime")
                 .join(&manifest.archive_sha256);
-            if std::env::var_os("HRX_RUNTIME_DIR").is_some() || manifest.verify(&cached).is_ok() {
-                match hrx::gpu::Device::open(0) {
-                    Ok(device) => println!(
-                        "GPU target: {}; shared interop ABI 1: {}",
-                        device.target().as_str(),
-                        match device.supports_shared_interop() {
-                            Ok(supported) => supported.to_string(),
-                            Err(error) => format!("probe failed: {error}"),
+            if std::env::var_os("HRX_RUNTIME_DIR").is_some()
+                || std::env::var_os("HRX_AMDF_LIBRARY").is_some()
+                || manifest.verify(&cached).is_ok()
+            {
+                match hrx::fabric::Fabric::resolve().and_then(|fabric| fabric.endpoints()) {
+                    Ok(endpoints) => {
+                        for endpoint in endpoints {
+                            println!(
+                                "{:?}: {} ({})",
+                                endpoint.engine(),
+                                endpoint.name(),
+                                endpoint.target().as_str()
+                            );
                         }
-                    ),
-                    Err(error) => println!("GPU initialization: {error}"),
+                    }
+                    Err(error) => println!("native device discovery: {error}"),
                 }
                 let directory = std::env::var_os("HRX_RUNTIME_DIR")
                     .map(std::path::PathBuf::from)
@@ -57,79 +64,16 @@ fn dispatch(args: &[String]) -> Result<()> {
                     Err(error) => println!("Loom compiler probe failed: {error}"),
                 }
             } else {
-                println!("GPU runtime: not prepared (doctor does not download)");
+                println!("Native runtime: not prepared (doctor does not download)");
             }
-            println!("gpu bundle: {}", hrx::bundle::default_manifest()?.revision);
             println!(
-                "GPU override: {}",
+                "native bundle: {}",
+                hrx::bundle::default_manifest()?.revision
+            );
+            println!(
+                "Native override: {}",
                 std::env::var("HRX_RUNTIME_DIR").unwrap_or_else(|_| "none".into())
             );
-            #[cfg(feature = "npu")]
-            {
-                let probe = || -> Result<()> {
-                    let manifest = hrx::npu::provision::runtime_manifest()?;
-                    println!("NPU bundle: {}", manifest.revision);
-                    let directory = match std::env::var_os("HRX_NPU_RUNTIME_DIR") {
-                        Some(path) => path.into(),
-                        None => {
-                            let cached = hrx::bundle::cache_root()?
-                                .join(&manifest.component)
-                                .join(&manifest.archive_sha256);
-                            if let Err(error) = manifest.verify(&cached) {
-                                println!(
-                                    "NPU runtime: not prepared or corrupt ({error}); run hrx prepare"
-                                );
-                                return Ok(());
-                            }
-                            cached
-                        }
-                    };
-                    hrx::npu::provision::probe_runtime(&directory)?;
-                    println!(
-                        "NPU runtime ABI 1: loaded from {} (device access checked above)",
-                        directory.display()
-                    );
-                    Ok(())
-                };
-                if let Err(error) = probe() {
-                    println!("NPU runtime probe failed: {error}");
-                }
-                println!(
-                    "NPU override: {}",
-                    std::env::var("HRX_NPU_RUNTIME_DIR").unwrap_or_else(|_| "none".into())
-                );
-            }
-            #[cfg(not(feature = "npu"))]
-            println!("NPU support: not compiled; install with --features npu");
-            println!(
-                "NPU kernel compilation uses an explicit toolchain manifest; doctor does not install drivers or compilers."
-            );
-        }
-        #[cfg(feature = "npu")]
-        Some("prepare-npu") if args.len() <= 3 => {
-            let manifest = match args.get(1) {
-                Some(path) => hrx::npu::provision::Manifest::load(path)?,
-                None => {
-                    println!("{}", hrx::npu::provision::resolve()?.display());
-                    return Ok(());
-                }
-            };
-            let directory = if let Some(archive) = args.get(2) {
-                manifest.install(
-                    std::path::Path::new(archive),
-                    &hrx::bundle::cache_root()?.join(&manifest.component),
-                )?
-            } else {
-                manifest.prepare(std::env::var_os("HRX_OFFLINE").is_some())?
-            };
-            println!("{}", directory.display());
-        }
-        #[cfg(feature = "npu")]
-        Some("compile-npu") if args.len() == 3 => {
-            use hrx::npu::compiler::{Compiler, CompilerOptions, Project, Toolchain};
-            let project: Project = serde_json::from_slice(&std::fs::read(&args[2])?)?;
-            let compiler = Compiler::new(Toolchain::load(&args[1])?, CompilerOptions::new()?)?;
-            println!("{}", compiler.compile(&project)?.path().display());
         }
         Some("pack") if args.len() == 5 || args.len() == 6 => {
             pack::pack(
@@ -144,7 +88,7 @@ fn dispatch(args: &[String]) -> Result<()> {
                     .unwrap_or_default(),
             )?;
         }
-        Some("prepare") if args.len() <= 3 => {
+        Some("prepare") if args.len() <= 2 => {
             let manifest = hrx::bundle::default_manifest()?;
             let root = hrx::bundle::cache_root()?.join("runtime");
             let path = if let Some(archive) = args.get(1) {
@@ -152,28 +96,7 @@ fn dispatch(args: &[String]) -> Result<()> {
             } else {
                 hrx::bundle::resolve()?
             };
-            // Report the usable GPU directory even if NPU provisioning fails.
             println!("{}", path.display());
-            std::io::Write::flush(&mut std::io::stdout())?;
-            #[cfg(feature = "npu")]
-            {
-                let npu = if let Some(archive) = args.get(2) {
-                    let manifest = hrx::npu::provision::runtime_manifest()?;
-                    manifest.install(
-                        std::path::Path::new(archive),
-                        &hrx::bundle::cache_root()?.join(&manifest.component),
-                    )?
-                } else {
-                    hrx::npu::provision::resolve()?
-                };
-                eprintln!("NPU runtime: {}", npu.display());
-            }
-            #[cfg(not(feature = "npu"))]
-            if args.len() == 3 {
-                return Err(Error::Unsupported(
-                    "NPU archive requires the npu feature".into(),
-                ));
-            }
         }
         Some("gc") => {
             let days: u64 = match args.get(1) {
@@ -207,22 +130,11 @@ fn dispatch(args: &[String]) -> Result<()> {
                 device.target().as_str()
             );
         }
-        Some("compile") if args.len() >= 3 => {
-            let source = std::fs::read_to_string(&args[1])?;
-            let compiler = hrx::loom::Compiler::resolve(None)?;
-            let module = compiler.module(&source);
-            let mut request = hrx::loom::Specialization::new(&args[2]);
-            for arg in &args[3..] {
-                let (k, v) = arg
-                    .split_once('=')
-                    .ok_or_else(|| Error::Message("config must be key=value".into()))?;
-                request.set_config(k, v);
-            }
-            println!("{}", module.compile(&request)?.path().display());
-        }
+        Some("compile") if args.len() >= 3 => compile::compile(&args[1..])?,
+        Some("report") => compile::report(&args[1..])?,
         _ => {
             return Err(Error::Message(
-                "usage: hrx run --hsaco FILE --kernel NAME [...] | pack RUNTIME OUTPUT URL REVISION [TARGET] | prepare [gpu.tar.gz [npu.tar.gz]] | prepare-npu [MANIFEST [ARCHIVE]] | doctor | gc [DAYS] | info | compile SOURCE SYMBOL [key=value ...] | compile-npu TOOLCHAIN PROJECT"
+                "usage: hrx run --hsaco FILE --kernel NAME [...] | pack RUNTIME OUTPUT URL REVISION [TARGET] | prepare [native.tar.gz] | doctor | gc [DAYS] | info | compile SOURCE SYMBOL [key=value ...] | report show FILE | report diff BEFORE AFTER"
                     .into(),
             ));
         }

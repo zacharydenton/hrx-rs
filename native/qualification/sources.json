@@ -1,0 +1,30 @@
+{
+  "attention_query32.loom": {
+    "repository": "https://github.com/zacharydenton/krea2-hrx",
+    "revision": "df27d48e1ccacfc20f93c1b46c8cfec810b05a55",
+    "path": "kernels/attention_query32.loom",
+    "sha256": "71bce8c2406ee88b4bfe269cee305f07d5cf0ac1168fe5a385994654e14d8269",
+    "license_file": "LICENSE-krea2-hrx.txt"
+  },
+  "attention_gqa_lds_f16_wmma.loom": {
+    "repository": "https://github.com/zacharydenton/krea2-hrx",
+    "revision": "df27d48e1ccacfc20f93c1b46c8cfec810b05a55",
+    "path": "kernels/attention_gqa_lds_f16_wmma.loom",
+    "sha256": "44725bc70cdbc6f73f75db9aa60f2ae8322041e44db401099f56ae41b14f99e4",
+    "license_file": "LICENSE-krea2-hrx.txt"
+  },
+  "gemm_i8_256.loom": {
+    "repository": "https://github.com/zacharydenton/krea2-hrx",
+    "revision": "df27d48e1ccacfc20f93c1b46c8cfec810b05a55",
+    "path": "kernels/gemm_i8_256.loom",
+    "sha256": "68b608e2612a0e530f9ead1b0f96ea439ac3467f556cab17292a8b7167e018ff",
+    "license_file": "LICENSE-krea2-hrx.txt"
+  },
+  "gemm_f16_fast_256b.loom": {
+    "repository": "https://github.com/zacharydenton/h3-hrx",
+    "revision": "4afe5b5a2a6845dc2cac3b2a300fd4ff9f33965c",
+    "path": "kernels/gemm_f16_fast_256b.loom",
+    "sha256": "83c8c140a6c652ec2097df839c4ec22e20b187f34775613af8850fbb14bdc508",
+    "license_file": "LICENSE-h3-hrx.txt"
+  }
+}

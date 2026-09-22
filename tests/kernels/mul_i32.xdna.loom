@@ -1,0 +1,38 @@
+// Copyright 2026 The IREE Authors
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// From the pinned hrx-system XDNA image corpus.
+aie2p.target<array> @array_target
+
+aie2p.target<core> @core_target
+
+pipeline.def<kernel> public retain target(@array_target) @mul_i32() launch(%lhs: buffer, %rhs: buffer, %output: buffer) {
+  %lanes = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %lanes : index -> group
+  %lhs_view = buffer.view %lhs[%base] : buffer -> view<16xi32>
+  %rhs_view = buffer.view %rhs[%base] : buffer -> view<16xi32>
+  %output_view = buffer.view %output[%base] : buffer -> view<16xi32>
+  %lhs_flow = pipeline.read %lhs_view on %workers : view<16xi32>, group -> pipeline.flow<tile<16xi32>>
+  %rhs_flow = pipeline.read %rhs_view on %workers : view<16xi32>, group -> pipeline.flow<tile<16xi32>>
+  %result = pipeline.stage @multiply_record on %workers(%lhs_flow, %rhs_flow) : (group, pipeline.flow<tile<16xi32>>, pipeline.flow<tile<16xi32>>) -> (pipeline.flow<tile<16xi32>>)
+  pipeline.write %result to %output_view : pipeline.flow<tile<16xi32>>, view<16xi32>
+  pipeline.return
+}
+
+func.def target(@core_target) @multiply_record(%lhs: buffer, %rhs: buffer, %output: buffer) {
+  %lhs_aligned, %rhs_aligned, %output_aligned = buffer.assume.alignment %lhs, %rhs, %output {minimum_alignment = 64} : buffer, buffer, buffer
+  %base = index.constant 0 : offset
+  %lhs_view = buffer.view %lhs_aligned[%base] : buffer -> view<16xi32>
+  %rhs_view = buffer.view %rhs_aligned[%base] : buffer -> view<16xi32>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<16xi32>
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %count = index.constant 16 : index
+  scf.for %i = [%zero to %count step %one] {
+    %lhs_value = view.load %lhs_view[%i] : view<16xi32> -> i32
+    %rhs_value = view.load %rhs_view[%i] : view<16xi32> -> i32
+    %product = scalar.muli %lhs_value, %rhs_value : i32
+    view.store %product, %output_view[%i] : i32, view<16xi32>
+  }
+  func.return
+}

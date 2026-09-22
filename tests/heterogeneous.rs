@@ -28,108 +28,90 @@ unsafe impl std::alloc::GlobalAlloc for CountAllocations {
 #[global_allocator]
 static ALLOCATOR: CountAllocations = CountAllocations;
 
+fn copy_artifact() -> Result<hrx::loom::Artifact> {
+    hrx::loom::Compiler::for_target(None, &hrx::Target::xdna())?
+        .module(include_str!("kernels/copy.xdna.loom"))
+        .compile(&hrx::loom::Specialization::new("copy").with_config("copy.packets", "256"))
+}
+
 #[test]
-#[ignore = "requires XDNA2 and HRX_TEST_NPU_DIR passthrough artifacts"]
+#[ignore = "requires native Loom, libamdf and NPU5"]
 fn npu_allocations_and_instruction_leases_respect_shared_budgets() -> Result<()> {
-    let directory = std::path::PathBuf::from(
-        std::env::var_os("HRX_TEST_NPU_DIR")
-            .ok_or_else(|| hrx::Error::Message("set HRX_TEST_NPU_DIR".into()))?,
-    );
-    let instructions = std::fs::read(directory.join("x.bin"))?;
-    let manager = hrx::residency::ResidencyManager::new(instructions.len() + 4096)?;
+    let artifact = copy_artifact()?;
+    let image_bytes = artifact.bytes().len();
+    let manager = hrx::residency::ResidencyManager::new(image_bytes + 4096)?;
     let runtime = Runtime::with_options(hrx::execution::RuntimeOptions {
         memory_budget: Some(manager.budget()),
         ..Default::default()
     })?;
     let contract = || KernelContract {
-        bindings: [
-            (1 << 20, Access::Read),
-            (4096, Access::Read),
-            (1 << 20, Access::Write),
-        ]
-        .into_iter()
-        .map(|(bytes, access)| BindingContract {
-            bytes,
-            access,
-            alignment: 4,
-            layout: "bf16 contiguous".into(),
-        })
-        .collect(),
+        bindings: [(1 << 20, Access::Read), (1 << 20, Access::Write)]
+            .into_iter()
+            .map(|(bytes, access)| BindingContract {
+                bytes,
+                access,
+                alignment: 4,
+                layout: "bf16 contiguous".into(),
+            })
+            .collect(),
         constants: vec![],
     };
-    let program = unsafe { runtime.npu(0)?.load_program(directory.join("x.xclbin")) }?;
-    let kernel = unsafe { program.kernel(&instructions, contract()) }?;
-    assert_eq!(manager.statistics().reserved_bytes, instructions.len());
+    let program = runtime.npu(0)?;
+    let kernel = unsafe { program.load_artifact(&artifact, 1, contract()) }?;
+    assert_eq!(manager.statistics().reserved_bytes, image_bytes);
     let buffer = runtime.allocate(4096, MemoryPlacement::NpuLocal(program.clone()))?;
-    assert_eq!(
-        manager.statistics().reserved_bytes,
-        instructions.len() + 4096
-    );
+    assert_eq!(manager.statistics().reserved_bytes, image_bytes + 4096);
     assert!(
         runtime
             .allocate(1, MemoryPlacement::NpuLocal(program.clone()))
             .is_err()
     );
     assert!(matches!(
-        unsafe { program.kernel(&instructions, contract()) },
+        unsafe { program.load_artifact(&artifact, 1, contract()) },
         Err(hrx::Error::Busy(_))
     ));
     // The process-wide image cache must not inherit another runtime's budget.
-    let tiny = hrx::residency::ResidencyManager::new(instructions.len() - 1)?;
+    let tiny = hrx::residency::ResidencyManager::new(image_bytes - 1)?;
     let other = Runtime::with_options(hrx::execution::RuntimeOptions {
         memory_budget: Some(tiny.budget()),
         ..Default::default()
     })?;
-    let other_program = unsafe { other.npu(0)?.load_program(directory.join("x.xclbin")) }?;
-    assert!(unsafe { other_program.kernel(&instructions, contract()) }.is_err());
+    let other_program = other.npu(0)?;
+    assert!(unsafe { other_program.load_artifact(&artifact, 1, contract()) }.is_err());
     assert_eq!(tiny.statistics().reserved_bytes, 0);
     let retained_kernel = kernel.clone();
     drop((kernel, program, buffer, runtime, other_program, other));
-    assert_eq!(manager.statistics().reserved_bytes, instructions.len());
+    assert_eq!(manager.statistics().reserved_bytes, image_bytes);
     drop(retained_kernel);
     assert_eq!(manager.statistics().reserved_bytes, 0);
 
-    // Direct native clients use the same ceiling. A sub-BO retains the whole
-    // allocation after both its root wrapper and context owner are dropped.
-    let context =
-        unsafe { hrx::npu::raw::Context::new(0, directory.join("x.xclbin").to_str().unwrap()) }
-            .map_err(hrx::Error::Message)?
-            .with_memory_budget(manager.budget());
-    let group = context.group_id(3).map_err(hrx::Error::Message)?;
-    let root = context
-        .alloc_bo(
-            instructions.len() + 4096,
-            hrx::npu::raw::BoKind::HostOnly,
-            group,
-        )
-        .map_err(hrx::Error::Message)?;
+    // Direct fabric clients charge the same backing through cloned ownership.
+    let device = hrx::fabric::Device::open(hrx::fabric::Engine::Xdna, 0)?;
+    let fabric = device.fabric();
+    let root = fabric.allocate_budgeted(
+        image_bytes + 4096,
+        std::slice::from_ref(&device),
+        &manager.budget(),
+    )?;
     assert!(
-        context
-            .alloc_bo(1, hrx::npu::raw::BoKind::HostOnly, group)
+        fabric
+            .allocate_budgeted(1, std::slice::from_ref(&device), &manager.budget())
             .is_err()
     );
-    let view = root.sub(1024, 1024).map_err(hrx::Error::Message)?;
-    drop((root, context));
-    assert_eq!(
-        manager.statistics().reserved_bytes,
-        instructions.len() + 4096
-    );
-    drop(view);
+    let retained = root.clone();
+    drop((root, fabric, device));
+    assert_eq!(manager.statistics().reserved_bytes, image_bytes + 4096);
+    drop(retained);
     assert_eq!(manager.statistics().reserved_bytes, 0);
     Ok(())
 }
 
 #[test]
-#[ignore = "requires gfx1151, XDNA2, shared ABI 1, and HRX_TEST_NPU_DIR passthrough artifacts"]
+#[ignore = "requires native Loom, libamdf, gfx1151 and NPU5"]
 fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
-    let directory =
-        std::path::PathBuf::from(std::env::var_os("HRX_TEST_NPU_DIR").ok_or_else(|| {
-            hrx::Error::Message(
-                "set HRX_TEST_NPU_DIR to the 262144-element passthrough artifact directory".into(),
-            )
-        })?);
+    let artifact = copy_artifact()?;
     let runtime = Runtime::new()?;
-    let program = unsafe { runtime.npu(0)?.load_program(directory.join("x.xclbin")) }?;
+    let program = runtime.npu(0)?;
     let bytes = 1 << 20;
     let elements = bytes / 2;
     let binding = |bytes, access| BindingContract {
@@ -139,14 +121,11 @@ fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
         layout: "bf16 contiguous".into(),
     };
     let npu = unsafe {
-        program.kernel(
-            &std::fs::read(directory.join("x.bin"))?,
+        program.load_artifact(
+            &artifact,
+            1,
             KernelContract {
-                bindings: vec![
-                    binding(bytes, Access::Read),
-                    binding(4096, Access::Read),
-                    binding(bytes, Access::Write),
-                ],
+                bindings: vec![binding(bytes, Access::Read), binding(bytes, Access::Write)],
                 constants: vec![],
             },
         )
@@ -183,7 +162,6 @@ fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
     }?;
     let allocate = |size| runtime.allocate(size, MemoryPlacement::Shared(program.clone()));
     let a = allocate(bytes)?;
-    let unused = allocate(4096)?;
     let c = allocate(bytes)?;
     let velocity = allocate(bytes)?;
     for word in velocity.map_write()?.as_chunks_mut::<2>().0 {
@@ -191,7 +169,7 @@ fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
     }
     let mut graph = runtime.graph();
     graph.gpu(&gpu, &[a.view(), velocity.view()])?;
-    graph.npu(&npu, &[a.view(), unused.view(), c.view()])?;
+    graph.npu(&npu, &[a.view(), c.view()])?;
     graph.gpu(&gpu, &[c.view(), velocity.view()])?;
     let graph = graph.prepare()?;
     // Exercise an executor-neutral future as well as the blocking fast path.
@@ -254,14 +232,11 @@ fn gpu_arithmetic_npu_dma_gpu_arithmetic() -> Result<()> {
 }
 
 #[test]
-#[ignore = "requires XDNA2, shared ABI 1 and HRX_TEST_NPU_DIR passthrough artifacts"]
+#[ignore = "requires native Loom, libamdf and NPU5"]
 fn npu_bindings_survive_a_different_program_context() -> Result<()> {
-    let directory = std::path::PathBuf::from(
-        std::env::var_os("HRX_TEST_NPU_DIR")
-            .ok_or_else(|| hrx::Error::Message("set HRX_TEST_NPU_DIR".into()))?,
-    );
+    let artifact = copy_artifact()?;
     let runtime = Runtime::new()?;
-    let owner = unsafe { runtime.npu(0)?.load_program(directory.join("x.xclbin")) }?;
+    let owner = runtime.npu(0)?;
     let bytes = 1 << 20;
     let binding = |bytes, access| BindingContract {
         bytes,
@@ -277,7 +252,6 @@ fn npu_bindings_survive_a_different_program_context() -> Result<()> {
     .map(|placement| -> Result<_> {
         Ok((
             runtime.allocate(bytes, placement.clone())?,
-            runtime.allocate(4096, placement.clone())?,
             runtime.allocate(bytes, placement)?,
         ))
     })
@@ -285,24 +259,21 @@ fn npu_bindings_survive_a_different_program_context() -> Result<()> {
     // Program loads are weak-cached. Drop the program before loading again so
     // this creates a new hardware context while the BOs retain their old one.
     drop(owner);
-    let consumer = unsafe { runtime.npu(0)?.load_program(directory.join("x.xclbin")) }?;
+    let consumer = runtime.npu(0)?;
     let kernel = unsafe {
-        consumer.kernel(
-            &std::fs::read(directory.join("x.bin"))?,
+        consumer.load_artifact(
+            &artifact,
+            1,
             KernelContract {
-                bindings: vec![
-                    binding(bytes, Access::Read),
-                    binding(4096, Access::Read),
-                    binding(bytes, Access::Write),
-                ],
+                bindings: vec![binding(bytes, Access::Read), binding(bytes, Access::Write)],
                 constants: vec![],
             },
         )
     }?;
-    for (input, unused, output) in buffers {
+    for (input, output) in buffers {
         input.map_write()?.fill(0x6b);
         let mut graph = runtime.graph();
-        graph.npu(&kernel, &[input.view(), unused.view(), output.view()])?;
+        graph.npu(&kernel, &[input.view(), output.view()])?;
         let graph = graph.prepare()?;
         graph.submit()?.wait()?;
         assert!(output.map_read()?.iter().all(|&byte| byte == 0x6b));

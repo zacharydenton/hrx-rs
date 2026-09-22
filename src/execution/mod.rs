@@ -115,6 +115,7 @@ impl GpuDevice {
 #[cfg(feature = "npu")]
 #[derive(Clone)]
 pub struct NpuDevice {
+    native: crate::fabric::Device,
     index: i32,
     budget: Option<crate::residency::MemoryBudget>,
 }
@@ -124,16 +125,33 @@ impl NpuDevice {
     pub fn index(&self) -> i32 {
         self.index
     }
-    /// Load trusted code on this device.
+    /// Exact XDNA deployment target for offline compilation.
+    pub fn target(&self) -> &crate::Target {
+        self.native.target()
+    }
+    /// Native device domain, independent of any loaded program.
+    pub fn native(&self) -> &crate::fabric::Device {
+        &self.native
+    }
+    /// Admit a canonical XDNA artifact and its external binding contract.
+    ///
     /// # Safety
-    /// The image must satisfy [`crate::npu::NpuProgram::load`]'s contract.
-    pub unsafe fn load_program(
+    /// The native code must be trusted and satisfy the supplied access contract.
+    pub unsafe fn load_artifact(
         &self,
-        path: impl AsRef<std::path::Path>,
-    ) -> Result<crate::npu::NpuProgram> {
-        let mut program = unsafe { crate::npu::NpuProgram::load(self.index, path) }?;
-        program.budget = self.budget.clone();
-        Ok(program)
+        artifact: &crate::loom::Artifact,
+        columns: u16,
+        contract: KernelContract,
+    ) -> Result<crate::npu::NpuKernel> {
+        unsafe {
+            crate::npu::NpuKernel::load(
+                self.native.clone(),
+                artifact,
+                columns,
+                contract,
+                self.budget.as_ref(),
+            )
+        }
     }
 }
 impl Runtime {
@@ -211,6 +229,7 @@ impl Runtime {
             return Err(Error::Message("NPU index must be nonnegative".into()));
         }
         Ok(NpuDevice {
+            native: crate::fabric::Device::open(crate::fabric::Engine::Xdna, index as usize)?,
             index,
             budget: self.options.memory_budget.clone(),
         })
@@ -267,18 +286,11 @@ impl Runtime {
                 })
                 .map(|budget| budget.reserve(bytes))
                 .transpose()?,
-            #[cfg(feature = "npu")]
-            bo: None,
-            #[cfg(feature = "npu")]
-            descriptor: None,
+            native: None,
             accounted: false,
             gpu: None,
             pointer: std::ptr::null_mut(),
             bytes,
-            #[cfg(feature = "npu")]
-            npu_device: None,
-            #[cfg(feature = "npu")]
-            group: None,
             #[cfg(test)]
             _test_memory: None,
             shared: false,
@@ -297,6 +309,7 @@ impl Runtime {
                     stream.synchronize()?;
                     buffer
                 };
+                storage.native = Some(buffer.native.clone());
                 storage.gpu = Some(buffer);
                 storage.visibility.get_mut().unwrap().wrote(Engine::Gpu);
             }
@@ -309,57 +322,43 @@ impl Runtime {
                     std::ptr::write_bytes(pointer, 0, bytes);
                 }
                 storage.pointer = pointer;
+                storage.native = Some(buffer.native.clone());
                 storage.gpu = Some(buffer);
             }
             #[cfg(feature = "npu")]
-            MemoryPlacement::Shared(program) | MemoryPlacement::NpuLocal(program) => {
-                let context = &program.inner.context;
-                let group = context.group_id(3).map_err(Error::Message)?;
-                let bo = if matches!(placement, MemoryPlacement::Shared(_)) {
-                    use std::os::fd::AsRawFd;
-                    let mut stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
+            MemoryPlacement::Shared(device) | MemoryPlacement::NpuLocal(device) => {
+                let native = if matches!(placement, MemoryPlacement::Shared(_)) {
+                    let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
                     let gpu = if let Some(buffer) = adopted.take() {
-                        buffer
+                        // Register the same owned backing; its original native owner
+                        // remains retained through the shared attachment's lifetime.
+                        buffer.share_with(device.native())?
                     } else {
-                        let buffer = stream.allocate(bytes)?;
-                        stream.fill(buffer.binding(), 0)?;
-                        stream.synchronize()?;
-                        buffer
+                        stream.allocate_for(
+                            bytes,
+                            &[
+                                crate::gpu::Device::open(self.inner.gpu_index)?
+                                    .native()
+                                    .clone(),
+                                device.native().clone(),
+                            ],
+                        )?
                     };
-                    let (fd, offset) = gpu.export_dmabuf()?;
-                    let offset = usize::try_from(offset).map_err(|_| {
-                        Error::Unsupported("dma-buf offset exceeds address space".into())
-                    })?;
-                    // Only the owned subregion is initialized; an HSA pool may
-                    // export a larger root containing unrelated allocations.
-                    let bo = unsafe { context.import_dmabuf_region(fd.as_raw_fd(), offset, bytes) }
-                        .map_err(Error::Message)?;
+                    let native = gpu.native.clone();
                     storage.gpu = Some(gpu);
-                    storage.descriptor = Some(fd);
                     storage.shared = true;
-                    bo
+                    native
                 } else {
-                    context
-                        .alloc_bo(bytes, crate::npu::raw::BoKind::HostOnly, group)
-                        .map_err(Error::Message)?
+                    device
+                        .native()
+                        .fabric()
+                        .allocate(bytes, std::slice::from_ref(device.native()))?
                 };
-                let pointer = bo.map().map_err(Error::Message)?;
-                // No aliases or device submissions exist during initialization.
-                // Shared GPU allocations are already initialized, including
-                // adopted data. Only freshly allocated NPU-local bytes need zeroing.
-                if !storage.shared {
-                    unsafe {
-                        std::ptr::write_bytes(pointer, 0, bytes);
-                    }
-                } else {
-                    storage.visibility.get_mut().unwrap().wrote(Engine::Gpu);
-                }
-                storage.pointer = pointer;
-                storage.bo = Some(bo);
-                storage.npu_device = Some(program.inner.device);
-                storage.group = Some(group);
+                storage.pointer = native.host_pointer();
+                storage.native = Some(native);
             }
         }
+
         use std::sync::atomic::Ordering;
         let counters = &self.inner.core.counters;
         counters.allocations.fetch_add(1, Ordering::Relaxed);

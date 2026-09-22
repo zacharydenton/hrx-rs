@@ -83,7 +83,9 @@ pub fn kernel_cache() -> Result<PathBuf> {
 
 /// An independently opened flock also serializes separate Rust copies in cdylibs.
 /// Never unlink a lock file while another process might be waiting on its inode.
-pub struct Lock(File);
+pub struct Lock {
+    _file: File,
+}
 impl Lock {
     /// Open and exclusively lock a file, refusing symlinks; unlocks on drop.
     pub fn acquire(path: &Path) -> Result<Self> {
@@ -99,16 +101,13 @@ impl Lock {
             .open(path)?;
         loop {
             if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
-                return Ok(Self(file));
+                return Ok(Self { _file: file });
             }
             let e = std::io::Error::last_os_error();
             if e.kind() != std::io::ErrorKind::Interrupted {
                 return Err(e.into());
             }
         }
-    }
-    pub(crate) fn file(&mut self) -> &mut File {
-        &mut self.0
     }
 }
 
@@ -139,7 +138,7 @@ impl Manifest {
                 return Err(Error::Message(format!("invalid bundle entry {name}")));
             }
         }
-        for name in ["libhrx.so", "libhsa-runtime64.so.1", "libloomc.so"] {
+        for name in ["libamdf.so", "libhrx_fabric.so", "libloomc.so"] {
             if !m.files.contains_key(name) {
                 return Err(Error::Message(format!("bundle is missing {name}")));
             }
@@ -453,7 +452,7 @@ mod gc_tests {
         }
         let installation = tempfile::tempdir_in(cache.path().join("runtime")).unwrap();
         let compilation = tempfile::tempdir_in(cache.path().join("kernels")).unwrap();
-        fs::write(installation.path().join("libhrx.so"), b"in progress").unwrap();
+        fs::write(installation.path().join("libamdf.so"), b"in progress").unwrap();
         fs::write(compilation.path().join("kernel.hsaco"), b"in progress").unwrap();
 
         let reclaimed = collect(
@@ -463,7 +462,7 @@ mod gc_tests {
         )
         .unwrap();
         assert_eq!((reclaimed.bundles, reclaimed.artifacts), (0, 0));
-        assert!(installation.path().join("libhrx.so").is_file());
+        assert!(installation.path().join("libamdf.so").is_file());
         assert!(compilation.path().join("kernel.hsaco").is_file());
     }
 
@@ -510,7 +509,7 @@ mod gc_tests {
         for name in ["keepme", "oldone", "olderone"] {
             fs::create_dir_all(runtime.join(digest(name.as_bytes()))).unwrap();
             fs::write(
-                runtime.join(digest(name.as_bytes())).join("libhrx.so"),
+                runtime.join(digest(name.as_bytes())).join("libamdf.so"),
                 vec![0u8; 1024],
             )
             .unwrap();

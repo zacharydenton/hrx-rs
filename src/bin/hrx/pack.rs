@@ -132,7 +132,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("source");
         fs::create_dir(&source).unwrap();
-        for name in ["libhrx.so", "libloomc.so", "libhsa-runtime64.so.1"] {
+        for name in ["libamdf.so", "libloomc.so", "libhrx_fabric.so"] {
             fs::write(source.join(name), name).unwrap();
         }
         let rejected = root.path().join("rejected");
@@ -156,7 +156,7 @@ mod tests {
         )
         .unwrap();
         // An inventory that records its own review as unfinished is refused.
-        let incomplete = r#"{"status":"incomplete","components":{"libhrx.so":{}}}"#;
+        let incomplete = r#"{"status":"incomplete","components":{"libamdf.so":{}}}"#;
         fs::write(source.join("THIRD-PARTY.json"), incomplete).unwrap();
         assert!(
             pack(
@@ -171,7 +171,7 @@ mod tests {
             .contains("status must be")
         );
         // So is a complete one that still leaves a component's license unconfirmed.
-        let unconfirmed = r#"{"status":"complete","components":{"libhrx.so":
+        let unconfirmed = r#"{"status":"complete","components":{"libamdf.so":
             {"license":{"spdx":"MIT","status":"unconfirmed"}}}}"#;
         fs::write(source.join("THIRD-PARTY.json"), unconfirmed).unwrap();
         assert!(
@@ -186,7 +186,7 @@ mod tests {
             .to_string()
             .contains("license.status")
         );
-        let complete = r#"{"status":"complete","components":{"libhrx.so":
+        let complete = r#"{"status":"complete","components":{"libamdf.so":
             {"license":{"spdx":"MIT","status":"confirmed"}}}}"#;
         fs::write(source.join("THIRD-PARTY.json"), complete).unwrap();
         let a = root.path().join("a");

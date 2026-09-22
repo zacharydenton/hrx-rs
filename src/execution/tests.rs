@@ -39,18 +39,11 @@ pub(super) fn buffer(runtime: &Runtime) -> Buffer {
     let memory = Arc::new(std::cell::UnsafeCell::new([0u8; 256]));
     Buffer {
         storage: Arc::new(Storage {
+            native: None,
             accounted: false,
-            #[cfg(feature = "npu")]
-            bo: None,
-            #[cfg(feature = "npu")]
-            descriptor: None,
             gpu: None,
             pointer: memory.get().cast::<u8>(),
             bytes: 256,
-            #[cfg(feature = "npu")]
-            npu_device: None,
-            #[cfg(feature = "npu")]
-            group: None,
             shared: true,
             host: Mutex::new(HostState::default()),
             visibility: Mutex::new(Visibility::new()),
@@ -645,12 +638,11 @@ fn uncertain_failure_poison_is_shared_and_resources_are_quarantined() {
 #[ignore = "requires XDNA2, shared ABI 1 and HRX_TEST_NPU_DIR; prints paired backend baseline"]
 fn heterogeneous_latency_against_direct_backend() -> Result<()> {
     use std::time::Instant;
-    let directory = std::path::PathBuf::from(
-        std::env::var_os("HRX_TEST_NPU_DIR")
-            .ok_or_else(|| crate::Error::Message("set HRX_TEST_NPU_DIR".into()))?,
-    );
     let runtime = Runtime::new()?;
-    let program = unsafe { runtime.npu(0)?.load_program(directory.join("x.xclbin")) }?;
+    let program = runtime.npu(0)?;
+    let artifact = crate::loom::Compiler::for_target(None, program.target())?
+        .module(include_str!("../../tests/kernels/copy.xdna.loom"))
+        .compile(&crate::loom::Specialization::new("copy").with_config("copy.packets", "256"))?;
     let bytes = 1 << 20;
     let binding = |bytes, access| BindingContract {
         bytes,
@@ -659,24 +651,20 @@ fn heterogeneous_latency_against_direct_backend() -> Result<()> {
         layout: "passthrough".into(),
     };
     let kernel = unsafe {
-        program.kernel(
-            &std::fs::read(directory.join("x.bin"))?,
+        program.load_artifact(
+            &artifact,
+            1,
             KernelContract {
-                bindings: vec![
-                    binding(bytes, Access::Read),
-                    binding(4096, Access::Read),
-                    binding(bytes, Access::Write),
-                ],
+                bindings: vec![binding(bytes, Access::Read), binding(bytes, Access::Write)],
                 constants: vec![],
             },
         )
     }?;
     let a = runtime.allocate(bytes, MemoryPlacement::Shared(program.clone()))?;
-    let b = runtime.allocate(4096, MemoryPlacement::Shared(program.clone()))?;
     let c = runtime.allocate(bytes, MemoryPlacement::Shared(program.clone()))?;
     let mut graph = runtime.graph();
     graph.fill(a.view(), 0x3d)?;
-    graph.npu(&kernel, &[a.view(), b.view(), c.view()])?;
+    graph.npu(&kernel, &[a.view(), c.view()])?;
     let graph = graph.prepare()?;
     let direct = || -> Result<()> {
         for operation in &graph.inner.operations {

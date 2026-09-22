@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — native GPU/NPU migration
+
+## Prior upstream update (0.7 development)
 
 - Select native release `native-20260922-hrx-update` for GPU execution and Loom
   compilation; retain the existing NPU bundle.

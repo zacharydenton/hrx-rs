@@ -2,7 +2,7 @@
 use hrx::bundle::{Manifest, digest, prepare};
 use std::{collections::BTreeMap, fs, io::Write};
 fn fixture(dir: &std::path::Path) -> Manifest {
-    let names = ["libloomc.so", "libhrx.so", "libhsa-runtime64.so.1"];
+    let names = ["libloomc.so", "libamdf.so", "libhrx_fabric.so"];
     let archive = dir.join("bundle.tar.gz");
     let encoder = flate2::write::GzEncoder::new(
         fs::File::create(&archive).unwrap(),
@@ -37,7 +37,7 @@ fn installation_is_atomic_verified_and_offline_reusable() {
     assert!(prepare(&manifest, &cache, true).is_err());
     let destination = prepare(&manifest, &cache, false).unwrap();
     assert_eq!(prepare(&manifest, &cache, true).unwrap(), destination);
-    fs::write(destination.join("libhrx.so"), "corrupt").unwrap();
+    fs::write(destination.join("libamdf.so"), "corrupt").unwrap();
     assert!(prepare(&manifest, &cache, true).is_err());
     prepare(&manifest, &cache, false).unwrap();
     manifest.verify(&destination).unwrap();
@@ -119,36 +119,6 @@ fn separate_processes_provision_the_same_cache() {
     let manifest = fixture(dir.path());
     let manifest_path = dir.path().join("manifest.json");
     fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    #[cfg(feature = "npu")]
-    let npu = {
-        let archive = dir.path().join("npu.tar.gz");
-        let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
-            fs::File::create(&archive).unwrap(),
-            flate2::Compression::default(),
-        ));
-        let bytes = b"test shim";
-        let mut header = tar::Header::new_gnu();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o755);
-        header.set_cksum();
-        tar.append_data(&mut header, "libhrx_npu.so.1", &bytes[..])
-            .unwrap();
-        tar.into_inner().unwrap().finish().unwrap();
-        let npu = hrx::npu::provision::Manifest {
-            schema: 1,
-            component: "npu-runtime".into(),
-            revision: "test".into(),
-            url: format!("file://{}", archive.display()),
-            archive_sha256: hrx::bundle::file_digest(&archive).unwrap(),
-            files: BTreeMap::from([("libhrx_npu.so.1".into(), digest(bytes))]),
-        };
-        fs::write(
-            dir.path().join("npu.json"),
-            serde_json::to_vec(&npu).unwrap(),
-        )
-        .unwrap();
-        npu
-    };
     // The cache location follows XDG, so isolate it by pointing XDG_CACHE_HOME
     // at a temporary root; hrx appends its own directory under that.
     let xdg = dir.path().join("xdg-cache");
@@ -159,10 +129,8 @@ fn separate_processes_provision_the_same_cache() {
                 .arg("prepare")
                 .env("XDG_CACHE_HOME", &xdg)
                 .env("HRX_BUNDLE_MANIFEST", &manifest_path)
-                .env("HRX_NPU_BUNDLE_MANIFEST", dir.path().join("npu.json"))
                 .env_remove("HRX_OFFLINE")
                 .env_remove("HRX_RUNTIME_DIR")
-                .env_remove("HRX_NPU_RUNTIME_DIR")
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .unwrap()
@@ -174,21 +142,14 @@ fn separate_processes_provision_the_same_cache() {
     manifest
         .verify(&cache.join("runtime").join(manifest.archive_sha256.clone()))
         .unwrap();
-    #[cfg(feature = "npu")]
-    npu.verify(&cache.join("npu-runtime").join(&npu.archive_sha256))
-        .unwrap();
-    // The CLI must reuse both components without consulting their download URLs.
+    // Both engines and the compiler reuse one verified bundle offline.
     fs::remove_file(dir.path().join("bundle.tar.gz")).unwrap();
-    #[cfg(feature = "npu")]
-    fs::remove_file(dir.path().join("npu.tar.gz")).unwrap();
     let result = std::process::Command::new(env!("CARGO_BIN_EXE_hrx"))
         .arg("prepare")
         .env("XDG_CACHE_HOME", &xdg)
         .env("HRX_BUNDLE_MANIFEST", &manifest_path)
-        .env("HRX_NPU_BUNDLE_MANIFEST", dir.path().join("npu.json"))
         .env("HRX_OFFLINE", "1")
         .env_remove("HRX_RUNTIME_DIR")
-        .env_remove("HRX_NPU_RUNTIME_DIR")
         .output()
         .unwrap();
     assert!(
@@ -198,53 +159,31 @@ fn separate_processes_provision_the_same_cache() {
     );
 }
 
-#[cfg(feature = "npu")]
 #[test]
-fn prepare_reports_gpu_directory_when_npu_provisioning_fails() {
-    for offline in [false, true] {
-        let dir = tempfile::tempdir().unwrap();
-        let gpu = fixture(dir.path());
-        let npu = hrx::npu::provision::Manifest {
-            schema: 1,
-            component: "npu-runtime".into(),
-            revision: "test".into(),
-            url: format!("file://{}", dir.path().join("missing-npu.tar.gz").display()),
-            archive_sha256: digest(b"unavailable archive"),
-            files: BTreeMap::from([("libhrx_npu.so.1".into(), digest(b"test shim"))]),
-        };
-        let gpu_manifest = dir.path().join("gpu.json");
-        let npu_manifest = dir.path().join("npu.json");
-        fs::write(&gpu_manifest, serde_json::to_vec(&gpu).unwrap()).unwrap();
-        fs::write(&npu_manifest, serde_json::to_vec(&npu).unwrap()).unwrap();
-        let xdg = dir.path().join("xdg-cache");
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_hrx"));
-        command
-            .arg("prepare")
-            .arg(dir.path().join("bundle.tar.gz"))
-            .env("XDG_CACHE_HOME", &xdg)
-            .env("HRX_BUNDLE_MANIFEST", &gpu_manifest)
-            .env("HRX_NPU_BUNDLE_MANIFEST", &npu_manifest)
-            .env_remove("HRX_RUNTIME_DIR")
-            .env_remove("HRX_NPU_RUNTIME_DIR")
-            .env_remove("HRX_OFFLINE");
-        if offline {
-            command.env("HRX_OFFLINE", "1");
-        }
-        let output = command.output().unwrap();
-        assert!(!output.status.success());
-        assert!(!output.stderr.is_empty());
-        let destination = xdg.join("hrx/runtime").join(&gpu.archive_sha256);
-        assert_eq!(
-            String::from_utf8(output.stdout).unwrap(),
-            format!("{}\n", destination.display()),
-            "stderr: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        gpu.verify(&destination).unwrap();
-        assert!(
-            !xdg.join("hrx/npu-runtime")
-                .join(&npu.archive_sha256)
-                .exists()
-        );
-    }
+fn prepare_rejects_incomplete_unified_bundle_atomically() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut manifest = fixture(dir.path());
+    manifest
+        .files
+        .insert("missing.so".into(), digest(b"missing"));
+    let path = dir.path().join("manifest.json");
+    fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let xdg = dir.path().join("xdg");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_hrx"))
+        .arg("prepare")
+        .arg(dir.path().join("bundle.tar.gz"))
+        .env("XDG_CACHE_HOME", &xdg)
+        .env("HRX_BUNDLE_MANIFEST", &path)
+        .env_remove("HRX_RUNTIME_DIR")
+        .env_remove("HRX_OFFLINE")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!output.stderr.is_empty());
+    assert!(output.stdout.is_empty());
+    assert!(
+        !xdg.join("hrx/runtime")
+            .join(manifest.archive_sha256)
+            .exists()
+    );
 }

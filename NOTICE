@@ -1,69 +1,15 @@
-HRX native distribution
+HRX 0.8 native distribution
 
-This distribution contains software from the projects below. Their original
-copyright and permission notices are reproduced in the LICENSE-*.txt files.
-The MIT license for hrx-rs does not replace these component licenses.
+libamdf and Loom derive from HRX/IREE under Apache-2.0 WITH LLVM-exception.
+The C++ importer includes Roberto Raggi's MIT-licensed cplusplus parser.
+CORE-MATH and AMD ISA tables retain their MIT notices; HSA headers retain NCSA.
+Linux syscall headers retain their original notices and syscall exception.
+All component license texts and header notices accompany the libraries.
+The hrx-rs bridge is MIT licensed.
 
-libhsa-runtime64.so.1: ROCR-Runtime 1.21.0
-  NCSA AND MIT AND BSD-2-Clause
-  LICENSE-ROCR.txt, LICENSE-ROCT.txt, LICENSE-ROCT-rbtree.txt, LICENSE-libdrm.txt, LICENSE-source-attributions.txt
-librocprofiler-register.so.0: rocprofiler-register 0.6.0
-  MIT AND BSD-3-Clause
-  LICENSE-rocprofiler-register.txt, LICENSE-fmt.txt, LICENSE-glog.txt, LICENSE-source-attributions.txt
-librocm_sysdeps_elf.so.1: elfutils/libelf 0.192
-  LGPL-3.0-or-later
-  LICENSE-elfutils-LGPL-3.0.txt, LICENSE-elfutils-GPL-3.0.txt, LICENSE-source-attributions.txt
-librocm_sysdeps_numa.so.1: numactl/libnuma 2.0.19
-  LGPL-2.1-only
-  LICENSE-numactl-LGPL-2.1.txt, LICENSE-source-attributions.txt
-librocm_sysdeps_drm.so.2: libdrm 2.4.127
-  MIT
-  LICENSE-libdrm.txt, LICENSE-source-attributions.txt
-librocm_sysdeps_drm_amdgpu.so.1: libdrm/AMDGPU 2.4.127
-  MIT
-  LICENSE-libdrm.txt, LICENSE-source-attributions.txt
-librocm_sysdeps_bz2.so: bzip2 1.0.8
-  bzip2-1.0.6
-  LICENSE-bzip2.txt, LICENSE-source-attributions.txt
-librocm_sysdeps_z.so.1: zlib 1.3.2
-  Zlib
-  LICENSE-zlib.txt, LICENSE-source-attributions.txt
-librocm_sysdeps_zstd.so.1: Zstandard 1.5.7
-  BSD-3-Clause
-  LICENSE-zstd.txt, LICENSE-source-attributions.txt
-librocm_sysdeps_liblzma.so.5: XZ Utils/liblzma 5.8.1
-  0BSD
-  LICENSE-xz-0BSD.txt, LICENSE-source-attributions.txt
-libhrx.so: HRX / Loom 556c648e8f301ad9656d325687cc93b417ea78ff
-  Apache-2.0 WITH LLVM-exception AND MIT AND NCSA
-  LICENSE-HRX.txt, LICENSE-CORE-MATH.txt, LICENSE-HSA-headers.txt, LICENSE-SPIRV-Headers.txt, LICENSE-Vulkan-Headers.txt, LICENSE-AMDGPU-ISA.txt
-libhrx.so.0: HRX / Loom 556c648e8f301ad9656d325687cc93b417ea78ff
-  Apache-2.0 WITH LLVM-exception AND MIT AND NCSA
-  LICENSE-HRX.txt, LICENSE-CORE-MATH.txt, LICENSE-HSA-headers.txt, LICENSE-SPIRV-Headers.txt, LICENSE-Vulkan-Headers.txt, LICENSE-AMDGPU-ISA.txt
-libloomc.so: HRX / Loom 556c648e8f301ad9656d325687cc93b417ea78ff
-  Apache-2.0 WITH LLVM-exception AND MIT AND NCSA
-  LICENSE-HRX.txt, LICENSE-CORE-MATH.txt, LICENSE-HSA-headers.txt, LICENSE-SPIRV-Headers.txt, LICENSE-Vulkan-Headers.txt, LICENSE-AMDGPU-ISA.txt
+Modified source, patches and build recipes:
+https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-amdf-0.8/hrx-native-sources.tar.gz
+SHA-256: 037fbcef966f1398499abcc41ea7f61205064aa85739c48deb70ed46b21dff6f
 
-rocprofiler-register embeds fmt 11.1.4 and glog 0.7.1. HSA embeds the
-ROCT thunk and its Nginx-derived rbtree. HRX/Loom include IREE and the
-CORE-MATH adaptation. Zstandard includes xxHash by Yann Collet / Meta.
-Compiler tables use AMD GPU ISA XML (MIT); compiler/runtime builds also
-use HSA, SPIR-V and Vulkan headers. Their source licenses are included.
-
-HRX/Loom are modified by 8 patches distributed with the source.
-AMD modifies sysdeps library names and symbol versions; its complete build
-recipes and patch scripts are in the accompanying TheRock source archive.
-No further changes are made to the AMD library bytes.
-
-libelf is distributed under LGPL-3.0-or-later; libnuma under LGPL-2.1-only.
-Corresponding source, modification/build scripts, and all license texts are
-available alongside the binary archive at no charge:
-https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-hrx-update/hrx-native-sources.tar.gz
-SHA-256: bcb1bd1a8870cb848e56bdce26ff347beec4d87e3b7bf4bb652b640d49da6f6e
-
-You may modify or replace these shared libraries. For a local replacement,
-copy the runtime directory, replace the library while preserving its ABI,
-and set HRX_RUNTIME_DIR to that directory. This bypasses the cache integrity
-checks. Reverse engineering for debugging modifications to these LGPL
-libraries is permitted. See RELEASE.md in the source archive for build
-instructions and LICENSE-elfutils-* / LICENSE-numactl-* for full terms.
+Benchmark fixtures in native/qualification derive from krea2-hrx (MIT) and
+h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.

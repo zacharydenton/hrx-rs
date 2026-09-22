@@ -145,6 +145,11 @@ impl Handle<loomc_result_t> {
                         severity: d.severity.into(),
                         code: string(d.code),
                         message: string(d.message),
+                        source: if d.range.source.is_null() {
+                            String::new()
+                        } else {
+                            string(self.api.loomc_source_identifier(d.range.source))
+                        },
                         line: d.range.start_line,
                         column: d.range.start_column,
                     }
@@ -170,6 +175,7 @@ pub(super) struct Prepared {
     environment: Handle<loomc_target_environment_t>,
     api: Arc<Loomc>,
     pool: Pool,
+    artifact_format: &'static str,
 }
 // These handles are immutable after construction; Loom documents concurrent
 // compilation/linking with independent modules and exclusive workspaces.
@@ -220,11 +226,18 @@ impl Prepared {
         architecture: &crate::Target,
         processor_mode: super::ProcessorMode,
     ) -> Result<Self> {
+        if architecture.is_xdna() && processor_mode != super::ProcessorMode::Default {
+            return Err(Error::Message("CU/WGP mode applies only to AMDGPU".into()));
+        }
         let api = library(path, identity)?;
         unsafe {
             let alloc = api.loomc_allocator_system();
             let environment = output(&api, api.loomc_target_environment_release, |out| {
-                api.loomc_target_environment_create_amdgpu(alloc, out)
+                if architecture.is_xdna() {
+                    api.loomc_target_environment_create_xdna(alloc, out)
+                } else {
+                    api.loomc_target_environment_create_amdgpu(alloc, out)
+                }
             })?;
             let target = loomc_context_target_options_t {
                 type_: LOOMC_STRUCTURE_TYPE_CONTEXT_TARGET_OPTIONS,
@@ -265,12 +278,21 @@ impl Prepared {
                 },
             };
             let profile = output(&api, api.loomc_target_profile_release, |out| {
-                api.loomc_target_profile_create_amdgpu(
-                    environment.raw,
-                    &profile_options,
-                    alloc,
-                    out,
-                )
+                if architecture.is_xdna() {
+                    api.loomc_target_profile_create_xdna(
+                        environment.raw,
+                        view(architecture.as_str()),
+                        alloc,
+                        out,
+                    )
+                } else {
+                    api.loomc_target_profile_create_amdgpu(
+                        environment.raw,
+                        &profile_options,
+                        alloc,
+                        out,
+                    )
+                }
             })?;
             let linker = output(&api, api.loomc_linker_release, |out| {
                 api.loomc_linker_create(context.raw, ptr::null(), alloc, out)
@@ -304,6 +326,7 @@ impl Prepared {
                 context,
                 environment,
                 api,
+                artifact_format: architecture.artifact_format(),
                 pool: Pool {
                     state: Mutex::new(PoolState {
                         idle: Vec::new(),
@@ -353,24 +376,32 @@ impl Prepared {
             unsafe { self.api.loomc_workspace_trim(workspace.0.raw) }
         }
     }
-    pub(super) fn index(&self, source: &str) -> Result<(Index, Vec<Diagnostic>)> {
+    unsafe fn source(
+        &self,
+        identifier: &str,
+        contents: &str,
+        format: u32,
+    ) -> Result<Handle<loomc_source_t>> {
+        let options = loomc_source_options_t {
+            type_: LOOMC_STRUCTURE_TYPE_SOURCE_OPTIONS,
+            structure_size: size_of::<loomc_source_options_t>(),
+            format,
+            identifier: view(identifier),
+            contents: loomc_byte_span_t {
+                data: contents.as_ptr(),
+                data_length: contents.len(),
+            },
+            storage: LOOMC_SOURCE_STORAGE_COPY,
+            ..Default::default()
+        };
+        output(&self.api, self.api.loomc_source_release, |out| unsafe {
+            self.api
+                .loomc_source_create(&options, self.api.loomc_allocator_system(), out)
+        })
+    }
+    pub(super) fn index(&self, sources: &[super::Source]) -> Result<(Index, Vec<Diagnostic>)> {
         let api = &self.api;
         unsafe {
-            let options = loomc_source_options_t {
-                type_: LOOMC_STRUCTURE_TYPE_SOURCE_OPTIONS,
-                structure_size: size_of::<loomc_source_options_t>(),
-                format: LOOMC_SOURCE_FORMAT_TEXT,
-                identifier: view("kernel.loom"),
-                contents: loomc_byte_span_t {
-                    data: source.as_ptr(),
-                    data_length: source.len(),
-                },
-                storage: LOOMC_SOURCE_STORAGE_COPY,
-                ..Default::default()
-            };
-            let source = output(api, api.loomc_source_release, |out| {
-                api.loomc_source_create(&options, api.loomc_allocator_system(), out)
-            })?;
             let builder = output(api, api.loomc_link_index_builder_release, |out| {
                 api.loomc_link_index_builder_create(
                     self.context.raw,
@@ -379,19 +410,103 @@ impl Prepared {
                     out,
                 )
             })?;
-            status(
-                api,
-                api.loomc_link_index_builder_add_source(
-                    builder.raw,
-                    source.raw,
-                    ptr::null(),
-                    ptr::null_mut(),
-                ),
-            )?;
-            let (index, diagnostics) =
+            let mut diagnostics = Vec::new();
+            for source in sources {
+                let source = match source {
+                    super::Source::Loom {
+                        identifier,
+                        contents,
+                    } => self.source(identifier, contents, LOOMC_SOURCE_FORMAT_TEXT)?,
+                    super::Source::Cxx(unit) => {
+                        let lease = self.workspace()?;
+                        let input = self.source(
+                            &unit.identifier,
+                            &unit.contents,
+                            LOOMC_SOURCE_FORMAT_UNKNOWN,
+                        )?;
+                        let mut provider = IncludeProvider {
+                            api,
+                            headers: &unit.headers,
+                        };
+                        let paths: Vec<_> = unit.include_paths.iter().map(|s| view(s)).collect();
+                        let defines: Vec<_> = unit
+                            .defines
+                            .iter()
+                            .map(|(name, value)| loomc_cxx_define_t {
+                                name: view(name),
+                                value: view(value),
+                            })
+                            .collect();
+                        let roots: Vec<_> = unit.roots.iter().map(|s| view(s)).collect();
+                        let options = loomc_cxx_import_options_t {
+                            type_: LOOMC_STRUCTURE_TYPE_CXX_IMPORT_OPTIONS,
+                            structure_size: size_of::<loomc_cxx_import_options_t>(),
+                            standard: view(unit.standard.as_str()),
+                            triple: view("x86_64-unknown-linux-gnu"),
+                            data_model: LOOMC_CXX_DATA_MODEL_LP64,
+                            flags: if unit.approximate_functions {
+                                LOOMC_CXX_IMPORT_FLAG_APPROXIMATE_FUNCTIONS
+                            } else {
+                                0
+                            },
+                            source_provider: loomc_cxx_source_provider_t {
+                                fn_: Some(include_source),
+                                user_data: (&mut provider as *mut IncludeProvider<'_>).cast(),
+                            },
+                            include_paths: paths.as_ptr(),
+                            include_path_count: paths.len(),
+                            defines: defines.as_ptr(),
+                            define_count: defines.len(),
+                            roots: roots.as_ptr(),
+                            root_count: roots.len(),
+                            ..Default::default()
+                        };
+                        let (module, imported) =
+                            result_call(api, api.loomc_module_release, |out, result| {
+                                api.loomc_module_import_cxx(
+                                    self.context.raw,
+                                    lease.raw(),
+                                    input.raw,
+                                    &options,
+                                    api.loomc_allocator_system(),
+                                    out,
+                                    result,
+                                )
+                            })
+                            .map_err(|e| e.context(format!("importing {}", unit.identifier)))?;
+                        diagnostics.extend(imported);
+                        let options = loomc_module_serialize_options_t {
+                            type_: LOOMC_STRUCTURE_TYPE_MODULE_SERIALIZE_OPTIONS,
+                            structure_size: size_of::<loomc_module_serialize_options_t>(),
+                            format: LOOMC_SOURCE_FORMAT_BYTECODE,
+                            identifier: view(&unit.identifier),
+                            ..Default::default()
+                        };
+                        output(api, api.loomc_source_release, |out| {
+                            api.loomc_module_serialize_to_source(
+                                module.raw,
+                                &options,
+                                api.loomc_allocator_system(),
+                                out,
+                            )
+                        })?
+                    }
+                };
+                status(
+                    api,
+                    api.loomc_link_index_builder_add_source(
+                        builder.raw,
+                        source.raw,
+                        ptr::null(),
+                        ptr::null_mut(),
+                    ),
+                )?;
+            }
+            let (index, indexed) =
                 result_call(api, api.loomc_link_index_release, |out, result| {
                     api.loomc_link_index_builder_finish(builder.raw, out, result)
                 })?;
+            diagnostics.extend(indexed);
             Ok((Index(index), diagnostics))
         }
     }
@@ -462,21 +577,25 @@ impl Prepared {
             })?;
             diagnostics.extend(result.check().map_err(|e| e.context("lowering export"))?);
             drop(result);
-            let manifest = loomc_artifact_manifest_options_t {
-                type_: LOOMC_STRUCTURE_TYPE_ARTIFACT_MANIFEST_OPTIONS,
-                structure_size: size_of::<loomc_artifact_manifest_options_t>(),
-                mode: LOOMC_ARTIFACT_MANIFEST_MODE_DETAILS,
+            let report_options = loomc_compile_report_options_t {
+                type_: LOOMC_STRUCTURE_TYPE_COMPILE_REPORT_OPTIONS,
+                structure_size: size_of::<loomc_compile_report_options_t>(),
+                mode: match spec.report {
+                    super::ReportMode::None => LOOMC_COMPILE_REPORT_MODE_NONE,
+                    super::ReportMode::Summary => LOOMC_COMPILE_REPORT_MODE_SUMMARY,
+                    super::ReportMode::Details => LOOMC_COMPILE_REPORT_MODE_DETAILS,
+                },
                 ..Default::default()
             };
             let options = loomc_emit_options_t {
                 type_: LOOMC_STRUCTURE_TYPE_EMIT_OPTIONS,
                 structure_size: size_of::<loomc_emit_options_t>(),
-                next: if spec.report {
-                    (&manifest as *const loomc_artifact_manifest_options_t).cast()
+                next: if spec.report != super::ReportMode::None {
+                    (&report_options as *const loomc_compile_report_options_t).cast()
                 } else {
                     ptr::null()
                 },
-                artifact_format: view("amdgpu-hsaco"),
+                artifact_format: view(self.artifact_format),
                 artifact_flags: LOOMC_EMIT_ARTIFACT_FLAG_PRIMARY,
                 ..Default::default()
             };
@@ -506,20 +625,59 @@ impl Prepared {
                     Arc::<[u8]>::from(std::slice::from_raw_parts(span.data, span.data_length))
                 };
                 api.loomc_allocator_free(alloc, span.data.cast_mut().cast());
-                if string(artifact.format) == "amdgpu-hsaco" {
+                if string(artifact.format) == self.artifact_format {
                     bytes = Some(data);
-                } else if artifact.kind == LOOMC_ARTIFACT_KIND_REPORT {
+                } else if string(artifact.format) == "loom-compile-report-json" {
                     report = Some(serde_json::from_slice(&data)?);
                 }
             }
-            let bytes = bytes
-                .filter(|v| !v.is_empty())
-                .ok_or_else(|| Error::Message("Loom emitted no AMDGPU artifact".into()))?;
+            let bytes = bytes.filter(|v| !v.is_empty()).ok_or_else(|| {
+                Error::Message(format!("Loom emitted no {} artifact", self.artifact_format))
+            })?;
             Ok(super::Compiled {
                 bytes,
                 diagnostics,
                 report,
             })
         }
+    }
+}
+
+struct IncludeProvider<'a> {
+    api: &'a Loomc,
+    headers: &'a std::collections::BTreeMap<String, String>,
+}
+// The importer invokes this callback synchronously and retains no borrowed
+// strings or callback state. A missing virtual header never consults the host.
+unsafe extern "C" fn include_source(
+    data: *mut std::ffi::c_void,
+    path: loomc_string_view_t,
+    out: *mut *mut loomc_source_t,
+) -> loomc_status_t {
+    unsafe {
+        *out = ptr::null_mut();
+        let provider = &*data.cast::<IncludeProvider<'_>>();
+        let path_string = string(path);
+        let Ok(key) = super::source::virtual_path(&path_string) else {
+            return ptr::null_mut();
+        };
+        let Some(contents) = provider.headers.get(&key) else {
+            return ptr::null_mut();
+        };
+        let options = loomc_source_options_t {
+            type_: LOOMC_STRUCTURE_TYPE_SOURCE_OPTIONS,
+            structure_size: size_of::<loomc_source_options_t>(),
+            format: LOOMC_SOURCE_FORMAT_UNKNOWN,
+            identifier: path,
+            contents: loomc_byte_span_t {
+                data: contents.as_ptr(),
+                data_length: contents.len(),
+            },
+            storage: LOOMC_SOURCE_STORAGE_COPY,
+            ..Default::default()
+        };
+        provider
+            .api
+            .loomc_source_create(&options, provider.api.loomc_allocator_system(), out)
     }
 }

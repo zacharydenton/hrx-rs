@@ -1,12 +1,10 @@
 use crate::{Error, Result};
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
-/// The native target family used for executable loading.
-pub const TARGET_FAMILY: &CStr = c"amdgpu";
 /// Default compiler target; devices report their architecture at runtime.
 pub const TARGET_KEY: &str = "gfx1151";
 
-/// An AMDGPU architecture key shared by devices, manifests and compiler profiles.
+/// An exact AMDGPU or XDNA deployment key.
 ///
 /// This is the *profile* target: what a device reports and what the compiler
 /// emits for. It is deliberately narrower than the target a Loom source file
@@ -21,6 +19,9 @@ impl Target {
     /// Availability is determined by the selected native runtime and compiler.
     /// Keys must be bare architecture names, without feature suffixes.
     pub fn new(key: &str) -> Result<Self> {
+        if key == "amd.xdna.strix_halo.17f0_11" {
+            return Ok(Self(CString::new(key).unwrap()));
+        }
         if key.contains(':') {
             return Err(Error::Message(format!(
                 "expected a bare AMDGPU target, found feature-suffixed name {key:?}"
@@ -38,17 +39,31 @@ impl Target {
             CString::new(key).expect("validated target has no NUL"),
         ))
     }
-    // Device properties may include features such as :sramecc+:xnack-. Profiles
-    // and executable loading take the base architecture; features are not configured here.
-    pub(crate) fn from_device_architecture(name: &str) -> Result<Self> {
-        Self::new(name.split(':').next().unwrap_or(name))
+    /// Exact Strix Halo NPU5 deployment profile.
+    pub fn xdna() -> Self {
+        Self::new("amd.xdna.strix_halo.17f0_11").unwrap()
+    }
+    /// Whether this profile targets native XDNA execution.
+    pub fn is_xdna(&self) -> bool {
+        self.as_str().starts_with("amd.xdna.")
+    }
+    pub(crate) fn artifact_format(&self) -> &'static str {
+        if self.is_xdna() {
+            "xdna"
+        } else {
+            "amdgpu-hsaco"
+        }
+    }
+    pub(crate) fn artifact_filename(&self) -> &'static str {
+        if self.is_xdna() {
+            "kernel.xdna"
+        } else {
+            "kernel.hsaco"
+        }
     }
     /// Exact architecture key.
     pub fn as_str(&self) -> &str {
         self.0.to_str().expect("validated ASCII target")
-    }
-    pub(crate) fn as_c_str(&self) -> &CStr {
-        &self.0
     }
     /// Bundle platform and architecture identifier.
     pub fn manifest_key(&self) -> String {
@@ -59,27 +74,5 @@ impl Target {
 impl Default for Target {
     fn default() -> Self {
         Self::new(TARGET_KEY).expect("valid default target")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn device_features_are_separate_from_target_keys() {
-        for name in ["gfx90a", "gfx90a:sramecc+:xnack-", "gfx90a:xnack+"] {
-            assert_eq!(
-                Target::from_device_architecture(name).unwrap().as_str(),
-                "gfx90a"
-            );
-        }
-        assert!(Target::from_device_architecture(":xnack-").is_err());
-        assert!(Target::from_device_architecture("invalid:xnack-").is_err());
-        assert!(
-            Target::new("gfx90a:sramecc+:xnack-")
-                .unwrap_err()
-                .to_string()
-                .contains("bare AMDGPU target")
-        );
     }
 }

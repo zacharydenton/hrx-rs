@@ -1,16 +1,11 @@
 #!/usr/bin/env bash
-# Maintainer-only Ubuntu 26.04 build. Source is already pinned and patched.
+# Maintainer-only unified native build in the pinned Ubuntu 26.04 image.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends clang cmake ninja-build git python3 ca-certificates
-cmake -S /work/hrx-source -B /work/hrx-clang -G Ninja \
-  -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
-  -DCMAKE_BUILD_TYPE=Release -DLOOM_TARGET_AMDGPU=ON \
-  -DLOOM_TARGET_AMDGPU_TARGETS=gfx1151 -DIREE_ENABLE_LIBBACKTRACE=OFF \
-  -DIREE_BUILD_TESTS=OFF -DIREE_BUILD_BENCHMARKS=OFF \
-  -DLIBHRX_BUILD_CTS=OFF -DHRX_INSTALL_TESTS=OFF \
-  -DIREE_HAL_DRIVER_AMDGPU=ON
-cmake --build /work/hrx-clang --target loomc_shared libhrx_src_libhrx_hrx -j 16
+apt-get install -y --no-install-recommends clang cmake ninja-build git python3 ca-certificates patch
+export CC=/usr/bin/clang
+export CXX=/usr/bin/clang++
+bash /repo/scripts/build-amdf.sh /work/hrx-source /work/hrx-clang
 clang --version > /work/hrx-clang/compiler-version.txt
 dpkg-query -W > /work/hrx-clang/build-packages.txt

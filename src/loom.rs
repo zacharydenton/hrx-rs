@@ -10,11 +10,15 @@
 )]
 mod ffi;
 mod native;
+mod report;
+mod source;
 use crate::{
     Error, Result,
     bundle::{self, Lock},
 };
+pub use report::{CompileReport, EntryChange, EntryResources};
 use serde::{Deserialize, Serialize};
+pub use source::{CxxSource, CxxStandard, Source};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
@@ -57,6 +61,9 @@ pub struct Diagnostic {
     pub code: String,
     /// Rendered diagnostic message.
     pub message: String,
+    /// Diagnostic source identifier, when supplied by the compiler.
+    #[serde(default)]
+    pub source: String,
     /// One-based source line, or zero when unavailable.
     pub line: u32,
     /// One-based source column, or zero when unavailable.
@@ -295,13 +302,46 @@ impl Compiler {
     /// Retain a source module, sharing its parsed index across specializations.
     /// Parsing is deferred until the first artifact-cache miss.
     pub fn module(&self, source: &str) -> Module {
-        let digest = bundle::digest(source.as_bytes());
+        self.source_module(vec![Source::loom("kernel.loom", source)])
+    }
+    /// Link named Loom and C/C++ inputs in one compiler-owned source module.
+    /// Source bytes, headers, macro order and import options all enter its identity.
+    pub fn sources(&self, mut sources: Vec<Source>) -> Result<Module> {
+        if sources.is_empty() {
+            return Err(Error::Message(
+                "a compilation module requires source inputs".into(),
+            ));
+        }
+        let mut identifiers = std::collections::BTreeSet::new();
+        for source in &mut sources {
+            source.validate()?;
+            let identifier = match source {
+                Source::Cxx(unit) => {
+                    unit.normalize()?;
+                    &unit.identifier
+                }
+                Source::Loom { identifier, .. } => identifier,
+            };
+            if !identifiers.insert(identifier.clone()) {
+                return Err(Error::Message("duplicate source identifier".into()));
+            }
+        }
+        Ok(self.source_module(sources))
+    }
+    /// Import a translation unit; parsing is deferred until compilation.
+    pub fn import_cxx(&self, source: CxxSource) -> Result<Module> {
+        self.sources(vec![Source::Cxx(source)])
+    }
+    fn source_module(&self, sources: Vec<Source>) -> Module {
+        let digest = bundle::digest(
+            &serde_json::to_vec(&sources).expect("source inputs contain only JSON-safe values"),
+        );
         let mut modules = self.0.modules.lock().unwrap_or_else(|e| e.into_inner());
         let data = if let Some(data) = modules.get(&digest) {
             data.clone()
         } else {
             let data = Arc::new(ModuleData {
-                source: source.into(),
+                sources,
                 digest: digest.clone(),
                 index: Mutex::new(None),
             });
@@ -382,6 +422,7 @@ mod diagnostic_tests {
             severity: Severity::from(severity),
             code: String::new(),
             message: message.into(),
+            source: String::new(),
             line,
             column: 1,
         }
@@ -409,7 +450,7 @@ mod diagnostic_tests {
 }
 
 struct ModuleData {
-    source: Arc<str>,
+    sources: Vec<Source>,
     digest: String,
     index: Mutex<Option<(Arc<native::Index>, Vec<Diagnostic>)>>,
 }
@@ -420,6 +461,19 @@ pub struct Module {
     data: Arc<ModuleData>,
     compiler: Compiler,
 }
+/// Amount of compiler evidence collected alongside an executable.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportMode {
+    /// Emit no report and avoid detail collection.
+    #[default]
+    None,
+    /// Collect artifact facts and summary compiler analysis.
+    Summary,
+    /// Include detailed provenance, scheduling, and resource evidence.
+    Details,
+}
+
 /// One export and its exact configuration within a module.
 #[derive(Clone, Debug, Default)]
 pub struct Specialization {
@@ -427,8 +481,8 @@ pub struct Specialization {
     symbol: String,
     /// Fully qualified configuration keys and Loom value spellings.
     config: BTreeMap<String, String>,
-    /// Request a native resource manifest in the resulting artifact.
-    report: bool,
+    /// Select compiler analysis collected beside the executable.
+    report: ReportMode,
 }
 impl Specialization {
     /// Select an export with no configuration overrides.
@@ -461,12 +515,12 @@ impl Specialization {
     }
     /// Request or suppress the compiler resource report.
     #[must_use]
-    pub fn with_report(mut self, report: bool) -> Self {
+    pub fn with_report(mut self, report: ReportMode) -> Self {
         self.report = report;
         self
     }
     /// Request or suppress the compiler resource report in place.
-    pub fn set_report(&mut self, report: bool) -> &mut Self {
+    pub fn set_report(&mut self, report: ReportMode) -> &mut Self {
         self.report = report;
         self
     }
@@ -480,9 +534,9 @@ impl Specialization {
     pub fn configuration(&self) -> &BTreeMap<String, String> {
         &self.config
     }
-    /// Whether a compiler resource report was requested.
+    /// Compiler evidence requested by this specialization.
     #[must_use]
-    pub fn report_requested(&self) -> bool {
+    pub fn report_mode(&self) -> ReportMode {
         self.report
     }
     fn validate(&self) -> Result<()> {
@@ -509,7 +563,7 @@ struct Record {
     symbol: String,
     sha256: String,
     diagnostics: Vec<Diagnostic>,
-    report: Option<serde_json::Value>,
+    report: Option<CompileReport>,
 }
 /// Owned native executable bytes and their verified compilation metadata.
 #[derive(Clone, Debug)]
@@ -547,8 +601,8 @@ impl Artifact {
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.record.diagnostics
     }
-    /// Optional native resource manifest.
-    pub fn report(&self) -> Option<&serde_json::Value> {
+    /// Optional structured compiler evidence, in the pinned compiler's schema.
+    pub fn report(&self) -> Option<&CompileReport> {
         self.record.report.as_ref()
     }
 }
@@ -566,7 +620,7 @@ impl Module {
     pub fn key(&self, spec: &Specialization) -> Result<String> {
         spec.validate()?;
         let base = bundle::digest(&serde_json::to_vec(&(
-            "loomc-v1",
+            "loomc-v2",
             self.compiler.identity(),
             self.identity(),
             &spec.symbol,
@@ -603,7 +657,7 @@ impl Module {
         let (index, mut diagnostics) = {
             let mut slot = self.data.index.lock().unwrap_or_else(|e| e.into_inner());
             if slot.is_none() {
-                let (index, diagnostics) = self.compiler.0.native.index(&self.data.source)?;
+                let (index, diagnostics) = self.compiler.0.native.index(&self.data.sources)?;
                 *slot = Some((Arc::new(index), diagnostics));
             }
             slot.as_ref().unwrap().clone()
@@ -624,10 +678,21 @@ impl Module {
             symbol: spec.symbol.clone(),
             sha256: bundle::digest(&compiled.bytes),
             diagnostics,
-            report: compiled.report,
+            report: compiled
+                .report
+                .map(|json| {
+                    CompileReport::new(
+                        self.compiler.identity().into(),
+                        self.compiler.0.target.as_str().into(),
+                        self.compiler.0.processor_mode,
+                        json,
+                    )
+                })
+                .transpose()?,
         };
         let staging = tempfile::tempdir_in(cache)?;
-        let output = staging.path().join("kernel.hsaco");
+        let filename = self.compiler.target().artifact_filename();
+        let output = staging.path().join(filename);
         fs::write(&output, &compiled.bytes)?;
         let metadata = serde_json::to_vec(&record)?;
         fs::write(staging.path().join("artifact.json"), &metadata)?;
@@ -635,7 +700,7 @@ impl Module {
             staging.path().join("artifact.sha256"),
             bundle::digest(&metadata),
         )?;
-        for file in ["kernel.hsaco", "artifact.json", "artifact.sha256"] {
+        for file in [filename, "artifact.json", "artifact.sha256"] {
             fs::File::open(staging.path().join(file))?.sync_all()?;
         }
         fs::File::open(staging.path())?.sync_all()?;
@@ -646,7 +711,7 @@ impl Module {
         fs::File::open(cache)?.sync_all()?;
         Ok(Artifact {
             bytes: compiled.bytes,
-            path: dir.join("kernel.hsaco"),
+            path: dir.join(filename),
             record,
         })
     }
@@ -667,7 +732,8 @@ fn cached(dir: &Path, key: &str) -> Option<Artifact> {
     if let Ok(file) = fs::File::open(dir.join("artifact.json")) {
         let _ = file.set_times(fs::FileTimes::new().set_accessed(std::time::SystemTime::now()));
     }
-    let path = dir.join("kernel.hsaco");
+    let target = crate::Target::new(&record.target).ok()?;
+    let path = dir.join(target.artifact_filename());
     let bytes = fs::read(&path).ok()?;
     if bytes.is_empty() || bundle::digest(&bytes) != record.sha256 {
         return None;
