@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.1 — bounded allocation queues
+
+- Reuse one lazy allocation stream per tracked runtime. Live tensors previously
+  retained a separate native GPU queue each, causing large SCRFD inference plans
+  to fail with `gpu.user_queue_create` status 28.
+- Reuse that stream for code loading and device validation as well. Graph
+  execution queues and cross-lane scheduling are unchanged.
+- Qualify 512 simultaneously live allocations, SCRFD's complete InsightFace
+  fixture, and the GPU/NPU integration suites on gfx1151 and NPU5.
+
 ## 0.8.0 — native GPU/NPU migration
 
 ## Prior upstream update (0.7 development)

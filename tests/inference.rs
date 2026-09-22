@@ -1403,3 +1403,29 @@ fn shared_budget_charges_storage_aliases_and_transfer_staging() {
     drop(tensor);
     assert_eq!(manager.statistics().reserved_bytes, 0);
 }
+
+#[test]
+#[ignore = "requires native GPU"]
+fn many_live_allocations_do_not_exhaust_native_queues() -> hrx::Result<()> {
+    use hrx::execution::{MemoryPlacement, Runtime};
+    let runtime = Runtime::new()?;
+    let mut buffers = Vec::new();
+    for _ in 0..256 {
+        buffers.push(runtime.allocate(64, MemoryPlacement::GpuLocal)?);
+        let host = runtime.allocate(64, MemoryPlacement::HostVisible)?;
+        assert!(host.map_read()?.iter().all(|byte| *byte == 0));
+        buffers.push(host);
+    }
+    assert_eq!(runtime.statistics().live_bytes, 512 * 64);
+    let mut graph = runtime.graph();
+    graph.fill(buffers[0].view(), 37)?;
+    graph.copy(buffers[1].view(), buffers[0].view())?;
+    let graph = graph.prepare()?;
+    graph.submit()?.wait()?;
+    assert!(buffers[1].map_read()?.iter().all(|byte| *byte == 37));
+    assert!(buffers[3].map_read()?.iter().all(|byte| *byte == 0));
+    drop(graph);
+    drop(buffers);
+    assert_eq!(runtime.statistics().live_bytes, 0);
+    Ok(())
+}

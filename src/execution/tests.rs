@@ -269,6 +269,7 @@ fn runtime_without_workers() -> Runtime {
             workers: Mutex::new(Vec::new()),
             gpu_index: options.gpu_index,
             copy_streams: std::array::from_fn(|_| Mutex::new(None)),
+            allocation_stream: Mutex::new(None),
         }),
         options,
     }

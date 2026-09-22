@@ -39,6 +39,7 @@ pub(super) struct RuntimeOwner {
     workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
     gpu_index: i32,
     copy_streams: [Mutex<Option<Arc<Mutex<graph::CopyStream>>>>; 3],
+    allocation_stream: Mutex<Option<crate::gpu::Stream>>,
 }
 impl Drop for RuntimeOwner {
     fn drop(&mut self) {
@@ -197,6 +198,7 @@ impl Runtime {
             workers: Mutex::new(Vec::new()),
             gpu_index: options.gpu_index,
             copy_streams: std::array::from_fn(|_| Mutex::new(None)),
+            allocation_stream: Mutex::new(None),
         });
         for name in ["hrx-upload", "hrx-compute", "hrx-download", "hrx-npu"] {
             let core = core.clone();
@@ -234,6 +236,22 @@ impl Runtime {
             budget: self.options.memory_budget.clone(),
         })
     }
+    // Buffers retain their allocating stream. Creating one per allocation
+    // therefore consumes one native queue per live tensor, even after the
+    // temporary Stream handle drops. Serialize allocation/initialization on a
+    // single lazy stream; execution graphs retain their independent queues.
+    fn allocation_stream(&self) -> Result<std::sync::MutexGuard<'_, Option<crate::gpu::Stream>>> {
+        let mut stream = self
+            .inner
+            .allocation_stream
+            .lock()
+            .map_err(|_| Error::DeviceLost("allocation stream poisoned".into()))?;
+        if stream.is_none() {
+            *stream = Some(crate::gpu::Device::open(self.inner.gpu_index)?.stream()?);
+        }
+        Ok(stream)
+    }
+
     /// Allocate initialized storage. Shared memory is exported and imported once.
     pub fn allocate(&self, bytes: usize, placement: MemoryPlacement) -> Result<Buffer> {
         self.allocate_inner(bytes, placement, None)
@@ -251,7 +269,8 @@ impl Runtime {
         buffer: crate::gpu::Buffer,
         placement: MemoryPlacement,
     ) -> Result<Buffer> {
-        let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
+        let mut allocation = self.allocation_stream()?;
+        let stream = allocation.as_mut().unwrap();
         if buffer.device_id() != stream.device_id() {
             return Err(Error::Message("buffer belongs to another device".into()));
         }
@@ -260,6 +279,7 @@ impl Runtime {
                 "adoption requires GpuLocal or Shared placement".into(),
             ));
         }
+        drop(allocation);
         self.allocate_inner(buffer.bytes(), placement, Some(buffer))
     }
 
@@ -300,7 +320,8 @@ impl Runtime {
         };
         match &placement {
             MemoryPlacement::GpuLocal => {
-                let mut stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
+                let mut allocation = self.allocation_stream()?;
+                let stream = allocation.as_mut().unwrap();
                 let buffer = if let Some(buffer) = adopted.take() {
                     buffer
                 } else {
@@ -314,7 +335,8 @@ impl Runtime {
                 storage.visibility.get_mut().unwrap().wrote(Engine::Gpu);
             }
             MemoryPlacement::HostVisible => {
-                let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
+                let mut allocation = self.allocation_stream()?;
+                let stream = allocation.as_mut().unwrap();
                 let buffer = stream.allocate_shared(bytes)?;
                 let pointer = buffer.device_ptr()?.cast::<u8>();
                 // Coherent host-local allocation, with no aliases or device uses.
@@ -328,7 +350,8 @@ impl Runtime {
             #[cfg(feature = "npu")]
             MemoryPlacement::Shared(device) | MemoryPlacement::NpuLocal(device) => {
                 let native = if matches!(placement, MemoryPlacement::Shared(_)) {
-                    let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
+                    let mut allocation = self.allocation_stream()?;
+                    let stream = allocation.as_mut().unwrap();
                     let gpu = if let Some(buffer) = adopted.take() {
                         // Register the same owned backing; its original native owner
                         // remains retained through the shared attachment's lifetime.
@@ -396,8 +419,10 @@ impl Runtime {
         block: [u32; 3],
         contract: KernelContract,
     ) -> Result<GpuKernel> {
-        let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
+        let mut allocation = self.allocation_stream()?;
+        let stream = allocation.as_mut().unwrap();
         let raw = unsafe { stream.load(path.as_ref(), symbol) }?;
+        drop(allocation);
         unsafe { self.adopt_gpu_kernel(raw, grid, block, contract) }
     }
 
@@ -414,7 +439,8 @@ impl Runtime {
     ) -> Result<GpuKernel> {
         contract.validate()?;
         crate::runtime::validate_export_launch(raw.info(), grid, block)?;
-        let stream = crate::gpu::Device::open(self.inner.gpu_index)?.stream()?;
+        let mut allocation = self.allocation_stream()?;
+        let stream = allocation.as_mut().unwrap();
         if raw.device_id() != stream.device_id() {
             return Err(Error::Message("kernel belongs to another device".into()));
         }
