@@ -80,7 +80,7 @@ Requires Rust 1.91 or later.
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.8.2", features = ["npu"] }
+hrx = { package = "hrx-rs", version = "0.8.3", features = ["npu"] }
 ```
 
 ```rust,no_run
@@ -103,6 +103,11 @@ synchronization need `&mut`. `Kernel` is `Clone`, retaining the executable.
 Transfers, fills, copies and dispatch bindings use `View`. Borrow a whole buffer
 with `buffer.binding()` and a subregion with `view.slice(offset, length)?`.
 `upload` queues a transfer through owned staging; `upload_blocking` waits for it.
+Ordinary GPU buffers use cacheable system memory; stream transfers perform the
+required host cache maintenance. For direct host pointers, use
+`allocate_shared` with external synchronization, or call `Buffer::cache_control`
+before host reads and after host writes on ordinary allocations.
+
 Events coordinate streams. `Stream::graph` records work as a dependency graph:
 each operation names its predecessors, and `&[]` starts an independent branch.
 Pass branch endings directly to their consumer. `join` collects dependencies
@@ -227,7 +232,7 @@ its own pinned native runtime and the Loom compiler.
 Install the CLI, including optional NPU support:
 
 ```sh
-cargo install hrx-rs --version 0.8.2 --locked --features npu
+cargo install hrx-rs --version 0.8.3 --locked --features npu
 hrx prepare
 hrx doctor
 ```

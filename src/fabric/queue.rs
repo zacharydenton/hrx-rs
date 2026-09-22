@@ -334,7 +334,7 @@ impl Queue {
         let argument_buffer =
             fabric.allocate(packed.len().max(64), std::slice::from_ref(&self.0.device))?;
         argument_buffer.write(0, &packed)?;
-        let fence = fabric.allocate(64, std::slice::from_ref(&self.0.device))?;
+        let fence = fabric.allocate_shared(64, std::slice::from_ref(&self.0.device))?;
         let address = fence.device_address(&self.0.device)?;
         let scratch = if kernel.0.info.private_bytes != 0 {
             let mut info = amdf_gpu_endpoint_info_t {
@@ -476,7 +476,7 @@ impl Queue {
         buffers.push(storage);
         buffers.sort_by_key(|buffer| Arc::as_ptr(&buffer.0) as usize);
         buffers.dedup_by(|a, b| Arc::ptr_eq(&a.0, &b.0));
-        let fence = fabric.allocate(64, std::slice::from_ref(self.device()))?;
+        let fence = fabric.allocate_shared(64, std::slice::from_ref(self.device()))?;
         let address = fence.device_address(self.device())?;
         let mut words = Vec::new();
         barrier(&mut words);
@@ -528,7 +528,7 @@ impl Queue {
         let fence = self
             .device()
             .fabric()
-            .allocate(64, std::slice::from_ref(self.device()))?;
+            .allocate_shared(64, std::slice::from_ref(self.device()))?;
         let output = fence.device_address(self.device())?;
         let mut words = Vec::with_capacity(40);
         // WAIT_REG_MEM32, memory space, unsigned >= comparison, MEC polling.

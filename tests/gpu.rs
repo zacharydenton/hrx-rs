@@ -35,6 +35,25 @@ static ALLOCATOR: counting::Counting = counting::Counting;
 
 #[test]
 #[ignore = "requires gfx1151"]
+fn partial_host_writes_preserve_gpu_written_cache_line_neighbors() -> hrx::Result<()> {
+    let mut stream = Stream::open()?;
+    let buffer = stream.allocate(128)?;
+    let mut actual = [0; 128];
+    for value in 1..=32u8 {
+        // Cache the old host view before the GPU replaces it.
+        stream.read_blocking(buffer.binding(), &mut actual)?;
+        stream.fill(buffer.binding(), value)?;
+        stream.upload_blocking(buffer.slice(17, 1), &[0xfe])?;
+        stream.read_blocking(buffer.binding(), &mut actual)?;
+        let mut expected = [value; 128];
+        expected[17] = 0xfe;
+        assert_eq!(actual, expected);
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires gfx1151"]
 fn nested_views_bound_stream_and_graph_operations() -> hrx::Result<()> {
     let mut stream = Stream::open()?;
     let source = stream.allocate(64)?;

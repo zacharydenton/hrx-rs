@@ -162,6 +162,9 @@ impl Buffer {
             return Err(Error::Busy("buffer is in use by a device".into()));
         }
         unsafe {
+            // A partial host write must preserve bytes in the same cache line
+            // that the GPU may have changed since the last host read.
+            self.cache_control(false, offset, bytes.len())?;
             ptr::copy_nonoverlapping(bytes.as_ptr(), self.0.pointer.add(offset), bytes.len());
             self.cache_control(true, offset, bytes.len())
         }
@@ -224,6 +227,7 @@ impl Drop for DeviceUse {
 
 #[derive(Default)]
 struct MemoryOwners {
+    coherent: bool,
     source: Option<Buffer>,
     reservation: Option<Arc<crate::residency::MemoryReservation>>,
 }
@@ -239,6 +243,21 @@ impl Drop for ExternalMemory {
     }
 }
 impl Fabric {
+    /// Allocate GPU-coherent host storage for direct host access and polling.
+    /// Host and device accesses must still be ordered by completion.
+    pub fn allocate_shared(&self, bytes: usize, devices: &[Device]) -> Result<Buffer> {
+        self.create_memory(
+            bytes,
+            devices,
+            AMDF_MEMORY_ACCESS_READ | AMDF_MEMORY_ACCESS_WRITE,
+            64,
+            None,
+            MemoryOwners {
+                coherent: true,
+                ..Default::default()
+            },
+        )
+    }
     /// Allocate host-visible system backing with access for every listed device.
     /// Devices must belong to this fabric; no implicit device activation occurs.
     pub fn allocate(&self, bytes: usize, devices: &[Device]) -> Result<Buffer> {
@@ -265,6 +284,7 @@ impl Fabric {
             64,
             None,
             MemoryOwners {
+                coherent: false,
                 source: None,
                 reservation: Some(reservation),
             },
@@ -303,6 +323,7 @@ impl Fabric {
             4096,
             None,
             MemoryOwners {
+                coherent: false,
                 source: Some(source.clone()),
                 reservation: None,
             },
@@ -330,7 +351,10 @@ impl Fabric {
             AMDF_MEMORY_ACCESS_READ | AMDF_MEMORY_ACCESS_WRITE,
             4096,
             Some(pointer),
-            MemoryOwners::default(),
+            MemoryOwners {
+                coherent: true,
+                ..Default::default()
+            },
         )
     }
     fn create_memory(
@@ -387,7 +411,7 @@ impl Fabric {
                 requirements: amdf_memory_access_requirements_t {
                     access,
                     flags: AMDF_MEMORY_FLAG_DEVICE_ADDRESS as u64
-                        | if device.endpoint().engine() == Engine::Gpu {
+                        | if owners.coherent && device.endpoint().engine() == Engine::Gpu {
                             AMDF_MEMORY_FLAG_HOST_COHERENT as u64
                         } else {
                             0
@@ -527,7 +551,8 @@ impl Fabric {
                     || Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     |source| source.0.needs_cache.clone(),
                 );
-                if devices.is_empty()
+                if !owners.coherent
+                    || devices.is_empty()
                     || devices
                         .iter()
                         .any(|device| device.endpoint().engine() != Engine::Gpu)

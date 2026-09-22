@@ -1,0 +1,52 @@
+diff --git a/libamdf/src/gpu/umd/kfd/memory.c b/libamdf/src/gpu/umd/kfd/memory.c
+index 708f33440..aa96bb767 100644
+--- a/libamdf/src/gpu/umd/kfd/memory.c
++++ b/libamdf/src/gpu/umd/kfd/memory.c
+@@ -69,7 +69,9 @@ static void amdf_gpu_kfd_memory_plan(
+       plan->native_flags |= KFD_IOC_ALLOC_MEM_FLAGS_PUBLIC;
+     }
+   } else {
+-    plan->native_flags |= KFD_IOC_ALLOC_MEM_FLAGS_COHERENT;
++    if ((plan->flags & AMDF_MEMORY_FLAG_HOST_COHERENT) != 0) {
++      plan->native_flags |= KFD_IOC_ALLOC_MEM_FLAGS_COHERENT;
++    }
+     if ((profile->roles & AMDF_MEMORY_PROFILE_ROLE_REGISTER) != 0) {
+       const uintptr_t pointer = (uintptr_t)create_info->registered_host_pointer;
+       plan->host_byte_offset = pointer & (device->page_size - 1);
+@@ -160,7 +162,9 @@ static amdf_memory_host_description_t amdf_gpu_umd_memory_describe_host(
+     amdf_memory_flags_t flags) {
+   (void)external_memory_type;
+   const amdf_gpu_umd_device_t* device = data;
+-  const bool write_back = (flags & AMDF_MEMORY_FLAG_HOST_COHERENT) != 0;
++  // KFD GTT mappings are CPU write-back even when GPU caches are enabled.
++  // Only local VRAM mappings use write-combined CPU access.
++  const bool write_back = (flags & AMDF_MEMORY_FLAG_DEVICE_LOCAL) == 0;
+   const uint32_t line_size = write_back ? device->cache_line_size : 0;
+   const amdf_cache_transition_t flush = {
+       .kind = write_back ? AMDF_CACHE_TRANSITION_KIND_RANGE
+@@ -348,7 +352,7 @@ amdf_status_t amdf_gpu_umd_host_mapping_cache_control(
+     uint64_t memory_byte_offset, uint64_t byte_length) {
+   const amdf_gpu_umd_memory_t* memory = (amdf_gpu_umd_memory_t*)mapping;
+   (void)operation;
+-  if ((memory->flags & AMDF_MEMORY_FLAG_HOST_COHERENT) != 0) {
++  if ((memory->flags & AMDF_MEMORY_FLAG_DEVICE_LOCAL) == 0) {
+     // GPU snooping does not make this backing coherent with other consumers.
+     // Explicit CPU operations cover the requested bytes even on coherent GTT.
+     amdf_linux_host_cache_transfer(
+diff --git a/libamdf/src/gpu/umd/kfd/memory_profile.c b/libamdf/src/gpu/umd/kfd/memory_profile.c
+index 2c1143e46..65861604f 100644
+--- a/libamdf/src/gpu/umd/kfd/memory_profile.c
++++ b/libamdf/src/gpu/umd/kfd/memory_profile.c
+@@ -139,9 +139,10 @@ amdf_status_t amdf_gpu_kfd_query_memory_profile(
+                     AMDF_MEMORY_PROFILE_ROLE_HOST_MAP;
+     profile.guaranteed_flags =
+         AMDF_MEMORY_FLAG_HOST_VISIBLE | AMDF_MEMORY_FLAG_SHAREABLE |
+-        AMDF_MEMORY_FLAG_HOST_COHERENT | AMDF_MEMORY_FLAG_DEVICE_ADDRESS;
++        AMDF_MEMORY_FLAG_DEVICE_ADDRESS;
+     profile.supported_flags =
+-        profile.guaranteed_flags | AMDF_MEMORY_FLAG_QUEUE_STORAGE;
++        profile.guaranteed_flags | AMDF_MEMORY_FLAG_QUEUE_STORAGE |
++        AMDF_MEMORY_FLAG_HOST_COHERENT;
+     profile.guaranteed_device_access = AMDF_MEMORY_ACCESS_READ;
+     profile.supported_device_access = AMDF_MEMORY_ACCESS_READ |
+                                       AMDF_MEMORY_ACCESS_WRITE |

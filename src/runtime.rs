@@ -242,8 +242,20 @@ impl Buffer {
             .expect("slice exceeds allocation")
     }
     /// Mapped host address. Dereferencing requires external synchronization.
+    /// Ordinary allocations additionally require `cache_control` before host
+    /// reads (including partial cache-line updates) and after host writes;
+    /// `allocate_shared` omits that requirement.
     pub fn device_ptr(&self) -> Result<*mut std::ffi::c_void> {
         Ok(self.native.host_pointer().cast())
+    }
+    /// Publish host writes (`flush = true`) or acquire device writes (`false`).
+    /// Stream upload/read operations perform these transitions automatically.
+    ///
+    /// # Safety
+    /// The caller must exclude conflicting host/device access for the entire
+    /// transition and retain the allocation until all accesses have completed.
+    pub unsafe fn cache_control(&self, flush: bool, offset: usize, length: usize) -> Result<()> {
+        unsafe { self.native.cache_control(flush, offset, length) }
     }
     pub(crate) fn allocation_address(&self) -> Result<u64> {
         self.native.device_address(&self.owner.device)
@@ -442,9 +454,22 @@ impl Stream {
         buffer.native.zero()?;
         Ok(buffer)
     }
-    /// Allocate host-visible GPU storage; cross-engine access is explicit at allocation.
+    /// Allocate GPU-coherent host storage for direct, synchronized host access.
     pub fn allocate_shared(&self, bytes: usize) -> Result<Buffer> {
-        self.allocate(bytes)
+        let bytes = bytes.max(1);
+        let reservation = self.reserve(bytes)?;
+        let native = self
+            .inner
+            .device
+            .fabric()
+            .allocate_shared(bytes, std::slice::from_ref(&self.inner.device))?;
+        Ok(Buffer {
+            native,
+            bytes,
+            owner: self.inner.clone(),
+            reservation,
+            poolable: false,
+        })
     }
     #[cfg(feature = "npu")]
     pub(crate) fn allocate_for(&self, bytes: usize, devices: &[fabric::Device]) -> Result<Buffer> {

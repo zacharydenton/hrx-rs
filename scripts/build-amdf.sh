@@ -5,7 +5,7 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 source_dir="$(realpath "${1:?usage: build-amdf.sh SOURCE BUILD}")"
 build_dir="$(realpath -m "${2:?usage: build-amdf.sh SOURCE BUILD}")"
-for native_patch in "$repo_dir/native/amdf/build.patch" "$repo_dir/native/amdf/queue-ring.patch"; do
+for native_patch in "$repo_dir/native/amdf/build.patch" "$repo_dir/native/amdf/queue-ring.patch" "$repo_dir/native/amdf/cache-policy.patch"; do
   if patch -d "$source_dir" -p1 --dry-run --batch --forward < "$native_patch" >/dev/null 2>&1; then
     patch -d "$source_dir" -p1 --batch --forward < "$native_patch"
   elif ! patch -d "$source_dir" -p1 --dry-run --batch --reverse < "$native_patch" >/dev/null 2>&1; then

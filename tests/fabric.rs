@@ -22,26 +22,31 @@ fn gpu_arithmetic_uses_native_code_loading_and_completion_fences() -> hrx::Resul
         r#"
 #include <hip/hip_runtime.h>
 __global__ [[loom::workgroup_size(64, 1, 1), loom::workgroup_count(1, 1, 1)]]
-void fill(unsigned* output) { output[threadIdx.x] = threadIdx.x * 3u + 7u; }
+void fill(const unsigned* input, unsigned* output) {
+  output[threadIdx.x] = input[threadIdx.x] + threadIdx.x * 3u + 7u;
+}
 "#,
     );
     let artifact = compiler
         .import_cxx(source)?
         .compile(&Specialization::new("fill"))?;
-    // The source above writes exactly 64 u32 values to its sole binding.
+    // Both bindings contain exactly 64 u32 values.
     let kernel = unsafe { gpu.load(&artifact) }?;
     let queue = gpu.queue()?;
     let output = fabric.allocate(256, std::slice::from_ref(&gpu))?;
+    let input = fabric.allocate(256, std::slice::from_ref(&gpu))?;
     let prepared = unsafe {
         queue.prepare(
             &kernel,
             [1, 1, 1],
             [64, 1, 1],
-            &[Argument::Buffer(&output, 0)],
+            &[Argument::Buffer(&input, 0), Argument::Buffer(&output, 0)],
         )
     }?;
     let mut earlier: Option<hrx::fabric::Completion> = None;
-    for _ in 0..32 {
+    for round in 0u32..32 {
+        let input_bytes: Vec<_> = (0..64).flat_map(|_| round.to_le_bytes()).collect();
+        input.write(0, &input_bytes)?;
         output.write(0, &[0xcd; 256])?;
         let done = unsafe { prepared.dispatch() }?;
         if let Some(earlier) = &earlier {
@@ -61,7 +66,7 @@ void fill(unsigned* output) { output[threadIdx.x] = threadIdx.x * 3u + 7u; }
         for (index, value) in bytes.chunks_exact(4).enumerate() {
             assert_eq!(
                 u32::from_le_bytes(value.try_into().unwrap()),
-                index as u32 * 3 + 7
+                round + index as u32 * 3 + 7
             );
         }
     }

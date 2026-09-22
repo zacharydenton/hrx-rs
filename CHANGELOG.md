@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.8.3 — restore cached GPU system memory
+
 ## 0.8.2 — release tracked backing with its budget
 
 - Initialize fresh tracked GPU storage through its coherent native mapping.

@@ -91,6 +91,7 @@
   },
   "native_patches": {
     "native/amdf/build.patch": "de8581450efd4dbedcb3bf689285a09994cd339e4d6853f50875246546b20b47",
-    "native/amdf/queue-ring.patch": "f5c019f397d9ecb549ef62c4b978ce1844ff0eafd7c15d3ad0e1cacae8bad068"
+    "native/amdf/queue-ring.patch": "f5c019f397d9ecb549ef62c4b978ce1844ff0eafd7c15d3ad0e1cacae8bad068",
+    "native/amdf/cache-policy.patch": "448157b45aaeda06dbe9d33510757246dd1b8b5d90d9183912443be789565ba4"
   }
 }

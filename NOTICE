@@ -8,8 +8,8 @@ All component license texts and header notices accompany the libraries.
 The hrx-rs bridge is MIT licensed.
 
 Modified source, patches and build recipes:
-https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-amdf-0.8/hrx-native-sources.tar.gz
-SHA-256: 037fbcef966f1398499abcc41ea7f61205064aa85739c48deb70ed46b21dff6f
+https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-cache-policy/hrx-native-sources.tar.gz
+SHA-256: 70eb19dfaa60fdf59d99baf83a729292723ccefcdba757c4213b64c9708d0de0
 
 Benchmark fixtures in native/qualification derive from krea2-hrx (MIT) and
 h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.

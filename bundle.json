@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "target": "x86_64-unknown-linux-gnu-gfx1151",
-  "revision": "HRX 556c648e8 + five compiler patches; native libamdf; Ubuntu 26.04",
-  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-amdf-0.8/hrx-linux-x86_64-gfx1151.tar.gz",
-  "archive_sha256": "6d905f38ca8d1c489726995f1322d0b8acb254352fb194c3a8818033c1579604",
+  "revision": "HRX 556c648e8; native libamdf cached system memory; Ubuntu 26.04",
+  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-cache-policy/hrx-linux-x86_64-gfx1151.tar.gz",
+  "archive_sha256": "632f55898c64a654fc869eec6a38a24c77e9ca672153af4e3cea88c195d272c1",
   "files": {
     "LICENSE-AMDGPU-ISA.txt": "4b58c86ef9b8f1be198079e5b62ea5c2bea0cc2f9187d21463a9c5e4ca75d69c",
     "LICENSE-CORE-MATH.txt": "4639ae96f455d387fd2b042ce11a2713ac3ee9bfc82591182683f4ee503be011",
@@ -16,11 +16,11 @@
     "LICENSE-linux-gpl2-license.txt": "8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa",
     "LICENSE-linux-syscall-note.txt": "8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f",
     "LICENSE-linux-uapi.txt": "aa58e02703c9fe5ddb9ff0a971db64f6f3a331fe9f855efb86ff0abeb6ecef3f",
-    "NOTICE": "da253f644aaea7f1ea3cb7afda9cfacc5efa466f543abb0c0aadb7741134d5ee",
-    "THIRD-PARTY.json": "1ed67a31c25220ffb8589d64faff90453ded6bacfc2039c73397174b794e47cd",
-    "libamdf.so": "682647e6b80cc40a8e8fa6775326ca696081f827aab0398c218a0cf113488ca7",
+    "NOTICE": "d4f592ca2308775581f7b2a03ddef5bad1557560ae40194d7a015a01677ca9ac",
+    "THIRD-PARTY.json": "033401213d920f304ad759bed72799fcd15e6fa8c9e05f8c14e302dc8639047f",
+    "libamdf.so": "a535883a40639339e89fd6c6e5e8c4937e31cda7bfd12b859e03b550f98b133d",
     "libhrx_fabric.so": "76bf3e14819c528f015a97c1c0fad6d670f151d41456d4548108d79a924ab7d3",
     "libloomc.so": "c0eb0282c09b96fd47b2f12d9689a0bf81abc86358dab7372f7f523f83733291",
-    "provenance.json": "8ab3aca5e070f30d29d311ab967306c7f5f978c78be10cca14d894535258dd44"
+    "provenance.json": "68830a9d37c1399bacb620f6cbf57f86452856c745024d2f6ae18a849cae99c9"
   }
 }
