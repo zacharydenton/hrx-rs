@@ -726,9 +726,12 @@ mod tests {
         };
         let cu = match Compiler::shared(None, options.clone()) {
             Ok(compiler) => compiler,
-            Err(error) => {
-                // The pinned bundle predates the extension. Its explicit
-                // rejection is required; silently producing WGP code is not.
+            Err(error)
+                if std::env::var_os("HRX_LOOM_LIBRARY").is_some()
+                    || std::env::var_os("HRX_RUNTIME_DIR").is_some() =>
+            {
+                // An overridden compiler may predate the extension. Require
+                // explicit rejection instead of silently producing WGP code.
                 assert!(
                     error
                         .to_string()
@@ -737,6 +740,7 @@ mod tests {
                 );
                 return Ok(());
             }
+            Err(error) => return Err(error),
         };
         let same = Compiler::shared(None, options)?;
         assert!(Arc::ptr_eq(&cu.0, &same.0));

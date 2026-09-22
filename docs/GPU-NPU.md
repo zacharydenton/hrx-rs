@@ -83,10 +83,10 @@ hrx prepare
 hrx doctor
 ```
 
-These commands use the current source checkout; the feature simplification is
-not yet published. Omit `--features npu` for GPU-only builds.
-The matched native runtimes and corresponding sources are published in
-[the native release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260910-gpu-npu).
+These commands use the current source checkout. Omit `--features npu` for
+GPU-only builds. The native runtimes and corresponding sources are published in
+the [GPU release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260922-hrx-update)
+and [NPU release](https://github.com/zacharydenton/hrx-rs/releases/tag/native-20260910-gpu-npu).
 
 `hrx prepare` downloads and verifies both manifests: `bundle.json` contains GPU
 interop ABI 1 and Loom, and `npu-bundle.json` contains the NPU shim, matching XRT
