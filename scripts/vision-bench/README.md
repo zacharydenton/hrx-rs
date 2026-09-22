@@ -1,5 +1,10 @@
 # SCRFD + DINOv3 bulk image throughput
 
+Historical experiment using the retired XRT/IRON or external NPU stack. These
+measurements do not qualify the current native runtime. Tooling remains in Git
+for reproduction and is excluded from the crate. For current concurrent
+execution, see [GPU/NPU execution](../../docs/GPU-NPU.md).
+
 `bench.py` measures completed images per second for a real image-indexing pipeline:
 SCRFD-10GF face detection at 640×640, plus DINOv3 ViT-L/16 CLS and masked-mean
 embeddings at 224×224. Every image must produce both results. It uses existing

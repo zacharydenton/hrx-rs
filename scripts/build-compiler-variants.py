@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Build isolated optional-patch variants, restoring the input tree afterward.
 
+Historical qualification helper; excluded from the crate distribution.
+The current release no longer applies optional patches 0002 and 0004.
+
 SOURCE must already contain patches 0002, 0004 and 0007. BUILD is a configured
 native-only compiler build. Do not run another build against SOURCE concurrently.
 """

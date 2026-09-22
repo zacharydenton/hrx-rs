@@ -9,7 +9,33 @@ repository = "https://github.com/zacharydenton/hrx-rs"
 readme = "README.md"
 keywords = ["gpu", "npu", "amdgpu", "compute", "loom"]
 categories = ["hardware-support", "science"]
-include = ["/src/**", "/docs/**", "/tests/**", "/examples/**", "/native/**", "/patches/**", "/scripts/**", "/Cargo.toml", "/Cargo.lock", "/bundle.json", "/README.md", "/CHANGELOG.md", "/LICENSE", "/NOTICE", "/THIRD-PARTY.md", "/THIRD-PARTY.json", "/VALIDATION.md", "!**/__pycache__/**", "!**/*.pyc"]
+include = [
+    "/src/**",
+    "/docs/**",
+    "/tests/**",
+    "/examples/**",
+    "/native/**",
+    "/patches/**",
+    "/scripts/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/bundle.json",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/NOTICE",
+    "/THIRD-PARTY.md",
+    "/THIRD-PARTY.json",
+    "/VALIDATION.md",
+    "!**/__pycache__/**",
+    "!**/*.pyc",
+    "!/scripts/vision-bench/**",
+    "!/scripts/contention.py",
+    "!/scripts/CONTENTION.md",
+    "!/scripts/CACHE-RESIDENCY.md",
+    "!/scripts/build-compiler-variants.py",
+    "!/patches/retired/**",
+]
 
 # docs.rs has no GPU and no native bundle. Nothing here initializes either at
 # build time, so documenting every feature is safe.

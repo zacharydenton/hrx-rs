@@ -59,5 +59,5 @@ Use `scripts/fetch-native-inputs.py` and `scripts/rebuild-hrx.sh`, documented in
 [native/RELEASE.md](../../native/RELEASE.md). For a development checkout,
 `LOOM_SOURCE=/path/to/clean/pinned/source bash scripts/apply-loom-patches.sh`
 applies the active compiler set. `scripts/build-amdf.sh SOURCE BUILD` then applies
-the reviewed native build/queue patches and builds the three native libraries.
+the reviewed native build, queue and cache-policy patches and builds the three native libraries.
 The manifest records every applied patch digest.

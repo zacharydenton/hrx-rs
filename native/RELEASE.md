@@ -6,7 +6,7 @@ uses KFD directly; NPU execution uses the amdxdna driver directly. Loom compiles
 Loom and explicitly supplied C23/C++26 translation units in process.
 
 `release-inputs.json` records every upstream download, the compiler patch set,
-the native build/queue patches, and the Ubuntu image digest. The upstream tree
+the native build, queue and cache-policy patches, and the Ubuntu image digest. The upstream tree
 also pins its build dependencies. `provenance.json` records bridge source hashes,
 compiler version, CMake cache hash, and library hashes. OS package versions are
 included with the rebuild sources. This is source provenance, not a claim of
@@ -28,11 +28,11 @@ Use Python 3.12+, patch, tar, and Docker or Podman. Starting in this repository:
 python3 scripts/fetch-native-inputs.py --work artifacts/native-release
 CONTAINER_ENGINE=docker bash scripts/rebuild-hrx.sh artifacts/native-release
 python3 scripts/stage-native-release.py --work artifacts/native-release \
-  --release-tag native-20260922-amdf-0.8
+  --release-tag native-20260922-cache-policy
 cargo run --release --bin hrx -- pack artifacts/native-release/stage-amdf \
   artifacts/native-release/output \
-  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-amdf-0.8/hrx-linux-x86_64-gfx1151.tar.gz \
-  'HRX 556c648e8; native libamdf; Ubuntu 26.04' gfx1151
+  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-cache-policy/hrx-linux-x86_64-gfx1151.tar.gz \
+  'HRX 556c648e8; native libamdf cached system memory; Ubuntu 26.04' gfx1151
 ```
 
 The source archive contains upstream inputs, local patches, the native bridge,

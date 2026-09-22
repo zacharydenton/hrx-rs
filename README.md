@@ -53,10 +53,6 @@ and **43 min 33 s** with built-in Comfy Kitchen INT8 attention: **6.78×** and
 **1.21×** h3 end-to-end speedups, respectively. h3 runs without the Python/PyTorch
 stack. See the [full comparison, videos, and memory measurements](https://github.com/zacharydenton/h3-hrx/blob/master/docs/benchmarks/20260914/README.md).
 
-The vision libraries also fit together: SCRFD supplies face landmarks to
-ArcFace for alignment and embeddings, while DINOv3 produces image vectors
-that an application can index with hrxdb.
-
 ## GPU + NPU pipelines
 
 Run independent work on both devices at once:
@@ -205,9 +201,8 @@ scratch and transfer staging against the same ceiling before allocation. Aliases
 queued work and quarantined storage retain those charges. Native storage outside
 the coordinated runtime is covered when its stream uses `with_memory_budget`.
 NPU kernels loaded through that runtime also charge their instruction buffers.
-Direct NPU clients can use `raw::Context::with_memory_budget` for owned BOs;
-zero-copy imports remain the backing owner's responsibility, and sub-BOs retain
-the root charge without double counting.
+NPU storage uses the tracked runtime budget; imported shared storage retains
+the backing owner's charge without double counting.
 `ModelSession::in_context` applies that policy during native loading as well;
 freezing into the same budget does not charge weights twice. Otherwise adopted
 buffers are charged only at adoption. Do not declare the same bytes twice in a

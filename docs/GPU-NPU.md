@@ -8,7 +8,7 @@ Linux x86_64. Other profiles fail explicitly at device admission.
 ## Native setup
 
 ```sh
-cargo install hrx-rs --version 0.8.0 --locked --features npu
+cargo install hrx-rs --version 0.8.3 --locked --features npu
 hrx prepare
 hrx doctor
 ```

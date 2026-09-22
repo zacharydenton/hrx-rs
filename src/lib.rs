@@ -101,7 +101,8 @@ pub enum Error {
     /// A network provisioning failure.
     #[error("{0}")]
     Download(#[source] Box<ureq::Error>),
-    /// A native HRX status, including its machine-readable code.
+    /// Legacy native status retained for source compatibility.
+    /// The native 0.8 runtime reports structured errors through other variants.
     #[error("{context}: {message}")]
     Runtime {
         /// Operation that failed.
