@@ -325,11 +325,11 @@ impl Runtime {
                 let buffer = if let Some(buffer) = adopted.take() {
                     buffer
                 } else {
-                    let buffer = stream.allocate(bytes)?;
-                    stream.fill(buffer.binding(), 0)?;
-                    stream.synchronize()?;
-                    buffer
-                };
+                    // Initialize before publication without a submission whose
+                    // completion would retain this allocation on the stream.
+                    stream.allocate_zeroed(bytes)?
+                }
+                .into_unpooled();
                 storage.native = Some(buffer.native.clone());
                 storage.gpu = Some(buffer);
                 storage.visibility.get_mut().unwrap().wrote(Engine::Gpu);
@@ -337,7 +337,7 @@ impl Runtime {
             MemoryPlacement::HostVisible => {
                 let mut allocation = self.allocation_stream()?;
                 let stream = allocation.as_mut().unwrap();
-                let buffer = stream.allocate_shared(bytes)?;
+                let buffer = stream.allocate_shared(bytes)?.into_unpooled();
                 let pointer = buffer.device_ptr()?.cast::<u8>();
                 // Coherent host-local allocation, with no aliases or device uses.
                 unsafe {

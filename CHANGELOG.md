@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.2 — release tracked backing with its budget
+
+- Initialize fresh tracked GPU storage through its coherent native mapping.
+  The shared allocation stream no longer retains the last allocation through
+  an initialization completion fence after the tracked owner is dropped.
+- Keep tracked buffers out of the uncharged stream allocation pool, so releasing
+  tracked storage also releases its native backing.
+
 ## 0.8.1 — bounded allocation queues
 
 - Reuse one lazy allocation stream per tracked runtime. Live tensors previously

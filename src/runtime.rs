@@ -194,6 +194,12 @@ impl<'a> View<'a> {
     }
 }
 impl Buffer {
+    // Tracked storage accounts for its own lifetime; its backing must not move
+    // into an uncharged stream pool when that owner releases its reservation.
+    pub(crate) fn into_unpooled(mut self) -> Self {
+        self.poolable = false;
+        self
+    }
     #[cfg(feature = "npu")]
     pub(crate) fn share_with(mut self, device: &fabric::Device) -> Result<Self> {
         self.poolable = false;

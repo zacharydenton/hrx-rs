@@ -10,6 +10,25 @@ use std::{
     time::Duration,
 };
 #[test]
+#[ignore = "requires native GPU"]
+fn allocation_stream_does_not_retain_released_tracked_storage() -> Result<()> {
+    let manager = crate::residency::ResidencyManager::new(1024)?;
+    let runtime = Runtime::with_options(RuntimeOptions {
+        memory_budget: Some(manager.budget()),
+        ..Default::default()
+    })?;
+    let buffer = runtime.allocate(1024, MemoryPlacement::GpuLocal)?;
+    let native = buffer.storage.native.as_ref().unwrap().clone();
+    assert_eq!(manager.statistics().reserved_bytes, 1024);
+    drop(buffer);
+    assert_eq!(manager.statistics().reserved_bytes, 0);
+    assert!(
+        native.exclusively_owned(),
+        "released storage remains on the allocation stream"
+    );
+    Ok(())
+}
+#[test]
 fn mapped_views_limit_bytes_but_reserve_the_whole_allocation() {
     let runtime = runtime_without_workers();
     let root = buffer(&runtime);
