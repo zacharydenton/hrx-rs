@@ -63,10 +63,21 @@ def main():
         'LICENSE-HRX-RS.txt': REPO / 'LICENSE',
         'LICENSE-CXX.txt': deps / 'cxx-src/LICENSE',
         'LICENSE-HSA-headers.txt': deps / 'hsa_runtime_headers-src/LICENSE.txt',
-        'LICENSE-SPIRV-Headers.txt': deps / 'spirv_headers-src/LICENSE',
-        'LICENSE-Vulkan-Headers.txt': deps / 'vulkan_headers-src/LICENSES/MIT.txt',
     }.items():
         license_file(name, path=path)
+    # These pinned source archives need not be unpacked by a native-only build.
+    for name, dependency, relative in [
+        ('LICENSE-SPIRV-Headers.txt', 'spirv_headers', 'LICENSE'),
+        ('LICENSE-Vulkan-Headers.txt', 'vulkan_headers', 'LICENSES/MIT.txt'),
+    ]:
+        with tarfile.open(downloaded[dependency]) as archive:
+            matches = [member for member in archive.getmembers()
+                       if member.isfile() and '/'.join(Path(member.name).parts[1:]) == relative]
+            if len(matches) != 1:
+                raise ValueError(f'Missing or ambiguous license in {dependency}: {relative}')
+            with archive.extractfile(matches[0]) as stream:
+                license_file(name, text=stream.read().decode('utf-8'),
+                             origin=f'{downloaded[dependency].name}:{matches[0].name}')
     for name in ['LICENSE-CORE-MATH.txt', 'LICENSE-AMDGPU-ISA.txt']:
         shutil.copyfile(licenses / name, stage / name)
         evidence[name] = {'source_file': 'pinned HRX math and AMD ISA XML source notices', 'sha256': digest(licenses / name)}
@@ -103,7 +114,7 @@ def main():
                 members[str(path.relative_to(REPO))] = path
     for name in ['native/release-inputs.json','native/RELEASE.md','scripts/stage-native-release.py',
                  'scripts/rebuild-hrx.sh','scripts/build-amdf.sh','scripts/build-gpu-runtime-container.sh',
-                 'scripts/fetch-native-inputs.py']:
+                 'scripts/fetch-native-inputs.py','scripts/seed-native-file-cache.py']:
         members[name] = REPO/name
     members['build-packages.txt'] = build/'build-packages.txt'
     archive = work/'hrx-native-sources.tar.gz'

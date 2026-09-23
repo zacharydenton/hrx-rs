@@ -4,7 +4,7 @@
   "components": {
     "libamdf.so": {
       "project": "HRX / libamdf / Loom / hrx-rs native bridge",
-      "version": "556c648e8f301ad9656d325687cc93b417ea78ff",
+      "version": "468508b9e27e749972382f78e1c67d6db7bec27e",
       "sha256": "a535883a40639339e89fd6c6e5e8c4937e31cda7bfd12b859e03b550f98b133d",
       "needed": [
         "libm.so.6",
@@ -12,9 +12,9 @@
       ],
       "sources": {
         "hrx-system": {
-          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/556c648e8f301ad9656d325687cc93b417ea78ff",
-          "archive": "hrx-system-556c648e8f301ad9656d325687cc93b417ea78ff.tar.gz",
-          "sha256": "a4c03604c47e745f6b1f3eb9bacbea5b53beda3db8030aafffcc8c00006132a3"
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/468508b9e27e749972382f78e1c67d6db7bec27e",
+          "archive": "hrx-system-468508b9e27e749972382f78e1c67d6db7bec27e.tar.gz",
+          "sha256": "4452454d56f7b0cadb861c1e4d4f5a9d0b1e81a228f4a24f048640f49e021425"
         },
         "spirv_headers": {
           "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
@@ -109,8 +109,8 @@
     },
     "libloomc.so": {
       "project": "HRX / libamdf / Loom / hrx-rs native bridge",
-      "version": "556c648e8f301ad9656d325687cc93b417ea78ff",
-      "sha256": "c0eb0282c09b96fd47b2f12d9689a0bf81abc86358dab7372f7f523f83733291",
+      "version": "468508b9e27e749972382f78e1c67d6db7bec27e",
+      "sha256": "a00f1da591b9d37879a6ba62a5375b85742238675305c8a8d37af2322f203fbd",
       "needed": [
         "libm.so.6",
         "libstdc++.so.6",
@@ -119,9 +119,9 @@
       ],
       "sources": {
         "hrx-system": {
-          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/556c648e8f301ad9656d325687cc93b417ea78ff",
-          "archive": "hrx-system-556c648e8f301ad9656d325687cc93b417ea78ff.tar.gz",
-          "sha256": "a4c03604c47e745f6b1f3eb9bacbea5b53beda3db8030aafffcc8c00006132a3"
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/468508b9e27e749972382f78e1c67d6db7bec27e",
+          "archive": "hrx-system-468508b9e27e749972382f78e1c67d6db7bec27e.tar.gz",
+          "sha256": "4452454d56f7b0cadb861c1e4d4f5a9d0b1e81a228f4a24f048640f49e021425"
         },
         "spirv_headers": {
           "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
@@ -216,7 +216,7 @@
     },
     "libhrx_fabric.so": {
       "project": "HRX / libamdf / Loom / hrx-rs native bridge",
-      "version": "556c648e8f301ad9656d325687cc93b417ea78ff",
+      "version": "468508b9e27e749972382f78e1c67d6db7bec27e",
       "sha256": "76bf3e14819c528f015a97c1c0fad6d670f151d41456d4548108d79a924ab7d3",
       "needed": [
         "libm.so.6",
@@ -225,9 +225,9 @@
       ],
       "sources": {
         "hrx-system": {
-          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/556c648e8f301ad9656d325687cc93b417ea78ff",
-          "archive": "hrx-system-556c648e8f301ad9656d325687cc93b417ea78ff.tar.gz",
-          "sha256": "a4c03604c47e745f6b1f3eb9bacbea5b53beda3db8030aafffcc8c00006132a3"
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/468508b9e27e749972382f78e1c67d6db7bec27e",
+          "archive": "hrx-system-468508b9e27e749972382f78e1c67d6db7bec27e.tar.gz",
+          "sha256": "4452454d56f7b0cadb861c1e4d4f5a9d0b1e81a228f4a24f048640f49e021425"
         },
         "spirv_headers": {
           "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
@@ -339,11 +339,11 @@
       "sha256": "437b7fc31bfad2be8bb6d972845fcf79ae08c817ed2c421490cf69ac9ae44701"
     },
     "LICENSE-SPIRV-Headers.txt": {
-      "source_file": "hrx-clang/_deps/spirv_headers-src/LICENSE",
+      "source_file": "spirv_headers.tar.gz:SPIRV-Headers-vulkan-sdk-1.4.357.0/LICENSE",
       "sha256": "ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613"
     },
     "LICENSE-Vulkan-Headers.txt": {
-      "source_file": "hrx-clang/_deps/vulkan_headers-src/LICENSES/MIT.txt",
+      "source_file": "vulkan_headers.tar.gz:Vulkan-Headers-vulkan-sdk-1.4.357.0/LICENSES/MIT.txt",
       "sha256": "1ca3502222d967f3be5751c55f6b7ee735b5383909c3b501495f54b216dbf227"
     },
     "LICENSE-CORE-MATH.txt": {
@@ -368,8 +368,8 @@
     }
   },
   "corresponding_source": {
-    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-cache-policy/hrx-native-sources.tar.gz",
-    "sha256": "70eb19dfaa60fdf59d99baf83a729292723ccefcdba757c4213b64c9708d0de0"
+    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260923-468508b9e/hrx-native-sources.tar.gz",
+    "sha256": "50816a08cde060e677f6e11370f2a4e5aa2bf3ab8446c50928b988ba6f6fa95b"
   },
   "system_dependencies_not_shipped": [
     "ld-linux-x86-64.so.2",

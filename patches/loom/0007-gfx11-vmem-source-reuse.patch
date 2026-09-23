@@ -404,3 +404,27 @@ index 8dad26028..7c3385c24 100644
    s_delay_alu instid0(VALU_DEP_1) | instskip(NEXT) | instid1(VALU_DEP_1)
    v_add_u32 v0, v0, v4
    v_add_u32 v0, v0, v1
+diff --git a/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test b/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test
+--- a/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test
++++ b/loom/src/loom/target/emit/native/amdgpu/test/assembly_allocation.loom-test
+@@ -216,16 +216,16 @@
+ 
+ // ----
+   global_load_b128 v[0:3], v5, s[0:1] offset:0
+-  s_mov_b64_exec_read s[2:3]
++  s_mov_b64_exec_read s[0:1]
+   s_mov_b64 exec, -1
+   s_waitcnt vmcnt(0) lgkmcnt(63)
+   scratch_store_b128 off, v[0:3], off offset:0 glc:0 slc:0 dlc:0
+-  s_mov_b64 exec, s[2:3]
+-  s_mov_b64_exec_read s[2:3]
++  s_mov_b64 exec, s[0:1]
++  s_mov_b64_exec_read s[0:1]
+   s_mov_b64 exec, -1
+   s_waitcnt_vscnt vscnt(0)
+   scratch_load_b128 v[0:3], off, off offset:0 glc:0 slc:0 dlc:0
+-  s_mov_b64 exec, s[2:3]
++  s_mov_b64 exec, s[0:1]
+   s_waitcnt vmcnt(0) lgkmcnt(63)
+   v_mov_b32 v4, v1
+   ds_load_u16_d16_hi v4, v5 offset:0

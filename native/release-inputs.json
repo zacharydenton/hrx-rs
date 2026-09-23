@@ -2,21 +2,21 @@
   "schema": 1,
   "hrx": {
     "repository": "https://github.com/ROCm/hrx-system",
-    "revision": "556c648e8f301ad9656d325687cc93b417ea78ff",
+    "revision": "468508b9e27e749972382f78e1c67d6db7bec27e",
     "patches": {
       "0001-vopd-source-cache-banks.patch": "7b8784f70a92200c1e2fdc60562cafe9bcdf82a537568ee9f2dfba5de6ce609d",
       "0003-smem-storage-reuse-drain.patch": "b6fdff10054d8b2bfe28fc69c003dedee2834bf33f49a4ed2ff3ffe820dba845",
       "0005-materialize-encoding-config.patch": "91d2be463c6046e2571eb6bba86902da6d1e9d5b3cf2b91e70682c5131f310e0",
-      "0007-gfx11-vmem-source-reuse.patch": "5da1cec6f6dffa8ca1d775198875d74a063aaffeff944fc56933b601eb1ddbc4",
+      "0007-gfx11-vmem-source-reuse.patch": "c42ea13b2296bec4e92e89396d58cd898f2fb4d2ba58dc7e7fc268802b53e5b8",
       "0009-amdgpu-profile-processor-mode.patch": "318db9d69eb9ccb0fd22d7f69fb1571e9ed628a2d2649769d71e585cc49255e2"
     }
   },
   "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",
   "downloads": {
     "hrx-system": {
-      "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/556c648e8f301ad9656d325687cc93b417ea78ff",
-      "archive": "hrx-system-556c648e8f301ad9656d325687cc93b417ea78ff.tar.gz",
-      "sha256": "a4c03604c47e745f6b1f3eb9bacbea5b53beda3db8030aafffcc8c00006132a3"
+      "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/468508b9e27e749972382f78e1c67d6db7bec27e",
+      "archive": "hrx-system-468508b9e27e749972382f78e1c67d6db7bec27e.tar.gz",
+      "sha256": "4452454d56f7b0cadb861c1e4d4f5a9d0b1e81a228f4a24f048640f49e021425"
     },
     "spirv_headers": {
       "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",

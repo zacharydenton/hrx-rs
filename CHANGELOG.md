@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 0.8.5 — compose image and validation stages
 
 - Expose recordable fragments for RGB view encoding/decoding, RGB compositing
