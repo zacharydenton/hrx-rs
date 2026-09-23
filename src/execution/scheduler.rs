@@ -303,19 +303,28 @@ fn perform(core: &Arc<Core>, action: Action) {
             if _scheduler.pending.len() > 1 {
                 core.changed.notify_all();
             }
+            // Pending still owns the graph while this lock is held. Release
+            // the runner's reference before another worker can finalize it.
+            drop(graph);
             drop(_scheduler);
         }
         Action::Finish(job, failure) => {
+            let signal = job.graph.signals[job.slot].clone();
             job.graph.slots.lock().unwrap_or_else(|e| e.into_inner())[job.slot].occupied = false;
-            core.counters.completions.fetch_add(1, Ordering::Relaxed);
-            job.graph.signals[job.slot].finish(failure.clone());
-            core.host_changed.notify_all();
-            core.changed.notify_all();
             if job.graph.quarantined.load(Ordering::Acquire) {
                 // Uncertain completion must not release imported pages or
                 // native graph structures. Keep the quarantine until exit.
                 std::mem::forget(job.graph);
+            } else {
+                // Ephemeral copies retain inference-slot owners in their
+                // bindings. Release them before completion becomes observable.
+                drop(job.graph);
             }
+            drop(job.dependencies);
+            core.counters.completions.fetch_add(1, Ordering::Relaxed);
+            signal.finish(failure);
+            core.host_changed.notify_all();
+            core.changed.notify_all();
         }
     }
 }

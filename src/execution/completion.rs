@@ -4,7 +4,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll, Waker},
     time::{Duration, Instant},
@@ -24,6 +24,8 @@ pub(super) struct Signal {
     pub state: Mutex<State>,
     changed: Condvar,
     pub cancel: AtomicBool,
+    // Public observers prevent replay; internal finalizer references do not.
+    pub observers: AtomicUsize,
 }
 impl Signal {
     pub fn new() -> Arc<Self> {
@@ -40,6 +42,7 @@ impl Signal {
             }),
             changed: Condvar::new(),
             cancel: AtomicBool::new(false),
+            observers: AtomicUsize::new(0),
         })
     }
     pub fn reset(&self) {
@@ -107,12 +110,26 @@ fn outcome(state: &State) -> Result<()> {
 /// An owned completion observer. Dropping it does not cancel submitted work.
 ///
 /// Polling never waits for a device. Clones may be waited on by different tasks.
-#[derive(Clone)]
 pub struct Completion {
     pub(super) signal: Arc<Signal>,
     pub(super) core: std::sync::Weak<super::scheduler::Core>,
 }
+impl Clone for Completion {
+    fn clone(&self) -> Self {
+        Self::new(self.signal.clone(), self.core.clone())
+    }
+}
+impl Drop for Completion {
+    fn drop(&mut self) {
+        let previous = self.signal.observers.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0);
+    }
+}
 impl Completion {
+    pub(super) fn new(signal: Arc<Signal>, core: std::sync::Weak<super::scheduler::Core>) -> Self {
+        signal.observers.fetch_add(1, Ordering::AcqRel);
+        Self { signal, core }
+    }
     /// Host monotonic time at which execution reached a terminal state. This
     /// permits pipeline boundary timing without including a caller's late wait.
     /// It is not a device timestamp and does not imply successful execution.
@@ -153,10 +170,7 @@ impl Completion {
     }
 
     pub(crate) fn ready() -> Self {
-        Self {
-            signal: Signal::new(),
-            core: std::sync::Weak::new(),
-        }
+        Self::new(Signal::new(), std::sync::Weak::new())
     }
 
     /// Whether the operation reached a terminal state, including failure.
@@ -241,20 +255,14 @@ mod tests {
     fn timeout_does_not_cancel_and_detach_retains_state() {
         let signal = Signal::new();
         signal.reset();
-        let completion = Completion {
-            signal: signal.clone(),
-            core: std::sync::Weak::new(),
-        };
+        let completion = Completion::new(signal.clone(), std::sync::Weak::new());
         assert!(!completion.wait_timeout(Duration::ZERO).unwrap());
         assert!(!signal.cancel.load(Ordering::Acquire));
         drop(completion);
         signal.finish(None);
-        Completion {
-            signal,
-            core: std::sync::Weak::new(),
-        }
-        .wait()
-        .unwrap();
+        Completion::new(signal, std::sync::Weak::new())
+            .wait()
+            .unwrap();
     }
     #[test]
     fn future_wakeup_and_error() {
@@ -270,10 +278,7 @@ mod tests {
         let mut context = Context::from_waker(&waker);
         let signal = Signal::new();
         signal.reset();
-        let mut completion = Completion {
-            signal: signal.clone(),
-            core: std::sync::Weak::new(),
-        };
+        let mut completion = Completion::new(signal.clone(), std::sync::Weak::new());
         assert!(Pin::new(&mut completion).poll(&mut context).is_pending());
         signal.finish(Some(Arc::new(Error::DeviceLost(
             "injected native failure".into(),

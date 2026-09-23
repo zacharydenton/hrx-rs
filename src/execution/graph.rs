@@ -707,15 +707,24 @@ impl ExecutableGraph {
             access.view.buffer.storage.host_conflict(access.access)?;
         }
         let mut slots = self.inner.slots.lock().unwrap_or_else(|e| e.into_inner());
-        let (slot_index, slot) = slots.iter_mut().enumerate().find(|(index, slot)| !slot.occupied && Arc::strong_count(&self.inner.signals[*index]) == 1 && self.inner.signals[*index].state.lock().unwrap_or_else(|e| e.into_inner()).done).ok_or_else(|| Error::Busy("prepared run slots are occupied; drop completed observers or reserve more slots".into()))?;
+        let (slot_index, slot) = slots
+            .iter_mut()
+            .enumerate()
+            .find(|(index, slot)| {
+                let signal = &self.inner.signals[*index];
+                !slot.occupied
+                    && signal.observers.load(Ordering::Acquire) == 0
+                    && signal.state.lock().unwrap_or_else(|e| e.into_inner()).done
+            })
+            .ok_or_else(|| {
+                Error::Busy("prepared run slots are occupied; drop completed observers or reserve more slots".into())
+            })?;
         self.inner.signals[slot_index].reset();
         slot.nodes.fill(NodeState::Pending);
         slot.failure = None;
         slot.occupied = true;
-        let completion = Completion {
-            signal: self.inner.signals[slot_index].clone(),
-            core: Arc::downgrade(core),
-        };
+        let completion =
+            Completion::new(self.inner.signals[slot_index].clone(), Arc::downgrade(core));
         core.counters
             .submissions
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

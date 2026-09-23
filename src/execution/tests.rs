@@ -258,10 +258,7 @@ fn failed_dependency_does_not_poison_or_quarantine_untouched_output() {
     let signal = completion::Signal::new();
     signal.reset();
     signal.finish(Some(Arc::new(Error::DeviceLost("injected".into()))));
-    let failure = Completion {
-        signal,
-        core: Arc::downgrade(&runtime.inner.core),
-    };
+    let failure = Completion::new(signal, Arc::downgrade(&runtime.inner.core));
     let runs = Arc::new(AtomicUsize::new(0));
     let seen = runs.clone();
     let consumer = mock(&runtime, Engine::Gpu, &output, Access::Write, move || {
@@ -767,4 +764,112 @@ fn cache_transitions_flush_host_writes_for_both_devices() {
         assert!(!visibility.visible[consumer as usize]);
         assert_eq!(visibility.sync_to_device(consumer), to_device);
     }
+}
+
+#[test]
+fn completion_releases_submission_owners_before_waking_observers() {
+    use std::{
+        future::Future,
+        pin::Pin,
+        sync::atomic::AtomicBool,
+        task::{Context, Wake, Waker},
+    };
+    struct Owner(Arc<AtomicBool>);
+    impl Drop for Owner {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    struct Observer {
+        released: Arc<AtomicBool>,
+        observed: AtomicBool,
+    }
+    impl Wake for Observer {
+        fn wake(self: Arc<Self>) {
+            self.observed
+                .store(self.released.load(Ordering::Acquire), Ordering::Release);
+        }
+    }
+    let runtime = runtime_without_workers();
+    let released = Arc::new(AtomicBool::new(false));
+    let owner = Owner(released.clone());
+    let graph = mock(
+        &runtime,
+        Engine::Gpu,
+        &buffer(&runtime),
+        Access::Read,
+        move || {
+            let _retained = &owner;
+            Ok(())
+        },
+    );
+    let mut completion = graph.submit().unwrap();
+    drop(graph);
+    let observer = Arc::new(Observer {
+        released,
+        observed: AtomicBool::new(false),
+    });
+    let waker = Waker::from(observer.clone());
+    assert!(
+        Pin::new(&mut completion)
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    completion.wait().unwrap();
+    assert!(
+        observer.observed.load(Ordering::Acquire),
+        "completion woke its observer before releasing the submission owner"
+    );
+}
+
+#[test]
+fn completion_waker_can_drop_its_observer_and_reuse_the_only_graph_slot() {
+    use std::{
+        future::Future,
+        pin::Pin,
+        task::{Context, Wake, Waker},
+    };
+    struct Resubmit {
+        graph: ExecutableGraph,
+        prior: Mutex<Option<Completion>>,
+        next: Mutex<Option<Result<Completion>>>,
+    }
+    impl Wake for Resubmit {
+        fn wake(self: Arc<Self>) {
+            drop(self.prior.lock().unwrap().take());
+            *self.next.lock().unwrap() = Some(self.graph.submit());
+        }
+    }
+    let mut runtime = runtime_without_workers();
+    runtime.options.graph_slots = 1;
+    let graph = mock(
+        &runtime,
+        Engine::Gpu,
+        &buffer(&runtime),
+        Access::Read,
+        || Ok(()),
+    );
+    let completion = graph.submit().unwrap();
+    let signal = completion.signal.clone();
+    let observer = Arc::new(Resubmit {
+        graph,
+        prior: Mutex::new(Some(completion)),
+        next: Mutex::new(None),
+    });
+    let waker = Waker::from(observer.clone());
+    assert!(
+        Pin::new(observer.prior.lock().unwrap().as_mut().unwrap())
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    scheduler::help(&runtime.inner.core, &signal);
+    observer
+        .next
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap()
+        .unwrap()
+        .wait()
+        .unwrap();
 }
