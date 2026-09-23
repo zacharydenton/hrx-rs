@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.7 — correct fixture license attribution
+
+- Correct the ArcFace qualification-fixture notice to Apache-2.0. The full
+  correct license text was already included in 0.8.6. Runtime source, native
+  bundle, numerical behavior and qualification results are unchanged.
+
 ## 0.8.6 — native refresh and completion correctness
 
 - Release submission-owned resources before publishing completion, preventing

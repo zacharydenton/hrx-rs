@@ -137,6 +137,6 @@ def main():
         'binary_sha256':{n:e['sha256'] for n,e in components.items()}})
     notice='HRX 0.8 native distribution\n\nlibamdf and Loom derive from HRX/IREE under Apache-2.0 WITH LLVM-exception.\nThe C++ importer includes Roberto Raggi\'s MIT-licensed cplusplus parser.\nCORE-MATH and AMD ISA tables retain their MIT notices; HSA headers retain NCSA.\nLinux syscall headers retain their original notices and syscall exception.\nAll component license texts and header notices accompany the libraries.\nThe hrx-rs bridge is MIT licensed.\n\nModified source, patches and build recipes:\n'+source_record['url']+'\nSHA-256: '+source_record['sha256']+'\n'
     (stage/'NOTICE').write_text(notice)
-    (REPO/'NOTICE').write_text(notice+'\nBenchmark fixtures in native/qualification derive from arcface-hrx and krea2-hrx (MIT),\nand h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.\n')
+    (REPO/'NOTICE').write_text(notice+'\nBenchmark fixtures in native/qualification derive from krea2-hrx (MIT),\nand arcface-hrx and h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.\n')
     print(stage)
 if __name__=='__main__':main()

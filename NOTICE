@@ -11,5 +11,5 @@ Modified source, patches and build recipes:
 https://github.com/zacharydenton/hrx-rs/releases/download/native-20260923-468508b9e/hrx-native-sources.tar.gz
 SHA-256: b0537fc3ec08471bfe77c0eb88a2b285a93bd798b9997d5540b94d66148b1261
 
-Benchmark fixtures in native/qualification derive from arcface-hrx and krea2-hrx (MIT),
-and h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.
+Benchmark fixtures in native/qualification derive from krea2-hrx (MIT),
+and arcface-hrx and h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.
