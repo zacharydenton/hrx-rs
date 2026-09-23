@@ -185,7 +185,12 @@ fn header(opcode: u32, count: usize) -> u32 {
     (3 << 30) | (((count - 2) as u32) << 16) | (opcode << 8)
 }
 fn barrier(words: &mut Vec<u32>) {
-    // Native PM4 v1/GCR system release and acquire, matching libamdf CTS.
+    // Native PM4 v1/GCR system release and acquire. GLI_INV=1 invalidates
+    // every instruction-cache line; 3 means FIRST_LAST, not ALL. A full address
+    // range with FIRST_LAST can retain instructions from retired code whose
+    // allocation address is later reused. See Mesa's GCR_GLI_INV packet enum
+    // (src/amd/registers/pkt3.json) and PAL's BuildAcquireMemInternal.
+    const GLI_INV_ALL: u32 = 1;
     words.extend([
         header(0x46, 2),
         7 | (4 << 8),
@@ -196,7 +201,7 @@ fn barrier(words: &mut Vec<u32>) {
         0,
         0,
         0x0a,
-        3 | (1 << 4) | (1 << 5) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 14) | (1 << 15),
+        GLI_INV_ALL | (1 << 4) | (1 << 5) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 14) | (1 << 15),
     ]);
 }
 fn pad(words: &mut Vec<u32>) {

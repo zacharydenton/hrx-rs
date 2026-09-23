@@ -252,3 +252,89 @@ impl Api {
         Ok(slot.as_ref().unwrap().clone())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loom::{Compiler, CxxSource, Specialization};
+
+    #[test]
+    #[ignore = "requires native compiler, bridge, libamdf and gfx1151"]
+    fn replacing_retired_code_at_the_same_address_invalidates_all_instruction_lines() -> Result<()>
+    {
+        let gpu = Device::open(Engine::Gpu, 0)?;
+        let fabric = gpu.fabric();
+        let compiler = Compiler::for_target(None, gpu.target())?;
+        let mut kernels = Vec::new();
+        for stamp in [97u32, 173] {
+            let source = format!(
+                "#include <hip/hip_runtime.h>\n\
+                 __global__ [[loom::workgroup_size(64, 1, 1), loom::workgroup_count(256, 1, 1)]]\n\
+                 void stamp(unsigned* output) {{\n\
+                   unsigned i = blockIdx.x * 64u + threadIdx.x;\n\
+                   output[i] = i ^ {stamp}u;\n\
+                 }}"
+            );
+            let artifact = compiler
+                .import_cxx(CxxSource::new("stamp.cpp", source))?
+                .compile(&Specialization::new("stamp"))?;
+            // The owned fixture writes exactly 256 * 64 u32 values.
+            kernels.push(unsafe { gpu.load(&artifact) }?);
+        }
+        let mut replacement = Arc::try_unwrap(kernels.pop().unwrap().0)
+            .unwrap_or_else(|_| panic!("newly loaded fixture unexpectedly shared"));
+        let original = kernels.pop().unwrap();
+        assert_eq!(
+            original.0.info.storage_bytes,
+            replacement.info.storage_bytes
+        );
+        // Deliberately reuse one executable address, independent of allocator
+        // placement. Every rewrite below occurs after checked GPU retirement.
+        // This private test bypasses the public immutable-code API solely to
+        // reproduce freeing a code allocation and reusing its address.
+        replacement.code = original.0.code.clone();
+        let replacement = Kernel(Arc::new(replacement));
+        let queue = gpu.queue()?;
+        let output = fabric.allocate(256 * 64 * 4, std::slice::from_ref(&gpu))?;
+        let mut actual = vec![0; output.len()];
+        for _ in 0..8 {
+            for (kernel, stamp) in [(&original, 97u32), (&replacement, 173u32)] {
+                let mut contents = vec![0; kernel.0.info.storage_bytes as usize];
+                bridge_check(&kernel.0.image.api, unsafe {
+                    kernel.0.image.api.hrx_fabric_gpu_image_load(
+                        kernel.0.image.raw,
+                        contents.as_mut_ptr(),
+                        contents.len(),
+                        kernel.0.code.device_address(&gpu)?,
+                    )
+                })?;
+                kernel.0.code.write(0, &contents)?;
+                output.write(0, &vec![0xcd; output.len()])?;
+                // Same complete output binding for both known kernels.
+                let done = unsafe {
+                    queue.dispatch(
+                        kernel,
+                        [256, 1, 1],
+                        [64, 1, 1],
+                        &[Argument::Buffer(&output, 0)],
+                    )
+                }?;
+                if !done.wait_timeout(std::time::Duration::from_secs(5))? {
+                    std::mem::forget(done);
+                    return Err(Error::DeviceLost(
+                        "code-reuse fixture did not retire".into(),
+                    ));
+                }
+                output.read(0, &mut actual)?;
+                for (index, bytes) in actual.chunks_exact(4).enumerate() {
+                    assert_eq!(
+                        u32::from_le_bytes(bytes.try_into().unwrap()),
+                        index as u32 ^ stamp,
+                        "stale executable at element {index}, expected stamp {stamp}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
