@@ -540,6 +540,30 @@ impl Queue {
         if self.device().id() != completion.queue.device().id() {
             return Err(Error::Message("event belongs to another device".into()));
         }
+        // The event orders the entire producer prefix, not just the buffers in
+        // its final command. Retire those leases when a consumer observes the
+        // wait, even if nobody polls the producer again. Snapshot work rather
+        // than retaining/locking its queue during retirement: queues may wait
+        // on their own earlier events, and cross-queue waits may form a chain.
+        let dependencies = {
+            let state = completion
+                .queue
+                .0
+                .state
+                .lock()
+                .map_err(|_| Error::DeviceLost("event producer poisoned".into()))?;
+            match state.pending.iter().position(|pending| {
+                Arc::ptr_eq(&pending.work, &completion.work) && pending.value == completion.value
+            }) {
+                Some(end) => state
+                    .pending
+                    .iter()
+                    .take(end + 1)
+                    .map(|pending| (pending.work.clone(), pending.value))
+                    .collect(),
+                None => vec![(completion.work.clone(), completion.value)],
+            }
+        };
         let address = completion.work.fence.device_address(self.device())?;
         let fence = self
             .device()
@@ -579,7 +603,7 @@ impl Queue {
                     leases: Mutex::new(Vec::new()),
                     retired: AtomicU32::new(0),
                     active: AtomicU32::new(0),
-                    dependencies: vec![(completion.work.clone(), completion.value)],
+                    dependencies,
                 }),
                 words,
                 dispatch_range: 0..dispatch_end,
@@ -834,4 +858,62 @@ fn transfer_range(buffer: &Buffer, offset: usize, length: usize) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires gfx1151 and provisioned native libraries"]
+    fn observing_an_event_retires_every_earlier_submission() -> Result<()> {
+        let device = Device::open(Engine::Gpu, 0)?;
+        let fabric = device.fabric();
+        let producer = device.queue()?;
+        let consumer = device.queue()?;
+        // A host-controlled fence keeps the whole producer prefix outstanding
+        // while the consumer snapshots its event. No timing race or slow kernel
+        // is needed to keep the earlier buffer's lease alive.
+        let gate = Completion {
+            queue: device.queue()?,
+            work: Arc::new(Work {
+                fence: fabric.allocate_shared(64, std::slice::from_ref(&device))?,
+                _kernels: Vec::new(),
+                buffers: Vec::new(),
+                leases: Mutex::new(Vec::new()),
+                retired: AtomicU32::new(0),
+                active: AtomicU32::new(1),
+                dependencies: Vec::new(),
+            }),
+            value: 1,
+        };
+        let first = fabric.allocate(64, std::slice::from_ref(&device))?;
+        let last = fabric.allocate(64, std::slice::from_ref(&device))?;
+        unsafe { producer.prepare_wait(&gate)?.dispatch()? };
+        unsafe {
+            producer
+                .prepare_fill(&first, 0, first.len(), 37)?
+                .dispatch()?
+        };
+        let event = unsafe {
+            producer
+                .prepare_fill(&last, 0, last.len(), 91)?
+                .dispatch()?
+        };
+        let observed = unsafe { consumer.prepare_wait(&event)?.dispatch()? };
+        assert!(matches!(first.read(0, &mut [0; 64]), Err(Error::Busy(_))));
+        gate.work.fence.write(0, &1u32.to_le_bytes())?;
+        if !observed.wait_timeout(Duration::from_secs(5))? {
+            std::mem::forget(observed);
+            return Err(Error::DeviceLost("event prefix did not retire".into()));
+        }
+        // No producer wait or poll: consumer completion must retire all resources
+        // ordered by the event, including a buffer absent from its last command.
+        let mut bytes = [0; 64];
+        first.read(0, &mut bytes)?;
+        assert_eq!(bytes, [37; 64]);
+        last.read(0, &mut bytes)?;
+        assert_eq!(bytes, [91; 64]);
+        Ok(())
+    }
 }
