@@ -56,12 +56,10 @@ ArcFace by 32% and SCRFD by 11%. Keeping both qualified policies restores the
 released timings; changing either alone is insufficient. Physical register
 views, semantic live-segment alias checks, and all newer completion fixes remain
 active. Three exact-reference convolution shapes extend the paired corpus.
-See [native refresh qualification](../../docs/NATIVE-REFRESH.md).
 
 The candidate applies six compiler patches. Optional patch 0007 is retained after
 paired hardware qualification. Patches 0002 and 0004 are preserved under
 `patches/retired` but are not applied; 0008 belongs to the removed legacy runtime.
-See [qualification and consumer impact](../../docs/PATCH-QUALIFICATION.md).
 
 ## Rebuild
 

@@ -53,6 +53,10 @@ and **43 min 33 s** with built-in Comfy Kitchen INT8 attention: **6.78×** and
 **1.21×** h3 end-to-end speedups, respectively. h3 runs without the Python/PyTorch
 stack. See the [full comparison, videos, and memory measurements](https://github.com/zacharydenton/h3-hrx/blob/master/docs/benchmarks/20260914/README.md).
 
+The vision libraries also fit together: SCRFD supplies face landmarks to
+ArcFace for alignment and embeddings, while DINOv3 produces image vectors
+that an application can index with hrxdb.
+
 ## GPU + NPU pipelines
 
 Run independent work on both devices at once:
@@ -81,6 +85,7 @@ Increasing `RuntimeOptions::max_submissions` raises queue capacity only. The low
 See [the GPU/NPU guide](docs/GPU-NPU.md) for the trust boundary, host mapping guards,
 shared native runtime setup, compiler pinning, and runnable hardware validation.
 The unified bundle includes both native device backends.
+
 
 ## Use from Rust
 
@@ -288,3 +293,8 @@ cargo test --all-features
 cargo clippy --all-features --all-targets -- -D warnings
 cargo doc --all-features --no-deps --open
 ```
+
+Use `scripts/check-feature-matrix.sh` for feature checks. See
+[CHANGELOG.md](CHANGELOG.md) for API changes and [THIRD-PARTY.md](THIRD-PARTY.md)
+for native distribution status. Original Rust code is [MIT licensed](LICENSE); NPU-derived code retains its
+[upstream licenses](THIRD-PARTY.md).

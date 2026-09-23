@@ -11,7 +11,7 @@ keywords = ["gpu", "npu", "amdgpu", "compute", "loom"]
 categories = ["hardware-support", "science"]
 include = [
     "/src/**",
-    "/docs/**",
+    "/docs/GPU-NPU.md",
     "/tests/**",
     "/examples/**",
     "/native/**",
@@ -26,13 +26,10 @@ include = [
     "/NOTICE",
     "/THIRD-PARTY.md",
     "/THIRD-PARTY.json",
-    "/VALIDATION.md",
     "!**/__pycache__/**",
     "!**/*.pyc",
     "!/scripts/vision-bench/**",
     "!/scripts/contention.py",
-    "!/scripts/CONTENTION.md",
-    "!/scripts/CACHE-RESIDENCY.md",
     "!/scripts/build-compiler-variants.py",
     "!/patches/retired/**",
 ]

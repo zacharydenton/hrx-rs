@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("usage: qualify_checkpoints [--fetch]".into()),
     };
     let repositories: Vec<Repository> =
-        serde_json::from_str(include_str!("../docs/qualification-checkpoints.json"))?;
+        serde_json::from_str(include_str!("../native/qualification/checkpoints.json"))?;
     let mut failures = 0;
     for repository in repositories {
         let resolver = hf::Resolver::new(

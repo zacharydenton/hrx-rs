@@ -16,6 +16,17 @@
   GPU event, allowing ordered cross-stream host reads without stale buffer
   leases. Add a gated hardware regression that reproduces the earlier failure.
 
+- Correct the PM4 instruction-cache invalidation field from `FIRST_LAST` to
+  `ALL`; add a hardware regression for replacing retired code at the same
+  executable address. Hardware comparison reproduces stale code without the
+  fix; cache and attention regressions pass with both compiler bundles.
+- Refresh upstream to `468508b9e` with six qualified compiler patches. Retain
+  allocation/layout policies that avoid reproduced ArcFace/SCRFD regressions,
+  preserving newer physical-register, alias and completion correctness.
+- Expand the paired compiler corpus with three exact-reference ArcFace
+  convolutions. Execution libraries remain byte-identical; no numerical
+  tolerance or model default changes.
+
 ## 0.8.5 — compose image and validation stages
 
 - Expose recordable fragments for RGB view encoding/decoding, RGB compositing
@@ -35,7 +46,25 @@
   arbitrarily large native scratch allocations resident.
 - Retain the qualified 0.8.3 native bundle unchanged.
 
+- Add a verified concurrent GPU/NPU example with sequential/parallel timing.
+- Remove obsolete AIEBU/XDNA patches and exclude retired experiment tooling and
+  compiler patches from crate packaging. Preserve historical evidence in Git.
+- Qualify public model clients and hrxdb prepared search on 0.8.3.
+- Refresh native setup and release instructions; benchmark runners can select
+  and record the exact native bundle for each arm.
+
 ## 0.8.3 — restore cached GPU system memory
+
+- Use GPU-cacheable system memory for ordinary buffers, executable images,
+  arguments and scratch. Keep completion fences and `allocate_shared` storage
+  GPU-coherent. Ordinary mapped transfers now perform CPU cache maintenance.
+- Add `Buffer::cache_control` for callers that use direct mapped pointers;
+  acquire before reading and publish after writing ordinary allocations.
+  `allocate_shared` retains synchronized direct-access semantics.
+- Correct the native GTT host-cache description: CPU mappings remain write-back
+  independently of the GPU coherence flag. Pin the reviewed native patch and
+  matching rebuilt bundle.
+- Restore hrxdb scan bandwidth with GPU-cacheable system memory.
 
 ## 0.8.2 — release tracked backing with its budget
 
@@ -56,6 +85,19 @@
   fixture, and the GPU/NPU integration suites on gfx1151 and NPU5.
 
 ## 0.8.0 — native GPU/NPU migration
+
+- Replace both GPU and NPU runtimes with libamdf and one verified native bundle.
+  Qualify gfx1151 and Strix Halo NPU5; retain owned buffers, graphs, inference,
+  cross-device hazards, completion futures, and residency budgets.
+- Add C23/C++26 imports with explicit virtual headers and linked Loom sources,
+  native XDNA compilation, structured reports, and report inspection/diff CLI.
+- Use complete XDNA establishing commands, shared dma-buf backing, checked
+  retirement fences, device-side GPU event waits, and native graph batching.
+- Remove XRT/IRON provisioning, xclbin APIs, separate NPU manifests, and GPU
+  host-page import. NPU memory placement now names a device rather than a program.
+- Retain compiler patches 0001/0003/0005/0007/0009. Retire 0002/0004 and remove
+  obsolete 0008. The query32 repack form remains unsupported. Ubuntu 26.04
+  remains the native baseline.
 
 ## Prior upstream update (0.7 development)
 

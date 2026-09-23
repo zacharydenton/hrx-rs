@@ -51,6 +51,16 @@ through native dma-buf export/import. Aliases retain the original allocation,
 share access guards, and perform the required visibility transitions.
 Caller-owned GPU host-page registration is no longer exposed by `Stream`.
 
+Ordinary GPU allocations use cacheable system memory with explicit host cache
+maintenance. `Stream::allocate_shared` and completion fences retain coherent
+system memory. On gfx1151, native floating-point atomic max does not update
+this coherent backing; do not use
+`view.atomic.reduce<maxnumf>` on it. An integer compare/exchange loop over the
+float bits preserves the max operation and works on this allocation class.
+Ordinary floating-point loads, stores and arithmetic are unaffected by this
+specific limitation. The 0.8.3 cached-allocation probe passes native float max
+for 1,048,576 inputs and 64 buckets with exact CPU agreement.
+
 Host map guards prevent conflicting device use. Graph contracts infer hazards;
 independent lanes can overlap within configured run capacity. Completion handles
 support waits and futures. A timeout does not cancel accepted native work or
@@ -105,6 +115,13 @@ must contain only used bindings: the pinned compiler's unused-middle-binding
 relocation is rejected by the native image validator.
 
 ## Migration from 0.7
+
+Replace XRT xclbin/instruction pairs and external IRON compilation with Loom
+`.xdna` artifacts. Replace `Shared(program)`/`NpuLocal(program)` with device
+placements. The raw XRT module, toolchain provisioning, separate NPU manifest,
+and old interop shim are removed. GPU streams, inference APIs, budgets, and
+tracked graphs retain their Rust interfaces except for host-page import.
+See [the compiler patch list](../patches/loom/README.md) for the active patches.
 
 Compiler API callers must replace boolean report arguments with `ReportMode`,
 serialize `CompileReport` with serde_json for text output, and include

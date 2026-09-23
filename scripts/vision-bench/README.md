@@ -162,7 +162,7 @@ failure propagation:
 python3 -m unittest discover -s scripts/vision-bench -v
 ```
 
-See [the measured Strix Halo run](RESULTS.md) for results and limitations.
+
 
 Checkpoint provenance supports both `model.safetensors` and the sharded
 `model.safetensors.index.json` format, hashing the config, index and every shard.
