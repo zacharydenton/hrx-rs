@@ -1,0 +1,419 @@
+Retain qualified allocation and masked-region layout policies.
+
+The new adjacent AMDGPU EXEC-restore layout and edge-consumer-first allocation
+policy interact to introduce loop copies and earlier waits in production
+convolutions. Together they regress ArcFace by 32% and SCRFD by 11% on gfx1151.
+Retain the preceding placement and linear-register preferences while preserving the new physical
+register-view support, semantic live-segment alias checks and completion fixes.
+Restoring only one policy leaves a reproducible regression.
+
+Declared physical register views retain the newer consumer-first preference.
+The assembly expectations below restore block placement and move one independent
+scalar increment before its existing complete vector wait. No program,
+reference result, tolerance, memory contract or alias-safety condition changes.
+See docs/NATIVE-REFRESH.md and its raw paired qualification evidence.
+
+diff --git a/loom/src/loom/target/arch/amdgpu/lower/control.c b/loom/src/loom/target/arch/amdgpu/lower/control.c
+--- a/loom/src/loom/target/arch/amdgpu/lower/control.c
++++ b/loom/src/loom/target/arch/amdgpu/lower/control.c
+@@ -9,7 +9,6 @@
+ #include <string.h>
+ 
+ #include "loom/analysis/condition_facts.h"
+-#include "loom/ir/module.h"
+ #include "loom/ops/cfg/ops.h"
+ #include "loom/target/arch/amdgpu/lower/constants.h"
+ #include "loom/target/arch/amdgpu/lower/emit.h"
+@@ -522,16 +521,14 @@
+   return iree_ok_status();
+ }
+ 
+-static iree_status_t loom_amdgpu_insert_restore_block_before_dest(
++static iree_status_t loom_amdgpu_append_restore_block_like_dest(
+     loom_low_lower_context_t* context, loom_block_t* low_dest,
+     loom_block_t** out_restore_block) {
+   *out_restore_block = NULL;
+   loom_block_t* restore_block = NULL;
++  IREE_RETURN_IF_ERROR(
++      loom_low_lower_append_low_block(context, &restore_block));
+   loom_module_t* module = loom_low_lower_context_module(context);
+-  // The restored continuation stays beside the masked region instead of
+-  // turning every loop iteration into a trip through the function tail.
+-  IREE_RETURN_IF_ERROR(loom_region_insert_block(
+-      module, low_dest->parent_region, low_dest->region_index, &restore_block));
+   loom_builder_t* builder = loom_low_lower_context_builder(context);
+   for (uint16_t i = 0; i < low_dest->arg_count; ++i) {
+     const loom_value_id_t dest_arg = loom_block_arg_id(low_dest, i);
+@@ -583,7 +580,7 @@
+   loom_block_t* guard_false_low_dest = NULL;
+   IREE_RETURN_IF_ERROR(loom_low_lower_lookup_block(
+       context, region.guard_false_dest, &guard_false_low_dest));
+-  IREE_RETURN_IF_ERROR(loom_amdgpu_insert_restore_block_before_dest(
++  IREE_RETURN_IF_ERROR(loom_amdgpu_append_restore_block_like_dest(
+       context, guard_false_low_dest, &plan->restore_block));
+   IREE_RETURN_IF_ERROR(loom_low_lower_interpose_successor_dest(
+       context, source_op, 1, plan->restore_block, &plan->restore_dest));
+@@ -599,7 +596,7 @@
+     loom_block_t* continuation_low_dest = NULL;
+     IREE_RETURN_IF_ERROR(loom_low_lower_lookup_block(
+         context, region.continuation, &continuation_low_dest));
+-    IREE_RETURN_IF_ERROR(loom_amdgpu_insert_restore_block_before_dest(
++    IREE_RETURN_IF_ERROR(loom_amdgpu_append_restore_block_like_dest(
+         context, continuation_low_dest, &exit_restore_block));
+     plan->merge_restore_block = exit_restore_block;
+     plan->merge_restore_dest = exit_restore_dest;
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_control_flow.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_control_flow.loom-test
+--- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_control_flow.loom-test
++++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_control_flow.loom-test
+@@ -885,12 +885,12 @@
+   %lane = slice %values[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+   %empty = s_mov_b32 0
+   %has_reference = s_cmp_lg_i32 %reference_count, %empty
+-  low.cond_br %has_reference, ^_bb1, ^_bb8 : reg<amdgpu.scc>
++  low.cond_br %has_reference, ^_bb1, ^_bb7 : reg<amdgpu.scc>
+ ^_bb1:
+   %36 = v_mov_b32_copy %lower
+   %after_lower = v_cmp_ge_i32 %lane, %36
+   %38, %39 = s_and_saveexec_b64 %after_lower
+-  low.cond_br %39, ^_bb2, ^_bb6 : reg<amdgpu.scc>
++  low.cond_br %39, ^_bb2, ^_bb9 : reg<amdgpu.scc>
+ ^_bb2:
+   %47 = v_mov_b32_copy %upper
+   %before_upper = v_cmp_lt_i32 %lane, %47
+@@ -920,16 +920,16 @@
+   %43 = slice %state[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+   %45 = v_cndmask_b32 %43, %68, %after_lower
+   %46 = concat(%42, %45) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
+-  low.br ^_bb7(%46: reg<amdgpu.vgpr x2>)
+-^_bb6:
++  low.br ^_bb6(%46: reg<amdgpu.vgpr x2>)
++^_bb6(%after_result: reg<amdgpu.vgpr x2>):
++  low.br ^_bb8(%after_result: reg<amdgpu.vgpr x2>)
++^_bb7:
++  low.br ^_bb8(%state: reg<amdgpu.vgpr x2>)
++^_bb8(%result: reg<amdgpu.vgpr x2>):
++  return %result
++^_bb9:
+   s_mov_b64_exec %38
+-  low.br ^_bb7(%state: reg<amdgpu.vgpr x2>)
+-^_bb7(%after_result: reg<amdgpu.vgpr x2>):
+-  low.br ^_bb9(%after_result: reg<amdgpu.vgpr x2>)
+-^_bb8:
+-  low.br ^_bb9(%state: reg<amdgpu.vgpr x2>)
+-^_bb9(%result: reg<amdgpu.vgpr x2>):
+-  return %result
++  low.br ^_bb6(%state: reg<amdgpu.vgpr x2>)
+ ^_bb11:
+   s_mov_b64_exec %49
+   %51 = v_mov_b32 0
+@@ -966,12 +966,12 @@
+   %20 = v_mov_b32_copy %lower
+   %after_lower = v_cmp_ge_i32 %lane, %20
+   %22, %23 = s_and_saveexec_b64 %after_lower
+-  low.cond_br %23, ^after, ^_bb3 : reg<amdgpu.scc>
++  low.cond_br %23, ^after, ^_bb4 : reg<amdgpu.scc>
+ ^after:
+   %31 = v_mov_b32_copy %upper
+   %before_upper = v_cmp_lt_i32 %lane, %31
+   %33, %34 = s_and_saveexec_b64 %before_upper
+-  low.cond_br %34, ^inside, ^_bb4 : reg<amdgpu.scc>
++  low.cond_br %34, ^inside, ^_bb6 : reg<amdgpu.scc>
+ ^inside:
+   %42 = v_mov_b32_copy %upper
+   %inside_value = v_add_u32 %lane, %42
+@@ -982,14 +982,11 @@
+   %38 = slice %state[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+   %40 = v_cndmask_b32 %38, %45, %before_upper
+   low.br ^_bb5(%37: reg<amdgpu.vgpr>, %40: reg<amdgpu.vgpr>)
+-^_bb3:
++^join(%result: reg<amdgpu.vgpr x2>):
++  return %result
++^_bb4:
+   s_mov_b64_exec %22
+   low.br ^join(%state: reg<amdgpu.vgpr x2>)
+-^_bb4:
+-  s_mov_b64_exec %33
+-  %49 = slice %state[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+-  %50 = slice %state[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+-  low.br ^_bb5(%49: reg<amdgpu.vgpr>, %50: reg<amdgpu.vgpr>)
+ ^_bb5(%47: reg<amdgpu.vgpr>, %48: reg<amdgpu.vgpr>):
+   s_mov_b64_exec %22
+   %24 = slice %state[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+@@ -998,8 +995,11 @@
+   %29 = v_cndmask_b32 %27, %48, %after_lower
+   %30 = concat(%26, %29) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
+   low.br ^join(%30: reg<amdgpu.vgpr x2>)
+-^join(%result: reg<amdgpu.vgpr x2>):
+-  return %result
++^_bb6:
++  s_mov_b64_exec %33
++  %49 = slice %state[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
++  %50 = slice %state[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
++  low.br ^_bb5(%49: reg<amdgpu.vgpr>, %50: reg<amdgpu.vgpr>)
+ }
+ 
+ // ====
+@@ -1127,7 +1127,7 @@
+   %step = s_mov_b32 1
+   %cond = v_cmp_lt_i32_src1_inline %lane {rhs = 8}
+   %27, %28 = s_and_saveexec_b64 %cond
+-  low.cond_br %28, ^then, ^_bb5 : reg<amdgpu.scc>
++  low.cond_br %28, ^then, ^_bb6 : reg<amdgpu.scc>
+ ^then:
+   %43 = slice %state[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+   %44 = slice %state[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+@@ -1146,11 +1146,11 @@
+   %34 = v_cndmask_b32 %32, %44, %cond
+   %35 = concat(%31, %34) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
+   low.br ^join(%35: reg<amdgpu.vgpr x2>)
+-^_bb5:
++^join(%result: reg<amdgpu.vgpr x2>):
++  return %result
++^_bb6:
+   s_mov_b64_exec %27
+   low.br ^join(%state: reg<amdgpu.vgpr x2>)
+-^join(%result: reg<amdgpu.vgpr x2>):
+-  return %result
+ }
+ 
+ // ====
+@@ -2193,16 +2193,16 @@
+   low.cond_br %41, ^_bb2, ^_bb6 : reg<amdgpu.scc>
+ ^_bb2:
+   %42, %43 = s_and_saveexec_b64 %cond
+-  low.cond_br %43, ^_bb3, ^_bb10 : reg<amdgpu.scc>
++  low.cond_br %43, ^_bb3, ^_bb9 : reg<amdgpu.scc>
+ ^_bb3:
+   %56 = slice %iter[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+   %then = concat(%lane, %56) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
+-  low.br ^_bb9(%then: reg<amdgpu.vgpr x2>)
+-^_bb9(%next$32: reg<amdgpu.vgpr x2>):
++  low.br ^_bb8(%then: reg<amdgpu.vgpr x2>)
++^_bb8(%next$32: reg<amdgpu.vgpr x2>):
+   s_mov_b64_exec %42
+   %53 = s_and_b64 %42, %cond
+   %54 = s_xor_b64_exec %53
+-  low.cond_br %54, ^_bb4, ^_bb11 : reg<amdgpu.scc>
++  low.cond_br %54, ^_bb4, ^_bb10 : reg<amdgpu.scc>
+ ^_bb4:
+   %58 = v_mov_b32 4
+   %biased = v_sub_u32 %58, %lane
+@@ -2219,23 +2219,23 @@
+   low.br ^_bb1(%63: reg<amdgpu.sgpr>, %next$31: reg<amdgpu.vgpr x2>)
+ ^_bb6:
+   %64, %65 = s_and_saveexec_b64 %cond
+-  low.cond_br %65, ^_bb7, ^_bb8 : reg<amdgpu.scc>
++  low.cond_br %65, ^_bb7, ^_bb11 : reg<amdgpu.scc>
+ ^_bb7:
+   %66 = v_mov_b32 0
+   %67 = s_mov_b32_m0_imm 0
+   global_store_dwordx2_saddr %66, %iter, %output_view, %67
+-  low.br ^_bb8
+-^_bb8:
+-  s_mov_b64_exec %64
+-  return
+-^_bb10:
++  low.br ^_bb11
++^_bb9:
+   s_mov_b64_exec %42
+   %44 = v_mov_b32 0
+   %45 = concat(%44, %44) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
+-  low.br ^_bb9(%45: reg<amdgpu.vgpr x2>)
+-^_bb11:
++  low.br ^_bb8(%45: reg<amdgpu.vgpr x2>)
++^_bb10:
+   s_mov_b64_exec %42
+   low.br ^_bb5(%next$32: reg<amdgpu.vgpr x2>)
++^_bb11:
++  s_mov_b64_exec %64
++  return
+ }
+ 
+ // ====
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_loop_entry.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_loop_entry.loom-test
+--- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_loop_entry.loom-test
++++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_loop_entry.loom-test
+@@ -415,7 +415,7 @@
+   %not_first = v_cmp_ne_i32_src1_inline %lane_i32 {rhs = 0}
+   %inside = v_cmp_lt_u32_src1_inline %lane_i32 {rhs = 32}
+   %32, %33 = s_and_saveexec_b64 %inside
+-  low.cond_br %33, ^setup, ^_bb8 : reg<amdgpu.scc>
++  low.cond_br %33, ^setup, ^_bb10 : reg<amdgpu.scc>
+ ^setup:
+   %35 = v_mov_b32_copy %loop_begin
+   low.br ^_bb16(%35: reg<amdgpu.vgpr>)
+@@ -447,18 +447,18 @@
+   s_mov_b64_exec %45
+   low.br ^exit
+ ^exit:
+-  low.br ^_bb10(%observed$20: reg<amdgpu.vgpr>)
+-^_bb8:
+-  s_mov_b64_exec %32
+-  low.br ^merge(%lane_i32: reg<amdgpu.vgpr>)
+-^_bb10(%result$22: reg<amdgpu.vgpr>):
+-  s_mov_b64_exec %32
+-  %34 = v_cndmask_b32 %lane_i32, %result$22, %inside
+-  low.br ^merge(%34: reg<amdgpu.vgpr>)
++  low.br ^_bb11(%observed$20: reg<amdgpu.vgpr>)
+ ^merge(%result$21: reg<amdgpu.vgpr>):
+   %49 = v_lshlrev_b32_src0_inline %lane_i32, 2
+   global_store_b32_saddr %49, %result$21, %output_view
+   return
++^_bb10:
++  s_mov_b64_exec %32
++  low.br ^merge(%lane_i32: reg<amdgpu.vgpr>)
++^_bb11(%result$22: reg<amdgpu.vgpr>):
++  s_mov_b64_exec %32
++  %34 = v_cndmask_b32 %lane_i32, %result$22, %inside
++  low.br ^merge(%34: reg<amdgpu.vgpr>)
+ ^_bb13:
+   s_mov_b64_exec %36
+   %38 = v_mov_b32 0
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_subgroup_collective.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_subgroup_collective.loom-test
+--- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_subgroup_collective.loom-test
++++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_subgroup_collective.loom-test
+@@ -906,27 +906,27 @@
+ ^_bb6(%result1: reg<amdgpu.vgpr>):
+   %is_lane0 = v_cmp_eq_i32_src1_inline %tid {rhs = 0}
+   %136, %137 = s_and_saveexec_b64 %is_lane0
+-  low.cond_br %137, ^_bb7, ^_bb8 : reg<amdgpu.scc>
++  low.cond_br %137, ^_bb7, ^_bb11 : reg<amdgpu.scc>
+ ^_bb7:
+   %138 = v_mov_b32 0
+   global_store_b32_saddr %138, %result0, %output_view
+-  low.br ^_bb8
+-^_bb8:
++  low.br ^_bb11
++^_bb11:
+   s_mov_b64_exec %136
+   %row1_in_bounds = s_cmp_lt_u32 %second_row, %row_count
+-  low.cond_br %row1_in_bounds, ^_bb9, ^_bb12 : reg<amdgpu.scc>
++  low.cond_br %row1_in_bounds, ^_bb8, ^_bb10 : reg<amdgpu.scc>
++^_bb8:
++  %140, %141 = s_and_saveexec_b64 %is_lane0
++  low.cond_br %141, ^_bb9, ^_bb12 : reg<amdgpu.scc>
+ ^_bb9:
+-  %140, %141 = s_and_saveexec_b64 %is_lane0
+-  low.cond_br %141, ^_bb10, ^_bb11 : reg<amdgpu.scc>
+-^_bb10:
+   %142 = v_mov_b32 0
+   global_store_b32_saddr %142, %result1, %output_view {offset = 4}
+-  low.br ^_bb11
+-^_bb11:
++  low.br ^_bb12
++^_bb10:
++  return
++^_bb12:
+   s_mov_b64_exec %140
+-  low.br ^_bb12
+-^_bb12:
+-  return
++  low.br ^_bb10
+ }
+ 
+ // ====
+diff --git a/loom/src/loom/codegen/low/allocation/interval_assignment.c b/loom/src/loom/codegen/low/allocation/interval_assignment.c
+--- a/loom/src/loom/codegen/low/allocation/interval_assignment.c
++++ b/loom/src/loom/codegen/low/allocation/interval_assignment.c
+@@ -757,15 +757,24 @@
+       continue;
+     }
+ 
+-    // Honor an already assigned consumer before choosing an incoming source.
+-    // In particular, a join feeding a loop retains the loop's storage instead
+-    // of adopting a different predecessor's location and copying on backedges.
++    // Declared physical views benefit from preserving an assigned consumer's
++    // named storage. Linear register files instead preserve the incoming
++    // structural tuple: choosing the consumer first can split that tuple and
++    // move its lanes inside a hot loop. Both orders retain the same alias and
++    // interference checks.
++    const loom_low_reg_class_t* reg_class = NULL;
++    IREE_RETURN_IF_ERROR(loom_low_allocation_target_constraints_resolve_reg_class(
++        context->target_constraints, interval->value_class, NULL, &reg_class));
++    const bool prefer_edge_consumer =
++        loom_low_reg_class_uses_explicit_physical_registers(reg_class);
+     bool assigned_edge_source_interval = false;
+-    IREE_RETURN_IF_ERROR(
+-        loom_low_allocation_coalescing_assign_edge_source_interval(
+-            &coalescing_context, interval, &assigned_edge_source_interval));
+-    if (assigned_edge_source_interval) {
+-      continue;
++    if (prefer_edge_consumer) {
++      IREE_RETURN_IF_ERROR(
++          loom_low_allocation_coalescing_assign_edge_source_interval(
++              &coalescing_context, interval, &assigned_edge_source_interval));
++      if (assigned_edge_source_interval) {
++        continue;
++      }
+     }
+ 
+     bool assigned_structural_interval = false;
+@@ -774,6 +783,15 @@
+             &coalescing_context, interval, &assigned_structural_interval));
+     if (assigned_structural_interval) {
+       continue;
++    }
++
++    if (!prefer_edge_consumer) {
++      IREE_RETURN_IF_ERROR(
++          loom_low_allocation_coalescing_assign_edge_source_interval(
++              &coalescing_context, interval, &assigned_edge_source_interval));
++      if (assigned_edge_source_interval) {
++        continue;
++      }
+     }
+ 
+     // Fixed bindings constrain every candidate but retain the same required
+diff --git a/loom/src/loom/codegen/low/test/allocation_physical_domains.loom-test b/loom/src/loom/codegen/low/test/allocation_physical_domains.loom-test
+--- a/loom/src/loom/codegen/low/test/allocation_physical_domains.loom-test
++++ b/loom/src/loom/codegen/low/test/allocation_physical_domains.loom-test
+@@ -176,3 +176,35 @@
+ 
+ // ----
+ {"format":"loom.low.allocation.v0","function":"rotating_versions_remain_distinct","target":"target","descriptor_set":"test.low.core","allocation_mode":"virtual","assignment_count":6,"remark_count":0,"copy_decision_count":0,"spill_count":0,"spill_plan_count":0,"coalesced_copy_count":0,"materialized_copy_count":0,"assignments":[{"index":0,"value":{"id":1,"name":"first","type":"reg<test.explicit32>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"test.explicit32"},"start_point":0,"end_point":1,"unit_count":1,"location":{"kind":"physical_register","base":2,"count":1}},{"index":1,"value":{"id":2,"name":"second","type":"reg<test.explicit32>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"test.explicit32"},"start_point":0,"end_point":1,"unit_count":1,"location":{"kind":"physical_register","base":3,"count":1}},{"index":2,"value":{"id":0,"name":"condition","type":"reg<test.i32>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"test.i32"},"start_point":0,"end_point":7,"unit_count":1,"location":{"kind":"target_id","base":0,"count":1}},{"index":3,"value":{"id":6,"name":"left","type":"reg<test.explicit32>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"test.explicit32"},"start_point":2,"end_point":8,"unit_count":1,"location":{"kind":"physical_register","base":2,"count":1}},{"index":4,"value":{"id":7,"name":"right","type":"reg<test.explicit32>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"test.explicit32"},"start_point":2,"end_point":8,"unit_count":1,"location":{"kind":"physical_register","base":3,"count":1}},{"index":5,"value":{"id":8,"name":"restricted","type":"reg<test.packed.narrow>"},"class":{"type_kind":12,"type_kind_name":"register","element_type":0,"element_type_name":null,"register_class":"test.packed.narrow"},"start_point":3,"end_point":8,"unit_count":1,"location":{"kind":"physical_register","base":0,"count":1}}],"spill_plans":[],"copy_decisions":[],"remarks":[]}
++
++// ====
++
++// RUN: with-checks emit low-allocation-json @linear_join_preserves_incoming_tuple fixed=%initial:target_id:4:2 fixed=%fresh:target_id:2:2
++
++test.target<low_core> @target
++
++// Linear register tuples retain the incoming tuple instead of adding copies
++// to the replacing edge. Unlike named physical views, these locations have
++// ordinary numeric alignment and can preserve the tuple directly.
++low.func.def target<test.low.core>(@target) @linear_join_preserves_incoming_tuple(%condition: reg<test.i32>, %initial: reg<test.i32 x2>) -> (reg<test.i32 x2>) asm {
++  low.br ^loop(%initial: reg<test.i32 x2>)
++^loop(%state: reg<test.i32 x2>):
++  %low = test.const.i32 11
++  %high = test.const.i32 23
++  %fresh = concat(%low, %high) : (reg<test.i32>, reg<test.i32>) -> reg<test.i32 x2>
++  low.cond_br %condition, ^replace, ^keep : reg<test.i32>
++^replace:
++  low.br ^join(%fresh: reg<test.i32 x2>)
++^keep:
++  low.br ^join(%state: reg<test.i32 x2>)
++^join(%merged: reg<test.i32 x2>):
++  low.cond_br %condition, ^repeat, ^exit : reg<test.i32>
++^repeat:
++  low.br ^loop(%merged: reg<test.i32 x2>)
++^exit:
++  return %merged
++}
++
++// ----
++CHECK: *"spill_count":0,*"name":"state"*"location":{"kind":"target_id","base":4,"count":2}*"name":"fresh"*"location":{"kind":"target_id","base":2,"count":2}*"name":"merged"*"location":{"kind":"target_id","base":2,"count":2}*
++
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_completed_result.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_completed_result.loom-test
+--- a/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_completed_result.loom-test
++++ b/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_completed_result.loom-test
+@@ -316,9 +316,9 @@
+   v_add_u32 v7, v12, v6
+   global_load_b64 v[8:9], v0, s[0:1] offset:16
+ .Lbb3:
++  s_add_u32 s3, s3, s4
+   s_waitcnt vmcnt(0) lgkmcnt(63)
+   v_mov_b32 v4, v8
+-  s_add_u32 s3, s3, s4
+   s_branch .Lbb1
+ .Lbb4:
+   s_endpgm

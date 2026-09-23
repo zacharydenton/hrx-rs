@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.8.6 — native refresh and completion correctness
+
+- Release submission-owned resources before publishing completion, preventing
+  completed readbacks from transiently retaining inference slots. Track public
+  completion observers independently so worker finalization does not block replay.
+
+- Retire the complete producer submission prefix when a consumer observes a
+  GPU event, allowing ordered cross-stream host reads without stale buffer
+  leases. Add a gated hardware regression that reproduces the earlier failure.
 
 ## 0.8.5 — compose image and validation stages
 

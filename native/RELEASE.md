@@ -28,11 +28,11 @@ Use Python 3.12+, patch, tar, and Docker or Podman. Starting in this repository:
 python3 scripts/fetch-native-inputs.py --work artifacts/native-release
 CONTAINER_ENGINE=docker bash scripts/rebuild-hrx.sh artifacts/native-release
 python3 scripts/stage-native-release.py --work artifacts/native-release \
-  --release-tag native-20260922-cache-policy
+  --release-tag native-20260923-468508b9e
 cargo run --release --bin hrx -- pack artifacts/native-release/stage-amdf \
   artifacts/native-release/output \
-  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-cache-policy/hrx-linux-x86_64-gfx1151.tar.gz \
-  'HRX 556c648e8; native libamdf cached system memory; Ubuntu 26.04' gfx1151
+  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260923-468508b9e/hrx-linux-x86_64-gfx1151.tar.gz \
+  'HRX 468508b9e; native libamdf; qualified allocation and layout; Ubuntu 26.04' gfx1151
 ```
 
 The source archive contains upstream inputs, local patches, the native bridge,

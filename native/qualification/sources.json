@@ -26,5 +26,12 @@
     "path": "kernels/gemm_f16_fast_256b.loom",
     "sha256": "83c8c140a6c652ec2097df839c4ec22e20b187f34775613af8850fbb14bdc508",
     "license_file": "LICENSE-h3-hrx.txt"
+  },
+  "arcface_conv3x3_f16_wmma_bnprelu.loom": {
+    "repository": "https://github.com/zacharydenton/arcface-hrx",
+    "revision": "8b6ec6ae797ea0117a8708167af9844c9949ec21",
+    "path": "kernels/conv3x3_f16_wmma_bnprelu.loom",
+    "sha256": "24a5925b96d31e34b4e799b944efc68ca5b47322037609c28c0cf45c5ccd66ec",
+    "license_file": "LICENSE-arcface-hrx.txt"
   }
 }

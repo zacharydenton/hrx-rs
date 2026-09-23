@@ -8,7 +8,8 @@
       "0003-smem-storage-reuse-drain.patch": "b6fdff10054d8b2bfe28fc69c003dedee2834bf33f49a4ed2ff3ffe820dba845",
       "0005-materialize-encoding-config.patch": "91d2be463c6046e2571eb6bba86902da6d1e9d5b3cf2b91e70682c5131f310e0",
       "0007-gfx11-vmem-source-reuse.patch": "c42ea13b2296bec4e92e89396d58cd898f2fb4d2ba58dc7e7fc268802b53e5b8",
-      "0009-amdgpu-profile-processor-mode.patch": "318db9d69eb9ccb0fd22d7f69fb1571e9ed628a2d2649769d71e585cc49255e2"
+      "0009-amdgpu-profile-processor-mode.patch": "318db9d69eb9ccb0fd22d7f69fb1571e9ed628a2d2649769d71e585cc49255e2",
+      "0010-retain-qualified-allocation-layout.patch": "5c92a521183e38a6fb8e0baf1f9edc573583acd276cd0c0e9e9edbe8156b39a6"
     }
   },
   "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",

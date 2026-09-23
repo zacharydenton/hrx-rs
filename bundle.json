@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "target": "x86_64-unknown-linux-gnu-gfx1151",
-  "revision": "HRX 556c648e8; native libamdf cached system memory; Ubuntu 26.04",
-  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260922-cache-policy/hrx-linux-x86_64-gfx1151.tar.gz",
-  "archive_sha256": "632f55898c64a654fc869eec6a38a24c77e9ca672153af4e3cea88c195d272c1",
+  "revision": "HRX 468508b9e; native libamdf; qualified allocation and layout; Ubuntu 26.04",
+  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260923-468508b9e/hrx-linux-x86_64-gfx1151.tar.gz",
+  "archive_sha256": "98ddf920772f7695c7e439d7405f0b60d9ad3919a04105c477a9ad5c442eefe2",
   "files": {
     "LICENSE-AMDGPU-ISA.txt": "4b58c86ef9b8f1be198079e5b62ea5c2bea0cc2f9187d21463a9c5e4ca75d69c",
     "LICENSE-CORE-MATH.txt": "4639ae96f455d387fd2b042ce11a2713ac3ee9bfc82591182683f4ee503be011",
@@ -16,11 +16,11 @@
     "LICENSE-linux-gpl2-license.txt": "8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa",
     "LICENSE-linux-syscall-note.txt": "8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f",
     "LICENSE-linux-uapi.txt": "aa58e02703c9fe5ddb9ff0a971db64f6f3a331fe9f855efb86ff0abeb6ecef3f",
-    "NOTICE": "d4f592ca2308775581f7b2a03ddef5bad1557560ae40194d7a015a01677ca9ac",
-    "THIRD-PARTY.json": "033401213d920f304ad759bed72799fcd15e6fa8c9e05f8c14e302dc8639047f",
+    "NOTICE": "0ef842a87d9adc72b48a8ff0621e77e9031d30a2ca45bf531a9a4ffab5ea3cdd",
+    "THIRD-PARTY.json": "bec604b31255e7c61c5c147ceacec2271e5fa2c959ac8e0da578c584a7bc6413",
     "libamdf.so": "a535883a40639339e89fd6c6e5e8c4937e31cda7bfd12b859e03b550f98b133d",
     "libhrx_fabric.so": "76bf3e14819c528f015a97c1c0fad6d670f151d41456d4548108d79a924ab7d3",
-    "libloomc.so": "c0eb0282c09b96fd47b2f12d9689a0bf81abc86358dab7372f7f523f83733291",
-    "provenance.json": "68830a9d37c1399bacb620f6cbf57f86452856c745024d2f6ae18a849cae99c9"
+    "libloomc.so": "5ea99f7f4c00901b1f9ddd548e95b3fd3b4a96127101839f1e13bf153b642685",
+    "provenance.json": "b2f673136eab24daf2e8684d61f5de862a65b7dd6103d28eeb00dedeaaa482ac"
   }
 }

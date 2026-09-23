@@ -1,4 +1,4 @@
-//! Paired compiler qualification on resident attention and GEMM kernels.
+//! Paired compiler qualification on resident attention, GEMM and convolution kernels.
 //! Usage: patch_bench BASELINE_LIB CANDIDATE_LIB [pairs=30] [default|cu|wgp]
 use hrx::{
     Buffer, Constants, GraphExec, Result, Stream,
@@ -223,6 +223,54 @@ fn gemm(large: bool, integer: bool) -> Case {
         tolerance: if integer { 0.0 } else { 2f64.powi(-14) },
     }
 }
+fn conv(height: usize, cin: usize, n: usize) -> Case {
+    let symbol = "arcface_conv3x3_f16_wmma_bnprelu";
+    let mut spec = Specialization::new(symbol).with_report(ReportMode::Details);
+    for (key, value) in [
+        ("height", height),
+        ("width", height),
+        ("stride", 1),
+        ("cin_pad", cin),
+        ("cin_stride", cin),
+        ("k_size", 9 * cin),
+        ("n_size", n),
+    ] {
+        spec.set_config(
+            format!("arcface.conv3x3_f16_wmma_bnprelu.{key}"),
+            value.to_string(),
+        );
+    }
+    let m = height * height;
+    // Constant power-of-two operands: exact mathematical convolution, including
+    // zero padding at borders. Bias is zero and PReLU slope is one.
+    let expected = (0..m)
+        .flat_map(|p| {
+            let y = p / height;
+            let x = p % height;
+            let rows = if y == 0 || y + 1 == height { 2 } else { 3 };
+            let cols = if x == 0 || x + 1 == height { 2 } else { 3 };
+            std::iter::repeat_n((rows * cols * cin) as f64 / 64.0, n)
+        })
+        .collect();
+    Case {
+        name: format!("arcface_conv-{height}x{height}x{cin}x{n}"),
+        source: include_str!("../native/qualification/arcface_conv3x3_f16_wmma_bnprelu.loom"),
+        spec,
+        grid: [(n / 64) as u32, m.div_ceil(64) as u32, 1],
+        block: [256, 1, 1],
+        indices: vec![m as u32],
+        data: vec![
+            halves(std::iter::repeat_n(0.125, m * cin)),
+            halves(std::iter::repeat_n(0.125, n * 9 * cin)),
+            floats(std::iter::repeat_n(0.0, 9 * n)),
+            vec![0; m * n * 2],
+            floats(std::iter::repeat_n(1.0, n)),
+        ],
+        output: 3,
+        expected,
+        tolerance: 0.0,
+    }
+}
 struct Arm {
     graph: GraphExec,
     buffers: std::sync::Arc<Vec<Buffer>>,
@@ -331,6 +379,9 @@ fn main() -> Result<()> {
         gemm(true, false),
         gemm(false, true),
         gemm(true, true),
+        conv(56, 64, 64),
+        conv(14, 256, 256),
+        conv(7, 512, 512),
     ] {
         let baseline = prepare(&mut stream, &compilers[0], &case, None)?;
         let candidate = prepare(

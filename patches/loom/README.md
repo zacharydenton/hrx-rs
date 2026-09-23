@@ -1,7 +1,7 @@
 # Loom compiler patches
 
 These patches apply to public `ROCm/hrx-system` commit
-`556c648e8f301ad9656d325687cc93b417ea78ff`; `base-revision` is the machine-readable
+`468508b9e27e749972382f78e1c67d6db7bec27e`; `base-revision` is the machine-readable
 pin. The patches use the upstream C API without adding private ABI entrypoints.
 
 `0001-vopd-source-cache-banks.patch` fixes AMDGPU VOPD register-bank constraints.
@@ -48,7 +48,17 @@ are supported on GFX11/GFX12. Older libraries reject the nonempty extension
 chain instead of silently ignoring it. The patch includes native profile,
 serialization, and occupancy tests plus generator validation.
 
-The release applies five compiler patches. Optional patch 0007 is retained after
+`0010-retain-qualified-allocation-layout.patch` retains the preceding masked
+restore-block placement and structural-source-first allocation for linear
+register files. Named physical register views retain consumer-first allocation.
+The two newer policies interact to add loop copies and earlier waits, slowing
+ArcFace by 32% and SCRFD by 11%. Keeping both qualified policies restores the
+released timings; changing either alone is insufficient. Physical register
+views, semantic live-segment alias checks, and all newer completion fixes remain
+active. Three exact-reference convolution shapes extend the paired corpus.
+See [native refresh qualification](../../docs/NATIVE-REFRESH.md).
+
+The candidate applies six compiler patches. Optional patch 0007 is retained after
 paired hardware qualification. Patches 0002 and 0004 are preserved under
 `patches/retired` but are not applied; 0008 belongs to the removed legacy runtime.
 See [qualification and consumer impact](../../docs/PATCH-QUALIFICATION.md).
