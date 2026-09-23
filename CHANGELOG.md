@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.8 — smaller source package
+
+- Remove internal reports and retain API, setup, and license documentation.
+- Keep runtime code and native binaries unchanged from 0.8.7.
+
 ## 0.8.7 — correct fixture license attribution
 
 - Correct the ArcFace qualification-fixture notice to Apache-2.0. The full
