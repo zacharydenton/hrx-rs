@@ -317,6 +317,9 @@ impl Device {
 }
 
 impl Queue {
+    pub(super) fn identity(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
     /// Prepare immutable commands and backing for repeated native execution.
     ///
     /// # Safety
@@ -443,6 +446,31 @@ impl Queue {
     /// The supplied barriers must order every conflicting access. Commands must
     /// obey their kernel contracts and must not use this batch's storage elsewhere.
     pub unsafe fn prepare_batch(&self, commands: &[(PreparedGpu, bool)]) -> Result<PreparedGpu> {
+        self.prepare_batch_inner(commands, None)
+    }
+    /// Instrument every prepared command, including nested batches as one span.
+    /// Completion barriers serialize the sampled commands. This is diagnostic
+    /// execution; use ordinary batches for end-to-end performance decisions.
+    ///
+    /// # Safety
+    /// The same kernel and cross-queue contracts as `prepare_batch` apply.
+    pub unsafe fn prepare_profiled_batch(
+        &self,
+        commands: &[(PreparedGpu, bool)],
+        labels: &[String],
+    ) -> Result<ProfiledGpu> {
+        if commands.len() != labels.len() {
+            return Err(Error::Message("profile labels must match commands".into()));
+        }
+        let capture = profile::ProfileCapture::new(self, labels)?;
+        let commands = self.prepare_batch_inner(commands, Some(&capture))?;
+        Ok(ProfiledGpu { commands, capture })
+    }
+    fn prepare_batch_inner(
+        &self,
+        commands: &[(PreparedGpu, bool)],
+        profile: Option<&profile::ProfileCapture>,
+    ) -> Result<PreparedGpu> {
         if commands.is_empty() {
             return Err(Error::Message("empty native command batch".into()));
         }
@@ -450,7 +478,13 @@ impl Queue {
         let mut buffers = Vec::new();
         let mut kernels = Vec::new();
         let mut dependencies = Vec::new();
-        for (command, dependency) in commands {
+        let timestamp_address = profile
+            .map(|p| p.buffer.device_address(self.device()))
+            .transpose()?;
+        if let Some(profile) = profile {
+            buffers.push(profile.buffer.clone());
+        }
+        for (index, (command, dependency)) in commands.iter().enumerate() {
             if !Arc::ptr_eq(&command.queue.0, &self.0) {
                 return Err(Error::Message(
                     "batch command belongs to another queue".into(),
@@ -459,7 +493,19 @@ impl Queue {
             if *dependency {
                 barrier(&mut indirect);
             }
+            if let (Some(profile), Some(address)) = (profile, timestamp_address) {
+                barrier(&mut indirect);
+                profile
+                    .api
+                    .emit(address + index as u64 * 16, &mut indirect)?;
+            }
             indirect.extend_from_slice(&command.inner.words[command.inner.dispatch_range.clone()]);
+            if let (Some(profile), Some(address)) = (profile, timestamp_address) {
+                barrier(&mut indirect);
+                profile
+                    .api
+                    .emit(address + index as u64 * 16 + 8, &mut indirect)?;
+            }
             buffers.extend(command.inner.work.buffers.iter().cloned());
             kernels.extend(command.inner.work._kernels.iter().cloned());
             dependencies.extend(command.inner.work.dependencies.iter().cloned());
@@ -484,6 +530,7 @@ impl Queue {
         let ib_address = storage.device_address(self.device())?;
         let storage_bytes = storage.len()
             + 64
+            + profile.map_or(0, |capture| capture.buffer.len())
             + commands
                 .iter()
                 .map(|(command, _)| command.storage_bytes())

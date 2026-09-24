@@ -780,3 +780,38 @@ fn native_budget_retains_queued_and_recorded_owners_without_double_charging_adop
     drop(buffer);
     assert_eq!(tiny.statistics().reserved_bytes, 0);
 }
+
+#[test]
+#[ignore = "requires gfx1151 and the optional native profile bridge"]
+fn profiled_graph_replay_reports_device_ticks_and_preserves_results() -> hrx::Result<()> {
+    let mut stream = Stream::open()?;
+    let src = stream.allocate(4096)?;
+    let dst = stream.allocate(4096)?;
+    let mut graph = stream.graph()?;
+    let fill = graph.fill(&[], src.binding(), 0x3c)?;
+    graph.copy(&[fill], dst.binding(), src.binding())?;
+    let mut graph = graph.finish_profiled(&["fill".into(), "copy".into()])?;
+    let mut previous_end = 0;
+    for execution in 1..=4 {
+        stream.fill(dst.binding(), 0xcd)?;
+        let profile = stream.launch_profiled(&mut graph)?;
+        assert_eq!(profile.execution, execution);
+        assert!(profile.frequency_hz > 0);
+        assert_eq!(profile.intervals.len(), 2);
+        assert!(profile.intervals[0].start_tick > previous_end);
+        assert!(profile.intervals[0].end_tick <= profile.intervals[1].start_tick);
+        assert!(profile.interval_union_ms > 0.);
+        assert!(profile.span_ms >= profile.interval_union_ms);
+        previous_end = profile.intervals[1].end_tick;
+        let mut actual = [0; 4096];
+        stream.read_blocking(dst.binding(), &mut actual)?;
+        assert!(actual.iter().all(|&v| v == 0x3c));
+        eprintln!("{}", serde_json::to_string(&profile).unwrap());
+    }
+    let mut invalid = stream.graph()?;
+    invalid.fill(&[], src.binding(), 0)?;
+    assert!(invalid.finish_profiled(&[]).is_err());
+    let mut ordinary = stream.graph()?.finish()?;
+    assert!(stream.launch_profiled(&mut ordinary).is_err());
+    Ok(())
+}

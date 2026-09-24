@@ -155,6 +155,17 @@ pub struct FileView {
     entries: BTreeMap<String, Entry>,
 }
 
+/// Work performed by synchronous preparation of a tensor's backing pages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PagePreparation {
+    /// Empty range or owned bytes; no mapping preparation was needed.
+    Resident,
+    /// The operating system populated the readable mapping before returning.
+    Populated,
+    /// Explicit population is unsupported; advisory prefetch was requested.
+    Advised,
+}
+
 /// A tensor borrowing its file storage.
 #[derive(Clone, Copy, Debug)]
 pub struct Tensor<'a> {
@@ -313,6 +324,50 @@ impl FileView {
         self.advise(bytes, libc::MADV_WILLNEED, true);
     }
 
+    /// Prepare a checked range before registration, conversion, or upload.
+    ///
+    /// Reads only this range (rounded to pages), with at most 16 workers and
+    /// 16 MiB chunks. All workers finish before return, including on failure.
+    /// Unsupported explicit population falls back to advisory prefetch. Other
+    /// OS errors propagate; this does not copy weights or change their bytes.
+    /// Preparation does not pin pages against later reclamation by the OS.
+    pub fn prepare_bytes(&self, bytes: &[u8]) -> Result<PagePreparation> {
+        if bytes.is_empty() {
+            return Ok(PagePreparation::Resident);
+        }
+        let storage = self.storage.bytes();
+        let begin = bytes.as_ptr() as usize;
+        let base = storage.as_ptr() as usize;
+        if begin < base
+            || begin
+                .checked_add(bytes.len())
+                .is_none_or(|end| end > base + storage.len())
+        {
+            return Err(Error::Message(
+                "page preparation range is outside its file".into(),
+            ));
+        }
+        let Storage::Mapped(_) = &self.storage else {
+            return Ok(PagePreparation::Resident);
+        };
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if page <= 0 {
+            return Err(Error::Io(std::io::Error::other("page size unavailable")));
+        }
+        let (begin, end) = advise_pages(
+            (base, storage.len()),
+            (begin, bytes.len()),
+            page as usize,
+            true,
+        )
+        .ok_or_else(|| Error::Message("invalid page preparation range".into()))?;
+        Ok(if super::mapped_pages::populate(begin, end - begin)? {
+            PagePreparation::Populated
+        } else {
+            PagePreparation::Advised
+        })
+    }
+
     /// Release complete mapped pages in a checked range borrowed from this file.
     pub fn done_with_bytes(&self, bytes: &[u8]) {
         self.advise(bytes, libc::MADV_DONTNEED, false);
@@ -364,6 +419,37 @@ fn advise_pages(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preparation_checks_ownership_and_preserves_mapped_bytes() {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let header = br#"{"x":{"dtype":"U8","shape":[8193],"data_offsets":[0,8193]}}"#;
+        file.write_all(&(header.len() as u64).to_le_bytes())
+            .unwrap();
+        file.write_all(header).unwrap();
+        let expected: Vec<u8> = (0..8193).map(|i| (i % 251) as u8).collect();
+        file.write_all(&expected).unwrap();
+        // This test exclusively owns the file and never changes it after mapping.
+        let mapped = unsafe { FileView::map(file.path()) }.unwrap();
+        let bytes = mapped.get("x").unwrap().bytes;
+        assert!(matches!(
+            mapped.prepare_bytes(&bytes[1..]),
+            Ok(PagePreparation::Populated | PagePreparation::Advised)
+        ));
+        assert_eq!(bytes, expected);
+        assert_eq!(
+            mapped.prepare_bytes(&[]).unwrap(),
+            PagePreparation::Resident
+        );
+        assert!(mapped.prepare_bytes(&expected).is_err());
+        let owned = FileView::read(file.path()).unwrap();
+        assert_eq!(
+            owned.prepare_bytes(owned.get("x").unwrap().bytes).unwrap(),
+            PagePreparation::Resident
+        );
+        assert!(owned.prepare_bytes(&expected).is_err());
+    }
 
     #[test]
     fn page_advice_rounding_stays_inside_for_discard() {

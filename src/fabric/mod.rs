@@ -38,6 +38,8 @@ macro_rules! entry {
 
 mod xdna;
 pub use xdna::{XdnaBinding, XdnaCompletion, XdnaProgram};
+pub(crate) mod profile;
+pub use profile::{DeviceInterval, DeviceProfile, ProfiledGpu};
 mod queue;
 pub use queue::{Completion, PreparedGpu, Queue};
 mod executable;

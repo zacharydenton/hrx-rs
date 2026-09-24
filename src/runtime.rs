@@ -1129,6 +1129,7 @@ enum Recorded<'a> {
 pub struct GraphExec {
     inner: Arc<Inner>,
     commands: Option<fabric::PreparedGpu>,
+    profile: Option<fabric::profile::ProfileCapture>,
     last: Option<fabric::Completion>,
     failed: bool,
     budget_uses: BudgetUses,
@@ -1142,6 +1143,18 @@ impl Stream {
             nodes: Vec::new(),
             budget_uses: BudgetUses::default(),
         })
+    }
+    /// Replay an instrumented graph, wait for retirement, and read GPU times.
+    /// Ordinary graphs return an error; construct with `Graph::finish_profiled`.
+    pub fn launch_profiled(&mut self, graph: &mut GraphExec) -> Result<fabric::DeviceProfile> {
+        if graph.profile.is_none() {
+            return Err(Error::Message(
+                "graph was not prepared for profiling".into(),
+            ));
+        }
+        self.launch(graph)?;
+        self.synchronize()?;
+        graph.profile.as_mut().unwrap().read()
     }
     /// Replay fixed native commands on the originating stream.
     pub fn launch(&mut self, graph: &mut GraphExec) -> Result<()> {
@@ -1242,6 +1255,15 @@ impl<'a> Graph<'a> {
     }
     /// Transfer recorded commands and allocation charges into owned replay state.
     pub fn finish(self) -> Result<GraphExec> {
+        self.finish_inner(None)
+    }
+    /// Prepare a diagnostic graph with device-clock markers around each payload.
+    /// Supply one label per non-join node. Instrumentation adds completion
+    /// barriers and must not be used as end-to-end performance evidence.
+    pub fn finish_profiled(self, labels: &[String]) -> Result<GraphExec> {
+        self.finish_inner(Some(labels))
+    }
+    fn finish_inner(self, labels: Option<&[String]>) -> Result<GraphExec> {
         let mut ordered = Vec::new();
         let mut completed = 0usize;
         for (index, (node, dependency)) in self.nodes.into_iter().enumerate() {
@@ -1257,15 +1279,28 @@ impl<'a> Graph<'a> {
             }
             ordered.push((command, barrier));
         }
-        let commands = if ordered.is_empty() {
-            None
+        let (commands, profile) = if let Some(labels) = labels {
+            // The same validated edges and retained bindings as normal replay.
+            let profiled = unsafe {
+                self.stream
+                    .inner
+                    .queue
+                    .prepare_profiled_batch(&ordered, labels)
+            }?;
+            (Some(profiled.commands), Some(profiled.capture))
+        } else if ordered.is_empty() {
+            (None, None)
         } else {
             // Graph edges order conflicting accesses; all binding backing is retained.
-            Some(unsafe { self.stream.inner.queue.prepare_batch(&ordered) }?)
+            (
+                Some(unsafe { self.stream.inner.queue.prepare_batch(&ordered) }?),
+                None,
+            )
         };
         Ok(GraphExec {
             inner: self.stream.inner.clone(),
             commands,
+            profile,
             last: None,
             failed: false,
             budget_uses: self.budget_uses,
