@@ -156,7 +156,7 @@ plans = {
         'qwen-image-hrx',
         'qwen-image',
         lambda out: [
-            '--offline', 'generate', '--prompt', 'a red ceramic cup on a wooden table',
+            '--offline', 'benchmark', '--runs', '2', '--prompt', 'a red ceramic cup on a wooden table',
             '--width', '512', '--height', '512', '--steps', '2', '--seed', '42',
             '--vae-tiling', '--output', str(out / 'output.png'),
         ],
@@ -227,18 +227,29 @@ for name, (repo, binary, flags) in plans.items():
                     if consumers[name] == 'hrxdb':
                         report = json.loads((out / 'report.json').read_text())
                     elif consumers[name] == 'qwen_generation':
-                        report = json.loads((out / 'output.json').read_text())
-                        record['reports'].append(report)
+                        benchmark = out / 'output.benchmark.json'
+                        if benchmark.exists():
+                            requests = json.loads(benchmark.read_text())
+                            if not isinstance(requests, list) or len(requests) < 2:
+                                raise ValueError('Qwen warm timing requires at least two requests')
+                            report = requests[-1]
+                            record['reports'].extend(requests)
+                        else:
+                            report = json.loads((out / 'output.json').read_text())
+                            record['reports'].append(report)
                     record['median_ms'] = timing_ms(consumers[name], records, report)
                 except (OSError, ValueError, KeyError, IndexError, TypeError) as error:
                     record['process_exit_code'] = record['exit_code']
                     record['exit_code'] = 125
                     record['measurement_error'] = str(error)
-            for f in out.glob('output.*'):
-                if consumers[name] == 'qwen_generation' and f.name == 'output.json':
-                    # Qwen's sidecar contains timing and allocation metadata.
-                    continue
+            # Qwen also writes output.json and output.benchmark.json containing
+            # timing metadata; only its image is a numerical output artifact.
+            output_pattern = 'output*.png' if consumers[name] == 'qwen_generation' else 'output.*'
+            for f in out.glob(output_pattern):
                 record.setdefault('outputs', {})[f.name] = {'sha256': hashlib.sha256(f.read_bytes()).hexdigest(), 'bytes': f.stat().st_size}
+            if consumers[name] == 'qwen_generation' and len({v['sha256'] for v in record.get('outputs', {}).values()}) > 1:
+                record['exit_code'] = 125
+                record['measurement_error'] = 'Qwen repeated requests changed the generated image'
             (out / 'run.json').write_text(json.dumps(record, indent=2) + '\n')
             results.append(record)
             with (root / 'measurement-runs.jsonl').open('a') as history:
