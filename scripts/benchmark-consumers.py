@@ -108,6 +108,20 @@ plans = {
         'bench_descriptors',
         lambda out: ['rgb', '4', '100', str(out / 'output.f32'), '--variant', 'vits16plus'],
     ),
+    'scrfd_detect': (
+        'scrfd-hrx',
+        'bench_detect_batch',
+        lambda out: ['6', '100', '1920', '1080', str(out / 'output.json')],
+    ),
+    'faceswap_resident': (
+        'faceswap-hrx',
+        'bench_resident_pipeline',
+        lambda out: [
+            str(args.workspace / 'faceswap-hrx/artifacts/benchmark-1080.png'),
+            str(args.workspace / 'faceswap-hrx/artifacts/source-embedding.json'),
+            '256', 'false', '30', str(out / 'output.rgb'),
+        ],
+    ),
     'scrfd': (
         'scrfd-hrx',
         'scrfd-hrx',
