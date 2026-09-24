@@ -4,6 +4,10 @@ This branch implements the first measurable transfers from Gufo on gfx1151.
 Candidates advance independently. A kernel win is not a model win, and a local
 native bridge build is not a published runtime release.
 
+The initial source changes are shipped. The
+[expanded ecosystem plan](ecosystem-rollout.md) schedules the remaining HRX
+consumers, native/compiler qualification, reusable kernel work and HRX Demos.
+
 ## Promotion contract
 
 Keep saved baseline/candidate executables, source revision **and working-tree
