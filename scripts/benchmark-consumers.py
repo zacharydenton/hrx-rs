@@ -152,6 +152,15 @@ plans = {
             str(out / 'output.rgb'),
         ],
     ),
+    'qwen_generation': (
+        'qwen-image-hrx',
+        'qwen-image',
+        lambda out: [
+            '--offline', 'generate', '--prompt', 'a red ceramic cup on a wooden table',
+            '--width', '512', '--height', '512', '--steps', '2', '--seed', '42',
+            '--vae-tiling', '--output', str(out / 'output.png'),
+        ],
+    ),
 }
 try:
     plans, consumers = configure_workloads(plans, json.loads(args.workloads.read_text()) if args.workloads else None)
@@ -214,13 +223,21 @@ for name, (repo, binary, flags) in plans.items():
             record['reports'] = records
             if record['exit_code'] == 0:
                 try:
-                    report = json.loads((out / 'report.json').read_text()) if consumers[name] == 'hrxdb' else None
+                    report = None
+                    if consumers[name] == 'hrxdb':
+                        report = json.loads((out / 'report.json').read_text())
+                    elif consumers[name] == 'qwen_generation':
+                        report = json.loads((out / 'output.json').read_text())
+                        record['reports'].append(report)
                     record['median_ms'] = timing_ms(consumers[name], records, report)
                 except (OSError, ValueError, KeyError, IndexError, TypeError) as error:
                     record['process_exit_code'] = record['exit_code']
                     record['exit_code'] = 125
                     record['measurement_error'] = str(error)
             for f in out.glob('output.*'):
+                if consumers[name] == 'qwen_generation' and f.name == 'output.json':
+                    # Qwen's sidecar contains timing and allocation metadata.
+                    continue
                 record.setdefault('outputs', {})[f.name] = {'sha256': hashlib.sha256(f.read_bytes()).hexdigest(), 'bytes': f.stat().st_size}
             (out / 'run.json').write_text(json.dumps(record, indent=2) + '\n')
             results.append(record)

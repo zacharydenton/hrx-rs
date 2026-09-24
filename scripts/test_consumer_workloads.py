@@ -4,6 +4,14 @@ from consumer_workloads import configure_workloads, timing_ms, wait_for_idle
 
 
 class WorkloadTests(unittest.TestCase):
+    def test_qwen_uses_completed_generation_seconds_from_sidecar(self):
+        self.assertEqual(timing_ms("qwen_generation", [], {"elapsed_seconds": 1.25}), 1250.)
+        for value in [True, 0, -1, float("nan"), float("inf"), 1e308, "3"]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                timing_ms("qwen_generation", [], {"elapsed_seconds": value})
+        with self.assertRaises(ValueError):
+            timing_ms("qwen_generation", [], None)
+
     def test_idle_requires_consecutive_samples_and_times_out(self):
         now = [0.]
         def sleep(seconds):

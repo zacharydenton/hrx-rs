@@ -64,8 +64,16 @@ def timing_ms(consumer, reports, file_report=None):
             if len(trials) != 1:
                 raise ValueError("qualification requires one HRXDB schedule per workload")
             value = trials[0]["search_median_ms"]
+    elif consumer == "qwen_generation":
+        if not isinstance(file_report, dict):
+            raise ValueError("Qwen report must be an object")
+        value = file_report["elapsed_seconds"]
     else:
         value = reports[-1]["median_ms"]
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         raise ValueError("missing, non-finite or non-positive timing")
+    if consumer == "qwen_generation":
+        value *= 1000
+        if not math.isfinite(value):
+            raise ValueError("converted timing is non-finite")
     return value
