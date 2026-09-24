@@ -326,8 +326,14 @@ fn check(stream: &mut Stream, arm: &Arm, case: &Case) -> Result<f64> {
     let mut bytes = vec![0; case.expected.len() * 2];
     stream.read_blocking(arm.buffers[case.output].binding(), &mut bytes)?;
     let mut maximum = 0f64;
-    for (index, (value, expected)) in bytes.chunks_exact(2).zip(&case.expected).enumerate() {
-        let value = float(u16::from_le_bytes(value.try_into().unwrap()));
+    for (index, (value, expected)) in bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(&case.expected)
+        .enumerate()
+    {
+        let value = float(u16::from_le_bytes(*value));
         let error = (value - expected).abs();
         if !value.is_finite() || error > case.tolerance {
             return Err(hrx::Error::Message(format!(

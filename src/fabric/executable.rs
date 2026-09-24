@@ -326,9 +326,9 @@ mod tests {
                     ));
                 }
                 output.read(0, &mut actual)?;
-                for (index, bytes) in actual.chunks_exact(4).enumerate() {
+                for (index, bytes) in actual.as_chunks::<4>().0.iter().enumerate() {
                     assert_eq!(
-                        u32::from_le_bytes(bytes.try_into().unwrap()),
+                        u32::from_le_bytes(*bytes),
                         index as u32 ^ stamp,
                         "stale executable at element {index}, expected stamp {stamp}"
                     );

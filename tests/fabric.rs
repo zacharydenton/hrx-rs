@@ -63,11 +63,8 @@ void fill(const unsigned* input, unsigned* output) {
         earlier = Some(done);
         let mut bytes = [0; 256];
         output.read(0, &mut bytes)?;
-        for (index, value) in bytes.chunks_exact(4).enumerate() {
-            assert_eq!(
-                u32::from_le_bytes(value.try_into().unwrap()),
-                round + index as u32 * 3 + 7
-            );
+        for (index, value) in bytes.as_chunks::<4>().0.iter().enumerate() {
+            assert_eq!(u32::from_le_bytes(*value), round + index as u32 * 3 + 7);
         }
     }
     assert!(
@@ -225,9 +222,9 @@ void consume(unsigned* input, unsigned* output) {
         .wait()?;
         let mut result = [0; 64];
         checked.read(0, &mut result)?;
-        for (index, bytes) in result.chunks_exact(4).enumerate() {
+        for (index, bytes) in result.as_chunks::<4>().0.iter().enumerate() {
             assert_eq!(
-                u32::from_le_bytes(bytes.try_into().unwrap()),
+                u32::from_le_bytes(*bytes),
                 (index as u32 + 1) * (index as u32 + 3) + 11
             );
         }
@@ -305,9 +302,9 @@ fn private_segment_scratch_is_backed_and_retained() -> hrx::Result<()> {
         }
         let mut bytes = [0; 256];
         output.read(0, &mut bytes)?;
-        for (i, bytes) in bytes.chunks_exact(4).enumerate() {
+        for (i, bytes) in bytes.as_chunks::<4>().0.iter().enumerate() {
             assert_eq!(
-                u32::from_le_bytes(bytes.try_into().unwrap()),
+                u32::from_le_bytes(*bytes),
                 ((i as u32 * 7) % 64) * 3 + i as u32
             );
         }

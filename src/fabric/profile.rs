@@ -158,7 +158,9 @@ impl ProfileCapture {
         // Buffer ownership refuses reads until all device leases have retired.
         self.buffer.read(0, &mut bytes)?;
         let intervals = bytes
-            .chunks_exact(16)
+            .as_chunks::<16>()
+            .0
+            .iter()
             .zip(&self.labels)
             .map(|(bytes, label)| DeviceInterval {
                 label: label.clone(),

@@ -34,11 +34,23 @@ fn matrix_value(matrix: usize, index: usize, operand: usize, pass: usize) -> f32
 }
 
 fn initialize(gpu: &Buffer, a: &Buffer, b: &Buffer, pass: usize) -> Result<()> {
-    for (index, word) in gpu.map_write()?.chunks_exact_mut(4).enumerate() {
+    for (index, word) in gpu
+        .map_write()?
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .enumerate()
+    {
         word.copy_from_slice(&gpu_value(index, pass).to_le_bytes());
     }
     for (operand, buffer) in [a, b].into_iter().enumerate() {
-        for (index, word) in buffer.map_write()?.chunks_exact_mut(2).enumerate() {
+        for (index, word) in buffer
+            .map_write()?
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             let value = matrix_value(index / 64, index % 64, operand, pass);
             // Integers in -3..=3 are exactly representable in BF16 and BFP16.
             word.copy_from_slice(&((value.to_bits() >> 16) as u16).to_le_bytes());
@@ -48,13 +60,13 @@ fn initialize(gpu: &Buffer, a: &Buffer, b: &Buffer, pass: usize) -> Result<()> {
 }
 
 fn validate(gpu: &Buffer, matrices: &Buffer, pass: usize) -> Result<()> {
-    for (index, word) in gpu.map_read()?.chunks_exact(4).enumerate() {
-        let actual = i32::from_le_bytes(word.try_into().unwrap());
+    for (index, word) in gpu.map_read()?.as_chunks::<4>().0.iter().enumerate() {
+        let actual = i32::from_le_bytes(*word);
         if actual != gpu_value(index, pass) * 3 + 7 {
             return Err(Error::Message(format!("GPU mismatch at element {index}")));
         }
     }
-    for (index, word) in matrices.map_read()?.chunks_exact(4).enumerate() {
+    for (index, word) in matrices.map_read()?.as_chunks::<4>().0.iter().enumerate() {
         let matrix = index / 64;
         let row = index % 64 / 8;
         let column = index % 8;
@@ -64,7 +76,7 @@ fn validate(gpu: &Buffer, matrices: &Buffer, pass: usize) -> Result<()> {
                     * matrix_value(matrix, k * 8 + column, 1, pass)
             })
             .sum();
-        if f32::from_le_bytes(word.try_into().unwrap()) != expected {
+        if f32::from_le_bytes(*word) != expected {
             return Err(Error::Message(format!(
                 "NPU mismatch at matrix {matrix}, ({row}, {column})"
             )));

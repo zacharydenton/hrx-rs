@@ -1453,8 +1453,10 @@ mod staging_tests {
         stream.read_blocking(buffer.binding(), &mut actual)?;
         assert!(
             actual
-                .chunks_exact(4)
-                .all(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()) == 10100.)
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|bytes| f32::from_le_bytes(*bytes) == 10100.)
         );
         assert_eq!(residency.statistics().reserved_bytes, 256);
         for delta in 101..=1124 {

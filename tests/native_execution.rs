@@ -74,15 +74,18 @@ fn cpp_vector_worker_executes_with_changed_inputs() -> Result<()> {
     graph.npu(&kernel, &[source.view(), output.view()])?;
     let graph = graph.prepare()?;
     for pass in 0..3i32 {
-        for (i, word) in source.map_write()?.chunks_exact_mut(4).enumerate() {
+        for (i, word) in source
+            .map_write()?
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             word.copy_from_slice(&(i as i32 * 7 - pass * 13).to_le_bytes());
         }
         graph.submit()?.wait()?;
-        for (i, word) in output.map_read()?.chunks_exact(4).enumerate() {
-            assert_eq!(
-                i32::from_le_bytes(word.try_into().unwrap()),
-                i as i32 * 7 - pass * 13 + 1
-            );
+        for (i, word) in output.map_read()?.as_chunks::<4>().0.iter().enumerate() {
+            assert_eq!(i32::from_le_bytes(*word), i as i32 * 7 - pass * 13 + 1);
         }
     }
     Ok(())
@@ -125,7 +128,13 @@ fn bf16_matrix_multiply_matches_independent_cpu_oracle() -> Result<()> {
     for pass in 0..4 {
         for (request, (_, a, b, _)) in runs.iter().enumerate() {
             for (which, buffer) in [a, b].iter().enumerate() {
-                for (i, word) in buffer.map_write()?.chunks_exact_mut(2).enumerate() {
+                for (i, word) in buffer
+                    .map_write()?
+                    .as_chunks_mut::<2>()
+                    .0
+                    .iter_mut()
+                    .enumerate()
+                {
                     let value = ((i * (which + 3) + request + pass) % 7) as f32 - 3.0;
                     word.copy_from_slice(&((value.to_bits() >> 16) as u16).to_le_bytes());
                 }
@@ -136,7 +145,7 @@ fn bf16_matrix_multiply_matches_independent_cpu_oracle() -> Result<()> {
         first.wait()?;
         second.wait()?;
         for (request, (_, _, _, c)) in runs.iter().enumerate() {
-            for (i, word) in c.map_read()?.chunks_exact(4).enumerate() {
+            for (i, word) in c.map_read()?.as_chunks::<4>().0.iter().enumerate() {
                 let expected: f32 = (0..8)
                     .map(|k| {
                         let a = (((i / 8 * 8 + k) * 3 + request + pass) % 7) as f32 - 3.0;
@@ -144,11 +153,7 @@ fn bf16_matrix_multiply_matches_independent_cpu_oracle() -> Result<()> {
                         a * b
                     })
                     .sum();
-                assert_eq!(
-                    f32::from_le_bytes(word.try_into().unwrap()),
-                    expected,
-                    "entry {i}"
-                );
+                assert_eq!(f32::from_le_bytes(*word), expected, "entry {i}");
             }
         }
     }
