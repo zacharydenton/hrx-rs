@@ -15,6 +15,7 @@ import struct
 import subprocess
 import time
 from performance_evidence import assess_pairs, validate_identity
+from consumer_workloads import configure_workloads, timing_ms, wait_for_idle
 
 repository = Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser(description='Alternate saved consumer baseline/candidate binaries; GPU must be healthy.')
@@ -22,6 +23,7 @@ p.add_argument('--artifacts', type=Path, default=repository / 'artifacts/consume
 p.add_argument('--workspace', type=Path, default=repository.parent)
 p.add_argument('--pairs', type=int, default=3)
 p.add_argument('--only', nargs='*')
+p.add_argument('--workloads', type=Path, help='JSON workload IDs mapped to consumer and optional arguments; {output_dir} expands per run')
 p.add_argument('--baseline-runtime', type=Path, help='Override the baseline native bundle directory')
 p.add_argument('--candidate-runtime', type=Path, help='Override the candidate native bundle directory')
 p.add_argument('--qualification-manifest', type=Path, help='Saved-build identities and binary-bound quality reports, keyed by workload')
@@ -101,6 +103,11 @@ plans = {
             str(out / 'output.f32'),
         ],
     ),
+    'dinov3_descriptors': (
+        'dinov3-hrx',
+        'bench_descriptors',
+        lambda out: ['rgb', '4', '100', str(out / 'output.f32'), '--variant', 'vits16plus'],
+    ),
     'scrfd': (
         'scrfd-hrx',
         'scrfd-hrx',
@@ -132,6 +139,10 @@ plans = {
         ],
     ),
 }
+try:
+    plans, consumers = configure_workloads(plans, json.loads(args.workloads.read_text()) if args.workloads else None)
+except (OSError, ValueError) as error:
+    p.error(str(error))
 if args.only and set(args.only) - set(plans):
     p.error(f'unknown workloads: {sorted(set(args.only) - set(plans))}')
 selected_workloads = set(args.only or plans)
@@ -157,17 +168,26 @@ for name, (repo, binary, flags) in plans.items():
             if runtime is not None:
                 env['HRX_RUNTIME_DIR'] = str(runtime)
             command = [str(exe), *flags(out)]
-            record = {'output_directory': str(out), 'workload': name, 'pair': pair, 'arm': arm, 'command': command, 'binary_sha256': hashlib.sha256(exe.read_bytes()).hexdigest(), 'started': time.time(), 'gpu_busy_before': Path('/sys/class/drm/card1/device/gpu_busy_percent').read_text().strip(), 'memory_pressure_before': Path('/proc/pressure/memory').read_text()}
+            busy_path = Path('/sys/class/drm/card1/device/gpu_busy_percent')
+            idle = wait_for_idle(busy_path.read_text) if args.exclusive_device else None
+            record = {'output_directory': str(out), 'workload': name, 'pair': pair, 'arm': arm, 'command': command, 'binary_sha256': hashlib.sha256(exe.read_bytes()).hexdigest(), 'started': time.time(), 'gpu_busy_before': idle['last_busy'] if idle else busy_path.read_text().strip(), 'memory_pressure_before': Path('/proc/pressure/memory').read_text()}
             record['campaign'] = campaign
-            record['uncontended'] = args.exclusive_device and record['gpu_busy_before'] == '0'
+            record['consumer'] = consumers[name]
+            record['idle_check'] = idle
+            record['uncontended'] = bool(idle and idle['idle'])
             record['runtime_override'] = str(runtime) if runtime else None
             record['runtime_sha256'] = {lib.name: hashlib.sha256(lib.read_bytes()).hexdigest() for lib in sorted(runtime.glob('*.so'))} if runtime else None
             print(name, pair, arm, flush=True)
             monotonic_start = time.monotonic()
             with (out / 'stdout.log').open('w') as stdout, (out / 'stderr.log').open('w') as stderr:
                 try:
-                    run = subprocess.run(command, cwd=repository, env=env, stdout=stdout, stderr=stderr, timeout=600)
-                    record['exit_code'] = run.returncode
+                    if idle and not idle['idle']:
+                        record['exit_code'] = 126
+                        record['measurement_error'] = 'GPU did not become idle; execution withheld'
+                        stderr.write(record['measurement_error'] + '\n')
+                    else:
+                        run = subprocess.run(command, cwd=repository, env=env, stdout=stdout, stderr=stderr, timeout=600)
+                        record['exit_code'] = run.returncode
                 except subprocess.TimeoutExpired:
                     record['exit_code'] = 124
             record['wall_seconds'] = time.monotonic() - monotonic_start
@@ -180,14 +200,8 @@ for name, (repo, binary, flags) in plans.items():
             record['reports'] = records
             if record['exit_code'] == 0:
                 try:
-                    if name == 'hrxdb':
-                        report = json.loads((out / 'report.json').read_text())
-                        value = report['trials'][0]['search_median_ms']
-                    else:
-                        value = records[-1]['median_ms']
-                    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-                        raise ValueError('missing, non-finite or non-positive timing')
-                    record['median_ms'] = value
+                    report = json.loads((out / 'report.json').read_text()) if consumers[name] == 'hrxdb' else None
+                    record['median_ms'] = timing_ms(consumers[name], records, report)
                 except (OSError, ValueError, KeyError, IndexError, TypeError) as error:
                     record['process_exit_code'] = record['exit_code']
                     record['exit_code'] = 125
