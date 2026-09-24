@@ -782,6 +782,39 @@ fn native_budget_retains_queued_and_recorded_owners_without_double_charging_adop
 }
 
 #[test]
+#[ignore = "requires gfx1151; accepts the published bridge without profiling exports"]
+fn optional_profiling_preserves_ordinary_graph_replay() -> hrx::Result<()> {
+    let mut stream = Stream::open()?;
+    let buffer = stream.allocate(4096)?;
+    let mut diagnostic = stream.graph()?;
+    diagnostic.fill(&[], buffer.binding(), 0x3c)?;
+    match diagnostic.finish_profiled(&["fill".into()]) {
+        Ok(mut graph) => {
+            let profile = stream.launch_profiled(&mut graph)?;
+            assert_eq!(profile.intervals.len(), 1);
+        }
+        Err(hrx::Error::Unsupported(reason))
+            if reason == "libamdf ABI is missing GPU profile markers"
+                || reason == "libamdf ABI is missing GPU profile clock" =>
+        {
+            eprintln!("older bridge correctly rejected optional profiling: {reason}");
+        }
+        Err(error) => return Err(error),
+    }
+    let mut ordinary = stream.graph()?;
+    ordinary.fill(&[], buffer.binding(), 0x72)?;
+    let mut graph = ordinary.finish()?;
+    for _ in 0..3 {
+        stream.fill(buffer.binding(), 0xcd)?;
+        stream.launch(&mut graph)?;
+        let mut actual = [0; 4096];
+        stream.read_blocking(buffer.binding(), &mut actual)?;
+        assert!(actual.iter().all(|&v| v == 0x72));
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires gfx1151 and the optional native profile bridge"]
 fn profiled_graph_replay_reports_device_ticks_and_preserves_results() -> hrx::Result<()> {
     let mut stream = Stream::open()?;

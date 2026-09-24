@@ -96,6 +96,13 @@ for the optional exports. Do not republish or replace cached native bundles
 with a locally relinked bridge. Validate with `test-profile-bridge.py LIBRARY`
 and the ignored GPU test `profiled_graph_replay_reports_device_ticks_and_preserves_results`.
 
+The published-bundle GPU job checks optional-profile rejection and subsequent
+ordinary replay with `optional_profiling_preserves_ordinary_graph_replay`.
+It explicitly excludes the strict timestamp test until the bundle contains the
+new exports; that job does not qualify timestamp execution. Run the strict test
+against the rebuilt bridge before release and remove the CI exclusion when the
+profile-capable bundle becomes the pinned default.
+
 ## Model and compiler boundaries
 
 Qwen owns its padded normalization producer and explicit logical/physical
