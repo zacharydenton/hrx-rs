@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.9 — protobuf 3.7.2
 
 - Generate the ONNX bindings in-tree with rust-protobuf 3.7.2 instead of
   depending on onnx-protobuf 0.2.3, whose generated code required exactly
