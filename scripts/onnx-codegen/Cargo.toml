@@ -1,0 +1,14 @@
+# Development-only generator for src/artifacts/onnx_proto.rs; run through
+# scripts/generate-onnx-bindings.sh. Not part of the hrx-rs package.
+[package]
+name = "onnx-codegen"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace, so it is never built with hrx-rs.
+[workspace]
+
+[dependencies]
+# Must match the protobuf runtime version in the root Cargo.toml.
+protobuf-codegen = "=3.7.2"

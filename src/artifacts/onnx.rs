@@ -1,7 +1,8 @@
 //! Strict ONNX protobuf loading and graph/tensor inspection.
 
+use super::onnx_proto::{AttributeProto, GraphProto, ModelProto, NodeProto, TensorProto};
 use crate::{Error, Result};
-use onnx_protobuf::{AttributeProto, GraphProto, Message, ModelProto, NodeProto, TensorProto};
+use protobuf::Message;
 use std::{
     collections::{HashMap, HashSet},
     path::Path,

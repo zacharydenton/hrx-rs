@@ -24,3 +24,8 @@ Benchmark sources in `native/qualification` come from krea2-hrx (MIT) and
 h3-hrx (Apache-2.0). Their exact source revisions, hashes, and license texts are
 included in that directory. XDNA fixtures derived from HRX retain their
 Apache-2.0 WITH LLVM-exception headers. Original Rust and native bridge code is MIT.
+
+`src/artifacts/onnx.proto` is the ONNX project's IR schema (Apache-2.0; its
+SPDX header is retained, and the license text is `src/artifacts/LICENSE-ONNX.txt`).
+`src/artifacts/onnx_proto.rs` is generated from it by rust-protobuf 3.7.2 through
+`scripts/generate-onnx-bindings.sh`.

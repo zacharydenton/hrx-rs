@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Generate the ONNX bindings in-tree with rust-protobuf 3.7.2 instead of
+  depending on onnx-protobuf 0.2.3, whose generated code required exactly
+  protobuf 3.4.0. That lets the runtime move to protobuf 3.7.2, fixing
+  RUSTSEC-2024-0437 (a stack overflow parsing crafted input). `artifacts::onnx`
+  is unchanged; twelve real models parse to identical messages under both.
+  `scripts/generate-onnx-bindings.sh` regenerates the bindings.
+
 ## 0.8.8 — smaller source package
 
 - Remove internal reports and retain API, setup, and license documentation.
