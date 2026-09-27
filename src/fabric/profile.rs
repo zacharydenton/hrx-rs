@@ -33,7 +33,7 @@ impl MarkerApi {
         // The discriminator above validates this union member. Symbols are
         // optional so older runtimes retain ordinary inference compatibility.
         let (library, marker, clock, native) = unsafe {
-            let library = libloading::Library::new(api.directory.join("libhrx_fabric.so"))?;
+            let library = libloading::Library::new(api.bridge_path())?;
             let marker = *library
                 .get::<Marker>(b"hrx_fabric_gpu_profile_marker\0")
                 .map_err(|_| missing("GPU profile markers"))?;

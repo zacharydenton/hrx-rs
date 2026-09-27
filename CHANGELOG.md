@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- GPU profiling loads its optional markers from the same bridge as kernel
+  dispatch, so `HRX_FABRIC_LIBRARY` selects a profiling-capable bridge without
+  replacing the verified runtime directory.
+
 ## 0.8.9 — protobuf 3.7.2
 
 - Generate the ONNX bindings in-tree with rust-protobuf 3.7.2 instead of

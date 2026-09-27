@@ -236,6 +236,14 @@ impl Device {
 pub(super) type BridgeSlot = Mutex<Option<Arc<Bridge>>>;
 
 impl Api {
+    /// The native bridge library: `HRX_FABRIC_LIBRARY`, or the one beside
+    /// `libamdf.so`. Every loader of bridge symbols uses this one path.
+    pub(super) fn bridge_path(&self) -> std::path::PathBuf {
+        std::env::var_os("HRX_FABRIC_LIBRARY")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| self.directory.join("libhrx_fabric.so"))
+    }
+
     pub(super) fn load_bridge(&self) -> Result<Arc<Bridge>> {
         let api = self;
 
@@ -244,10 +252,7 @@ impl Api {
             .lock()
             .map_err(|_| Error::Message("bridge loader poisoned".into()))?;
         if slot.is_none() {
-            let path = std::env::var_os("HRX_FABRIC_LIBRARY")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| api.directory.join("libhrx_fabric.so"));
-            *slot = Some(Arc::new(unsafe { Bridge::new(path)? }));
+            *slot = Some(Arc::new(unsafe { Bridge::new(api.bridge_path())? }));
         }
         Ok(slot.as_ref().unwrap().clone())
     }
