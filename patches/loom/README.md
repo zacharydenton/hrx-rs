@@ -57,7 +57,19 @@ released timings; changing either alone is insufficient. Physical register
 views, semantic live-segment alias checks, and all newer completion fixes remain
 active. Three exact-reference convolution shapes extend the paired corpus.
 
-The candidate applies six compiler patches. Optional patch 0007 is retained after
+`0011-loop-carried-accumulator-reuse.patch` keeps loop-carried matrix
+accumulators in place. A loop that rescales an accumulator lane by lane and
+multiplies into it, as online-softmax attention does, copied every accumulator
+register on the back edge. Three decisions caused this, and the patch changes
+each. Tuple decomposition keeps a back edge's whole-tuple argument intact. Unit
+liveness releases each unit after its last use in a segment the value does not
+leave live. Concat reservations first try the branch destination their result
+reaches. In krea2's fp16 attention on gfx1151 this removes 56 of 77 back-edge
+moves per iteration and runs 1.007-1.073x faster, with byte-identical output.
+Unrelated kernels compile to identical code objects. The patch adds a pass test
+and an assembly test; each fails without its half of the change.
+
+The candidate applies seven compiler patches. Optional patch 0007 is retained after
 paired hardware qualification. Patches 0002 and 0004 are preserved under
 `patches/retired` but are not applied; 0008 belongs to the removed legacy runtime.
 

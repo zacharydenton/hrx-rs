@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compiler patch 0011 keeps loop-carried matrix accumulators in place, so
+  online-softmax attention no longer copies its accumulators on every loop
+  iteration (1.007-1.073x in krea2's fp16 attention, identical output). It
+  takes effect with the next native bundle.
 - GPU profiling loads its optional markers from the same bridge as kernel
   dispatch, so `HRX_FABRIC_LIBRARY` selects a profiling-capable bridge without
   replacing the verified runtime directory.
