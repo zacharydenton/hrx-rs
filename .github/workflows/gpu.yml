@@ -1,5 +1,5 @@
 name: gfx1151
-on: [push, workflow_dispatch]
+on: [workflow_dispatch]
 permissions:
   contents: read
 concurrency:
