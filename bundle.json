@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "target": "x86_64-unknown-linux-gnu-gfx1151",
-  "revision": "HRX 468508b9e; native libamdf; qualified allocation and layout; Ubuntu 26.04",
-  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260923-468508b9e/hrx-linux-x86_64-gfx1151.tar.gz",
-  "archive_sha256": "98ddf920772f7695c7e439d7405f0b60d9ad3919a04105c477a9ad5c442eefe2",
+  "revision": "HRX 468508b9e; native libamdf; qualified allocation and layout; loop-carried accumulators; Ubuntu 26.04",
+  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260927-468508b9e/hrx-linux-x86_64-gfx1151.tar.gz",
+  "archive_sha256": "932966d704a9cf5244027041d85631fe0d24c0235ecfef986c61c8ca4d32dfd1",
   "files": {
     "LICENSE-AMDGPU-ISA.txt": "4b58c86ef9b8f1be198079e5b62ea5c2bea0cc2f9187d21463a9c5e4ca75d69c",
     "LICENSE-CORE-MATH.txt": "4639ae96f455d387fd2b042ce11a2713ac3ee9bfc82591182683f4ee503be011",
@@ -16,11 +16,11 @@
     "LICENSE-linux-gpl2-license.txt": "8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa",
     "LICENSE-linux-syscall-note.txt": "8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f",
     "LICENSE-linux-uapi.txt": "aa58e02703c9fe5ddb9ff0a971db64f6f3a331fe9f855efb86ff0abeb6ecef3f",
-    "NOTICE": "0ef842a87d9adc72b48a8ff0621e77e9031d30a2ca45bf531a9a4ffab5ea3cdd",
-    "THIRD-PARTY.json": "bec604b31255e7c61c5c147ceacec2271e5fa2c959ac8e0da578c584a7bc6413",
+    "NOTICE": "2be9aca28a9aee9f5b126d102ca9ff1ab55d30e0f634e90b3cb56841b9c6ab8a",
+    "THIRD-PARTY.json": "fb12c138f60a62dd3d79a2ca1daae5673fe2e037a6df2c142bf96910415e0ec6",
     "libamdf.so": "a535883a40639339e89fd6c6e5e8c4937e31cda7bfd12b859e03b550f98b133d",
-    "libhrx_fabric.so": "76bf3e14819c528f015a97c1c0fad6d670f151d41456d4548108d79a924ab7d3",
-    "libloomc.so": "5ea99f7f4c00901b1f9ddd548e95b3fd3b4a96127101839f1e13bf153b642685",
-    "provenance.json": "b2f673136eab24daf2e8684d61f5de862a65b7dd6103d28eeb00dedeaaa482ac"
+    "libhrx_fabric.so": "618df415a82c309ce8a0cefe5e28a05a32798f91f2a1ebf586e5f6b7389f4c94",
+    "libloomc.so": "f30d851a6710c8d7a48e8bffe65fa0bf12df3a9242109ea9f73b17e13bbd69ae",
+    "provenance.json": "a6a12c7d053f069dc07e9c9166924d4b3eb1675b0e0ab33e76ca953df56a3429"
   }
 }

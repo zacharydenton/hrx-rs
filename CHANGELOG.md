@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.8.10 — native bundle with compiler patch 0011 and device timestamps
 
-- Compiler patch 0011 keeps loop-carried matrix accumulators in place, so
-  online-softmax attention no longer copies its accumulators on every loop
-  iteration (1.007-1.073x in krea2's fp16 attention, identical output). It
-  takes effect with the next native bundle.
+- New native bundle `native-20260927-468508b9e`, the same pinned HRX source
+  with compiler patch 0011: loop-carried matrix accumulators stay in place,
+  so online-softmax attention no longer copies its accumulators on every loop
+  iteration. The paired compiler corpus shows 6.0% and 9.6% on the attention
+  fixtures with identical results; every other fixture compiles to identical
+  code. In krea2's fp16 attention the kernel runs 1.007-1.073x faster.
+- The bundled bridge exports device timestamps, so `Graph::finish_profiled`
+  and `Stream::launch_profiled` work with the published bundle.
 - GPU profiling loads its optional markers from the same bridge as kernel
   dispatch, so `HRX_FABRIC_LIBRARY` selects a profiling-capable bridge without
   replacing the verified runtime directory.
