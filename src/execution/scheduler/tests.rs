@@ -1,12 +1,48 @@
 use super::super::{
     Access, Engine, NativeSession, Runtime,
-    tests::{buffer, mock},
+    tests::{buffer, mock, runtime_without_workers},
 };
 use super::*;
 use std::{
     sync::{atomic::AtomicUsize, mpsc},
     time::Duration,
 };
+
+#[test]
+fn finalization_reserves_capacity_and_blocks_native_admission_until_publication() {
+    let runtime = runtime_without_workers();
+    let graph = mock(
+        &runtime,
+        Engine::Gpu,
+        &buffer(&runtime),
+        Access::Write,
+        || Ok(()),
+    );
+    let completion = graph.submit().unwrap();
+    let core = &runtime.inner.core;
+    let run = next_action(&mut core.state.lock().unwrap(), None).unwrap();
+    assert!(matches!(run, Action::Run(..)));
+    perform(core, run);
+    let finish = next_action(&mut core.state.lock().unwrap(), None).unwrap();
+    assert!(matches!(finish, Action::Finish(..)));
+    let ticket = {
+        let mut state = core.state.lock().unwrap();
+        assert!(state.pending.is_empty());
+        assert_eq!(state.occupied(), 1);
+        assert!(!completion.is_complete());
+        let ticket = state.sequence();
+        state.native.push_back(ticket);
+        assert!(!state.native_ready(ticket));
+        ticket
+    };
+    perform(core, finish);
+    assert!(completion.is_complete());
+    let mut state = core.state.lock().unwrap();
+    assert!(state.native_ready(ticket));
+    assert_eq!(state.occupied(), 1);
+    state.native.pop_front();
+    assert_eq!(state.occupied(), 0);
+}
 
 #[test]
 fn native_waiter_runs_after_prior_submissions_before_later_compute() {

@@ -277,7 +277,7 @@ fn failed_dependency_does_not_poison_or_quarantine_untouched_output() {
     assert!(output.map_read().is_ok());
 }
 
-fn runtime_without_workers() -> Runtime {
+pub(super) fn runtime_without_workers() -> Runtime {
     let options = RuntimeOptions::default();
     Runtime {
         inner: Arc::new(RuntimeOwner {
@@ -842,6 +842,7 @@ fn completion_waker_can_drop_its_observer_and_reuse_the_only_graph_slot() {
     }
     let mut runtime = runtime_without_workers();
     runtime.options.graph_slots = 1;
+    runtime.inner.core.state.lock().unwrap().capacity = 1;
     let graph = mock(
         &runtime,
         Engine::Gpu,

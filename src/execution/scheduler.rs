@@ -19,6 +19,8 @@ pub(super) struct Scheduler {
     pub pending: Vec<Pending>,
     pub capacity: usize,
     pub shutdown: bool,
+    // Removed from pending, but still releasing owners and publishing completion.
+    finishing: Vec<u64>,
     running: [bool; 5],
     sequence: u64,
     native: std::collections::VecDeque<u64>,
@@ -40,6 +42,7 @@ impl Core {
                 pending: Vec::with_capacity(capacity),
                 capacity,
                 shutdown: false,
+                finishing: Vec::with_capacity(capacity),
                 running: [false; 5],
                 sequence: 0,
                 native: Default::default(),
@@ -52,7 +55,16 @@ impl Core {
 }
 impl Scheduler {
     pub fn occupied(&self) -> usize {
-        self.pending.len() + self.native.len() + usize::from(self.native_active)
+        self.pending.len()
+            + self.finishing.len()
+            + self.native.len()
+            + usize::from(self.native_active)
+    }
+    fn native_ready(&self, ticket: u64) -> bool {
+        self.native.front() == Some(&ticket)
+            && !self.running[super::GpuLane::Compute as usize]
+            && !self.pending.iter().any(|job| job.sequence < ticket)
+            && !self.finishing.iter().any(|&sequence| sequence < ticket)
     }
     fn sequence(&mut self) -> u64 {
         let sequence = self.sequence;
@@ -91,6 +103,7 @@ impl Scheduler {
     }
     fn remove(&mut self, index: usize) -> Pending {
         let job = self.pending.remove(index);
+        self.finishing.push(job.sequence);
         // Vec order is submission order. Only later submissions counted this
         // job, including when cancellation removes a blocked job out of order.
         for later in &mut self.pending[index..] {
@@ -116,10 +129,7 @@ impl NativeLease {
         let ticket = state.sequence();
         state.native.push_back(ticket);
         core.changed.notify_all();
-        while state.native.front() != Some(&ticket)
-            || state.running[super::GpuLane::Compute as usize]
-            || state.pending.iter().any(|job| job.sequence < ticket)
-        {
+        while !state.native_ready(ticket) {
             state = core.changed.wait(state).unwrap_or_else(|e| e.into_inner());
         }
         state.native.pop_front();
@@ -322,9 +332,21 @@ fn perform(core: &Arc<Core>, action: Action) {
             }
             drop(job.dependencies);
             core.counters.completions.fetch_add(1, Ordering::Relaxed);
-            signal.finish(failure);
+            let wake = {
+                let mut scheduler = core.state.lock().unwrap_or_else(|e| e.into_inner());
+                let index = scheduler
+                    .finishing
+                    .iter()
+                    .position(|&sequence| sequence == job.sequence)
+                    .expect("finishing submission remains reserved");
+                scheduler.finishing.swap_remove(index);
+                // Publish while admission is locked; invoke user wakers only
+                // after releasing it so they can submit work or enter a stage.
+                signal.publish(failure)
+            };
             core.host_changed.notify_all();
             core.changed.notify_all();
+            wake();
         }
     }
 }

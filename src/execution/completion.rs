@@ -57,7 +57,11 @@ impl Signal {
         state.overflow_wakers.clear();
         self.cancel.store(false, Ordering::Release);
     }
+    #[cfg(test)]
     pub fn finish(&self, failure: Option<Arc<Error>>) {
+        self.publish(failure)();
+    }
+    pub fn publish(&self, failure: Option<Arc<Error>>) -> impl FnOnce() + '_ {
         let (wakers, overflow) = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.failure = failure;
@@ -69,10 +73,12 @@ impl Signal {
                 std::mem::take(&mut state.overflow_wakers),
             )
         };
-        self.changed.notify_all();
-        for waker in wakers.into_iter().flatten().chain(overflow) {
-            // A task-supplied waker must not take down an execution worker.
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| waker.wake()));
+        move || {
+            self.changed.notify_all();
+            for waker in wakers.into_iter().flatten().chain(overflow) {
+                // A task-supplied waker must not take down an execution worker.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| waker.wake()));
+            }
         }
     }
 }
