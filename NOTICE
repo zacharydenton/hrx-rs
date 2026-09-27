@@ -8,11 +8,8 @@ All component license texts and header notices accompany the libraries.
 The hrx-rs bridge is MIT licensed.
 
 Modified source, patches and build recipes:
-https://github.com/zacharydenton/hrx-rs/releases/download/native-20260927-468508b9e/hrx-native-sources.tar.gz
-SHA-256: f00d5b594ba33c4d2d6bc8d05bf614e131e5780b44f6807d25e2187f2b992da4
-
-src/artifacts/onnx.proto is the ONNX project's schema (Apache-2.0); the ONNX
-bindings in src/artifacts/onnx_proto.rs are generated from it.
+https://github.com/zacharydenton/hrx-rs/releases/download/native-20260927-244cd3801b/hrx-native-sources.tar.gz
+SHA-256: 5934bb59c046efaf731bc9455330b0998dc1aa7b63f6a765938a49aa7b36df36
 
 Benchmark fixtures in native/qualification derive from krea2-hrx (MIT),
 and arcface-hrx and h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.

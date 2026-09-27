@@ -533,11 +533,11 @@ pub const LOOMC_DIAGNOSTIC_SEVERITY_ERROR: loomc_diagnostic_severity_e = 2;
 pub type loomc_diagnostic_severity_e = ::std::os::raw::c_uint;
 #[doc = " Diagnostic severity."]
 pub use self::loomc_diagnostic_severity_e as loomc_diagnostic_severity_t;
-#[doc = " Source range attached to a diagnostic.\n\n Byte offsets are zero-based and line/column values are one-based when\n available. A zero line or column means the location was not computed or is\n not meaningful for the source format.\n\n @lifetime\n The source pointer is retained by the owning result when present. The range\n view remains valid until that result is released."]
+#[doc = " Source range attached to a diagnostic.\n\n Byte offsets are zero-based and line/column values are one-based when\n available. A zero line or column means the location was not computed or is\n not meaningful for the source format. A source can retain its identifier\n without contents; recorded line/column values remain valid in that case.\n Unknown byte offsets are zero.\n\n @lifetime\n The source pointer is retained by the owning result when present. The range\n view remains valid until that result is released."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct loomc_source_range_t {
-    #[doc = " Source handle that owns or identifies the bytes."]
+    #[doc = " Source identity with optional contents, or NULL for an unknown source."]
     pub source: *const loomc_source_t,
     #[doc = " First byte in source contents covered by the range."]
     pub start: loomc_host_size_t,
@@ -580,7 +580,36 @@ impl Default for loomc_source_range_t {
         }
     }
 }
-#[doc = " Borrowed diagnostic view owned by a result object.\n\n @lifetime\n Diagnostic strings and source ranges are owned by the result that returned\n this view. They remain valid until that result is released."]
+#[doc = " A labeled source location providing context for a primary diagnostic.\n\n Examples include a callee's declaration or the previous use of a value.\n The owning result retains the label and source identity. Source contents\n are optional, as with the primary range."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct loomc_diagnostic_related_location_t {
+    #[doc = " Human-readable relationship, such as \"contract defined here\"."]
+    pub label: loomc_string_view_t,
+    #[doc = " Source range of the related location."]
+    pub range: loomc_source_range_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of loomc_diagnostic_related_location_t"]
+        [::std::mem::size_of::<loomc_diagnostic_related_location_t>() - 56usize];
+    ["Alignment of loomc_diagnostic_related_location_t"]
+        [::std::mem::align_of::<loomc_diagnostic_related_location_t>() - 8usize];
+    ["Offset of field: loomc_diagnostic_related_location_t::label"]
+        [::std::mem::offset_of!(loomc_diagnostic_related_location_t, label) - 0usize];
+    ["Offset of field: loomc_diagnostic_related_location_t::range"]
+        [::std::mem::offset_of!(loomc_diagnostic_related_location_t, range) - 16usize];
+};
+impl Default for loomc_diagnostic_related_location_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Borrowed diagnostic view owned by a result object.\n\n @lifetime\n Diagnostic strings, related locations, and source ranges are owned by the\n result that returned this view. They remain valid until that result is\n released."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct loomc_diagnostic_t {
@@ -592,10 +621,16 @@ pub struct loomc_diagnostic_t {
     pub message: loomc_string_view_t,
     #[doc = " Primary source range."]
     pub range: loomc_source_range_t,
+    #[doc = " Related locations in producer order, or NULL when the count is zero."]
+    pub related_locations: *const loomc_diagnostic_related_location_t,
+    #[doc = " Number of entries in related_locations."]
+    pub related_location_count: loomc_host_size_t,
+    #[doc = " Number of additional resolved locations omitted by the producer's limit."]
+    pub related_location_omitted_count: loomc_host_size_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of loomc_diagnostic_t"][::std::mem::size_of::<loomc_diagnostic_t>() - 80usize];
+    ["Size of loomc_diagnostic_t"][::std::mem::size_of::<loomc_diagnostic_t>() - 104usize];
     ["Alignment of loomc_diagnostic_t"][::std::mem::align_of::<loomc_diagnostic_t>() - 8usize];
     ["Offset of field: loomc_diagnostic_t::severity"]
         [::std::mem::offset_of!(loomc_diagnostic_t, severity) - 0usize];
@@ -605,6 +640,12 @@ const _: () = {
         [::std::mem::offset_of!(loomc_diagnostic_t, message) - 24usize];
     ["Offset of field: loomc_diagnostic_t::range"]
         [::std::mem::offset_of!(loomc_diagnostic_t, range) - 40usize];
+    ["Offset of field: loomc_diagnostic_t::related_locations"]
+        [::std::mem::offset_of!(loomc_diagnostic_t, related_locations) - 80usize];
+    ["Offset of field: loomc_diagnostic_t::related_location_count"]
+        [::std::mem::offset_of!(loomc_diagnostic_t, related_location_count) - 88usize];
+    ["Offset of field: loomc_diagnostic_t::related_location_omitted_count"]
+        [::std::mem::offset_of!(loomc_diagnostic_t, related_location_omitted_count) - 96usize];
 };
 impl Default for loomc_diagnostic_t {
     fn default() -> Self {
@@ -2259,7 +2300,7 @@ impl Loomc {
     ) -> loomc_status_t {
         (self.loomc_compiler_create)(context, options, allocator, out_compiler)
     }
-    #[doc = " Compiles a mutable module into in-memory artifacts.\n\n @param compiler Prepared compiler.\n @param workspace Invocation-local scratch workspace.\n @param pass_program Prepared pass program selected for this invocation.\n @param module Module produced by deserialization, linking, or another module\n operation. The invocation borrows the module for the duration of the call\n and may rewrite its IR in place.\n @param options Compile invocation options, or `NULL` for defaults.\n @param allocator Host allocator used for result-owned storage.\n @param out_result Receives a retained result for the operation.\n @return OK when the invocation ran to a result. Non-OK statuses represent\n API misuse or infrastructure failures before a result could be produced.\n\n @ownership\n The caller owns `out_result` on an OK return and releases it with\n `loomc_result_release`.\n\n @par Postcondition\n The caller retains ownership of `module`, and the module handle remains\n valid after the call. Its IR contents may have been transformed by the\n selected pass program. Callers needing independent later invocations of\n the original IR provide independent module storage before compilation.\n A successful target-specialized invocation also retains its concrete\n function-version facts in the module handle for a later\n `loomc_emit_module` call. Applied configuration bindings are copied into the\n module for later emission reports, even when compilation requests no report.\n Once an invocation passes API preconditions, it replaces these products\n on success or clears them on failure. Cloning preserves the applied\n bindings; IR serialization does not persist them.\n\n @lifetime\n Returned results and artifacts do not borrow from `workspace` and remain\n valid after `loomc_workspace_trim`. The invocation borrows\n `options->config_module` only for the duration of the call and does not\n mutate or retain it.\n\n @par Artifact Requests\n Artifact emission is opt-in through `loomc_compile_options_t`. Requesting\n module text or bytecode serializes the transformed module into result-owned\n bytes. Requesting a report returns a JSON artifact with invocation metadata,\n result state, diagnostic count, and the count of other artifacts emitted by\n the invocation.\n\n @thread_safety\n Calls using the same compiler and pass program may run concurrently when\n each call uses a distinct workspace and distinct module, or when access to\n shared workspaces and modules is synchronized externally. The compiler and\n pass program are immutable after creation.\n\n @par Target Specialization\n `loomc_target_specialization_options_t` may be attached to\n `loomc_compile_options_t::next`. Direct specialization rows bind selected\n function versions to complete profiles. Target binding rows bind authored\n `target.decl` contexts and seed every function assigned to the declaration.\n All profiles must be compatible with the compiler context's target\n environment. Unrequested functions retain their authored targets, including\n generic targets, and targetless functions remain targetless."]
+    #[doc = " Compiles a mutable module into in-memory artifacts.\n\n @param compiler Prepared compiler.\n @param workspace Invocation-local scratch workspace.\n @param pass_program Prepared pass program selected for this invocation.\n @param module Module produced by deserialization, linking, or another module\n operation. The invocation borrows the module for the duration of the call\n and may rewrite its IR in place.\n @param options Compile invocation options, or `NULL` for defaults.\n @param allocator Host allocator used for result-owned storage.\n @param out_result Receives a retained result for the operation.\n @return OK when the invocation ran to a result. Non-OK statuses represent\n API misuse or infrastructure failures before a result could be produced.\n\n @ownership\n The caller owns `out_result` on an OK return and releases it with\n `loomc_result_release`.\n\n @par Postcondition\n The caller retains ownership of `module`, and the module handle remains\n valid after the call. Its IR contents may have been transformed by the\n selected pass program. Callers needing independent later invocations of\n the original IR provide independent module storage before compilation.\n A successful target-specialized invocation also retains its concrete\n function-version facts in the module handle for a later\n `loomc_emit_module` call. Applied configuration bindings are copied into the\n module for later emission reports, even when compilation requests no report.\n Continuing compilation carries these products with their live functions;\n explicit target specialization refines the requested function contexts.\n A failed mutation clears the products. Cloning preserves the function\n products and applied bindings; IR serialization does not persist them.\n\n @lifetime\n Returned results and artifacts do not borrow from `workspace` and remain\n valid after `loomc_workspace_trim`. The invocation borrows\n `options->config_module` only for the duration of the call and does not\n mutate or retain it.\n\n @par Artifact Requests\n Artifact emission is opt-in through `loomc_compile_options_t`. Requesting\n module text or bytecode serializes the transformed module into result-owned\n bytes. Requesting a report returns a JSON artifact with invocation metadata,\n result state, diagnostic count, and the count of other artifacts emitted by\n the invocation.\n\n @thread_safety\n Calls using the same compiler and pass program may run concurrently when\n each call uses a distinct workspace and distinct module, or when access to\n shared workspaces and modules is synchronized externally. The compiler and\n pass program are immutable after creation.\n\n @par Target Specialization\n `loomc_target_specialization_options_t` may be attached to\n `loomc_compile_options_t::next`. Direct specialization rows bind selected\n function versions to complete profiles. Target binding rows bind authored\n `target.decl` contexts and seed every function assigned to the declaration.\n All profiles must be compatible with the compiler context's target\n environment. Unrequested functions retain their authored targets, including\n generic targets, and targetless functions remain targetless."]
     pub unsafe fn loomc_compile_module(
         &self,
         compiler: *mut loomc_compiler_t,

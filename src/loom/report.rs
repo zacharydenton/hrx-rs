@@ -32,6 +32,43 @@ pub struct EntryResources {
     pub spills: Option<u64>,
     /// Target-model occupancy percentage, when known.
     pub occupancy_percent: Option<u64>,
+    /// Packets covered by the compiler's LDS bank-service model.
+    pub bank_modeled_packets: Option<u64>,
+    /// Packets outside the model's coverage; these are not conflict-free claims.
+    pub bank_unmodeled_packets: Option<u64>,
+    /// Modeled packets with structural bank conflicts, not measured stalls.
+    pub bank_conflicted_packets: Option<u64>,
+    /// Additional structural bank-service rounds, not hardware cycles.
+    pub bank_extra_rounds: Option<u64>,
+}
+
+/// Compiler-planned waits grouped by function, hardware counter and reason.
+/// Counts describe the compiled program, not measured device latency.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WaitReason {
+    /// Compiled function, when identified by the compiler.
+    pub function: Option<String>,
+    /// Target counter name.
+    pub counter: Option<String>,
+    /// Compiler explanation for this wait family.
+    pub reason: Option<String>,
+    /// Structural wait counts, preserving missing evidence.
+    pub summary: WaitCounts,
+}
+
+/// Structural wait evidence. Missing facts remain unknown.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct WaitCounts {
+    /// Total wait actions.
+    pub action_count: Option<u64>,
+    /// Waits explicitly authored in source.
+    pub explicit_action_count: Option<u64>,
+    /// Waits inserted by the compiler.
+    pub planned_action_count: Option<u64>,
+    /// Waits draining a counter completely.
+    pub full_drain_count: Option<u64>,
+    /// Waits permitting some requests to remain outstanding.
+    pub partial_wait_count: Option<u64>,
 }
 
 /// Resource change for one named function; missing or unknown facts stay null.
@@ -120,9 +157,39 @@ impl CompileReport {
                     private_bytes: number("/private_memory_bytes"),
                     spills: number("/allocation_spill_count"),
                     occupancy_percent: number("/target_resources/occupancy_percent"),
+                    bank_modeled_packets: number(
+                        "/source_low_memory/bank_service/modeled_packet_count",
+                    ),
+                    bank_unmodeled_packets: number(
+                        "/source_low_memory/bank_service/unmodeled_packet_count",
+                    ),
+                    bank_conflicted_packets: number(
+                        "/source_low_memory/bank_service/structural/conflicted_packet_count",
+                    ),
+                    bank_extra_rounds: number(
+                        "/source_low_memory/bank_service/structural/extra_round_count",
+                    ),
                 }
             })
             .collect())
+    }
+
+    /// Wait explanations from detailed reports. `None` means this evidence was
+    /// not collected; `Some([])` means it was collected with no wait rows.
+    pub fn wait_reasons(&self) -> Result<Option<Vec<WaitReason>>> {
+        self.validate()?;
+        let Some(section) = self.document.get("wait_reason_summary_rows") else {
+            return Ok(None);
+        };
+        if let Some(rows) = section.get("rows") {
+            return Ok(Some(serde_json::from_value(rows.clone())?));
+        }
+        if section["count"].as_u64() == Some(0) {
+            return Ok(Some(Vec::new()));
+        }
+        Err(Error::Message(
+            "report wait reasons are missing their rows".into(),
+        ))
     }
 
     /// Compare named entries after checking compiler, schema and target identity.
@@ -161,6 +228,10 @@ impl CompileReport {
                         row.and_then(|r| r.private_bytes),
                         row.and_then(|r| r.spills),
                         row.and_then(|r| r.occupancy_percent),
+                        row.and_then(|r| r.bank_modeled_packets),
+                        row.and_then(|r| r.bank_unmodeled_packets),
+                        row.and_then(|r| r.bank_conflicted_packets),
+                        row.and_then(|r| r.bank_extra_rounds),
                     ]
                 };
                 let names = [
@@ -171,6 +242,10 @@ impl CompileReport {
                     "private_bytes",
                     "spills",
                     "occupancy_percent",
+                    "bank_modeled_packets",
+                    "bank_unmodeled_packets",
+                    "bank_conflicted_packets",
+                    "bank_extra_rounds",
                 ];
                 let delta = names
                     .into_iter()
@@ -224,6 +299,45 @@ mod tests {
             "backend":"amdgpu-hsaco", "target_key":"gfx1151", "mode":"summary",
             "entries":{"rows":[{"function":"empty", "allocation_spill_count":0}]}})
     }
+    #[test]
+    fn bank_coverage_and_wait_reasons_preserve_missing_evidence() {
+        let mut document = evidence();
+        document["entries"]["rows"][0]["source_low_memory"] = serde_json::json!({
+            "bank_service": {"modeled_packet_count": 3, "unmodeled_packet_count": 2,
+                "structural": {"conflicted_packet_count": 1, "extra_round_count": 4}}
+        });
+        let mut report = CompileReport::new(
+            "compiler-a".into(),
+            "gfx1151".into(),
+            super::super::ProcessorMode::Default,
+            document,
+        )
+        .unwrap();
+        let entry = report.entries().unwrap().remove(0);
+        assert_eq!(entry.bank_modeled_packets, Some(3));
+        assert_eq!(entry.bank_unmodeled_packets, Some(2));
+        assert_eq!(entry.bank_conflicted_packets, Some(1));
+        assert_eq!(entry.bank_extra_rounds, Some(4));
+        assert!(report.wait_reasons().unwrap().is_none());
+        report.document["wait_reason_summary_rows"] = serde_json::json!({"count": 0});
+        assert!(report.wait_reasons().unwrap().unwrap().is_empty());
+        report.document["wait_reason_summary_rows"] = serde_json::json!({"count": 1,
+            "rows": [{"function": "empty", "counter": "smem", "reason": "storage_reuse",
+                "summary": {"action_count": 2, "full_drain_count": 2}}]});
+        let waits = report.wait_reasons().unwrap().unwrap();
+        assert_eq!(waits[0].summary.full_drain_count, Some(2));
+        assert_eq!(waits[0].summary.partial_wait_count, None);
+        let mut after = report.clone();
+        after.document["entries"]["rows"][0]["source_low_memory"]["bank_service"]["structural"]["extra_round_count"] =
+            1.into();
+        assert_eq!(
+            report.changes(&after).unwrap()[0].delta["bank_extra_rounds"],
+            Some(-3)
+        );
+        report.document["wait_reason_summary_rows"] = serde_json::json!({"count": 1});
+        assert!(report.wait_reasons().is_err());
+    }
+
     #[test]
     fn unknown_resources_are_not_zero_and_comparisons_check_identity() {
         let report = CompileReport::new(

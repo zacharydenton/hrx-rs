@@ -1,5 +1,11 @@
 # Included after the upstream project() call, before its targets are declared.
 if(PROJECT_NAME STREQUAL "HRX" AND NOT TARGET hrx_fabric)
+  function(_hrx_configure_loom_abi)
+    target_sources(loomc_shared PRIVATE "${HRX_LOOM_ABI_SOURCE}")
+    target_compile_definitions(loomc_shared PRIVATE LOOMC_BUILDING_SHARED_LIBRARY)
+  endfunction()
+  set(HRX_LOOM_ABI_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../loomc_abi.c")
+  cmake_language(DEFER CALL _hrx_configure_loom_abi)
   # Reuse pure image/packet helpers directly: do not enable an HSA HAL driver
   # merely to get its conditionally declared utility targets.
   cmake_language(DEFER CALL iree_configure_rocm_hsa_runtime_headers)

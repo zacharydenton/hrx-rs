@@ -112,7 +112,7 @@ def main():
         for path in sorted((REPO/directory).rglob('*')):
             if path.is_file() and (directory != 'native/licenses' or path.name in evidence):
                 members[str(path.relative_to(REPO))] = path
-    for name in ['native/release-inputs.json','native/RELEASE.md','scripts/stage-native-release.py',
+    for name in ['native/loomc_abi.c','native/release-inputs.json','native/RELEASE.md','scripts/stage-native-release.py',
                  'scripts/rebuild-hrx.sh','scripts/build-amdf.sh','scripts/build-gpu-runtime-container.sh',
                  'scripts/fetch-native-inputs.py','scripts/seed-native-file-cache.py']:
         members[name] = REPO/name
@@ -130,6 +130,7 @@ def main():
     write_json(REPO/'THIRD-PARTY.json',inventory)
     shutil.copyfile(REPO/'THIRD-PARTY.json',stage/'THIRD-PARTY.json')
     bridge_inputs={str(p.relative_to(REPO)):digest(p) for p in sorted((REPO/'native/amdf').glob('*')) if p.is_file()}
+    bridge_inputs['native/loomc_abi.c'] = digest(REPO/'native/loomc_abi.c')
     write_json(stage/'provenance.json',{'schema':1,'inputs':inputs,'bridge_inputs':bridge_inputs,
         'build_recipe':'scripts/rebuild-hrx.sh','corresponding_source':source_record,
         'compiler':(build/'compiler-version.txt').read_text().strip(),

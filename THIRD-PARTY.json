@@ -4,7 +4,7 @@
   "components": {
     "libamdf.so": {
       "project": "HRX / libamdf / Loom / hrx-rs native bridge",
-      "version": "468508b9e27e749972382f78e1c67d6db7bec27e",
+      "version": "244cd3801bd5e504529a3089ee6f9d99a779dee4",
       "sha256": "a535883a40639339e89fd6c6e5e8c4937e31cda7bfd12b859e03b550f98b133d",
       "needed": [
         "libm.so.6",
@@ -12,9 +12,9 @@
       ],
       "sources": {
         "hrx-system": {
-          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/468508b9e27e749972382f78e1c67d6db7bec27e",
-          "archive": "hrx-system-468508b9e27e749972382f78e1c67d6db7bec27e.tar.gz",
-          "sha256": "4452454d56f7b0cadb861c1e4d4f5a9d0b1e81a228f4a24f048640f49e021425"
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/244cd3801bd5e504529a3089ee6f9d99a779dee4",
+          "archive": "hrx-system-244cd3801bd5e504529a3089ee6f9d99a779dee4.tar.gz",
+          "sha256": "7c326156e6f0d009db09fe72e7e31936243d68501902598ff888449f88a00283"
         },
         "spirv_headers": {
           "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
@@ -109,8 +109,8 @@
     },
     "libloomc.so": {
       "project": "HRX / libamdf / Loom / hrx-rs native bridge",
-      "version": "468508b9e27e749972382f78e1c67d6db7bec27e",
-      "sha256": "f30d851a6710c8d7a48e8bffe65fa0bf12df3a9242109ea9f73b17e13bbd69ae",
+      "version": "244cd3801bd5e504529a3089ee6f9d99a779dee4",
+      "sha256": "bd015662c8840d4e597743630a1bd51a42daeb16b66aa71c982a0c900bea4abb",
       "needed": [
         "libm.so.6",
         "libstdc++.so.6",
@@ -119,9 +119,9 @@
       ],
       "sources": {
         "hrx-system": {
-          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/468508b9e27e749972382f78e1c67d6db7bec27e",
-          "archive": "hrx-system-468508b9e27e749972382f78e1c67d6db7bec27e.tar.gz",
-          "sha256": "4452454d56f7b0cadb861c1e4d4f5a9d0b1e81a228f4a24f048640f49e021425"
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/244cd3801bd5e504529a3089ee6f9d99a779dee4",
+          "archive": "hrx-system-244cd3801bd5e504529a3089ee6f9d99a779dee4.tar.gz",
+          "sha256": "7c326156e6f0d009db09fe72e7e31936243d68501902598ff888449f88a00283"
         },
         "spirv_headers": {
           "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
@@ -216,7 +216,7 @@
     },
     "libhrx_fabric.so": {
       "project": "HRX / libamdf / Loom / hrx-rs native bridge",
-      "version": "468508b9e27e749972382f78e1c67d6db7bec27e",
+      "version": "244cd3801bd5e504529a3089ee6f9d99a779dee4",
       "sha256": "618df415a82c309ce8a0cefe5e28a05a32798f91f2a1ebf586e5f6b7389f4c94",
       "needed": [
         "libm.so.6",
@@ -225,9 +225,9 @@
       ],
       "sources": {
         "hrx-system": {
-          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/468508b9e27e749972382f78e1c67d6db7bec27e",
-          "archive": "hrx-system-468508b9e27e749972382f78e1c67d6db7bec27e.tar.gz",
-          "sha256": "4452454d56f7b0cadb861c1e4d4f5a9d0b1e81a228f4a24f048640f49e021425"
+          "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/244cd3801bd5e504529a3089ee6f9d99a779dee4",
+          "archive": "hrx-system-244cd3801bd5e504529a3089ee6f9d99a779dee4.tar.gz",
+          "sha256": "7c326156e6f0d009db09fe72e7e31936243d68501902598ff888449f88a00283"
         },
         "spirv_headers": {
           "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
@@ -368,8 +368,8 @@
     }
   },
   "corresponding_source": {
-    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260927-468508b9e/hrx-native-sources.tar.gz",
-    "sha256": "f00d5b594ba33c4d2d6bc8d05bf614e131e5780b44f6807d25e2187f2b992da4"
+    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260927-244cd3801b/hrx-native-sources.tar.gz",
+    "sha256": "5934bb59c046efaf731bc9455330b0998dc1aa7b63f6a765938a49aa7b36df36"
   },
   "system_dependencies_not_shipped": [
     "ld-linux-x86-64.so.2",

@@ -106,7 +106,7 @@ pub fn report(args: &[String]) -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "compiler": report.compiler_identity(), "target": report.target(),
-                    "processor_mode": report.processor_mode(), "entries": report.entries()?
+                    "processor_mode": report.processor_mode(), "entries": report.entries()?, "wait_reasons": report.wait_reasons()?
                 }))?
             );
         }

@@ -8,14 +8,35 @@ use std::{
     sync::{Arc, Condvar, Mutex, OnceLock},
 };
 
+struct Api {
+    ffi: Loomc,
+    extended_diagnostics: bool,
+}
+impl std::ops::Deref for Api {
+    type Target = Loomc;
+    fn deref(&self) -> &Loomc {
+        &self.ffi
+    }
+}
+
+// Original public layout, shared by released bundles and the latest compiler.
+// Never form a reference to the extended layout before checking its ABI probe.
+#[repr(C)]
+struct DiagnosticPrefix {
+    severity: loomc_diagnostic_severity_t,
+    code: loomc_string_view_t,
+    message: loomc_string_view_t,
+    range: loomc_source_range_t,
+}
+
 // Keep native code mapped for the process lifetime. In particular, dlopen may
 // retain C++ libraries after dlclose, so a weak registry cannot safely associate
 // a replacement file with the old loader mapping. Compiler contexts and scratch
 // remain session-owned and are released normally.
-fn library(path: &Path, identity: &str) -> Result<Arc<Loomc>> {
+fn library(path: &Path, identity: &str) -> Result<Arc<Api>> {
     struct Loaded {
         identity: Option<String>,
-        api: Arc<Loomc>,
+        api: Arc<Api>,
     }
     static LIBRARIES: OnceLock<Mutex<HashMap<PathBuf, Loaded>>> = OnceLock::new();
     let mut libraries = LIBRARIES
@@ -32,7 +53,16 @@ fn library(path: &Path, identity: &str) -> Result<Arc<Loomc>> {
         return Ok(loaded.api.clone());
     }
     // Loading a compiler library trusts the selected native bundle/override.
-    let api = Arc::new(unsafe { Loomc::new(path)? });
+    let api = Arc::new(unsafe {
+        let library = libloading::Library::new(path)?;
+        let extended_diagnostics = library
+            .get::<unsafe extern "C" fn() -> usize>(b"loomc_hrx_diagnostic_size\0")
+            .is_ok_and(|size| size() == size_of::<loomc_diagnostic_t>());
+        Api {
+            ffi: Loomc::from_library(library)?,
+            extended_diagnostics,
+        }
+    });
     // Register even if the post-load check fails: the loader may keep this
     // mapping resident, and a subsequent attempt must not silently reuse it.
     let verified = crate::bundle::file_digest(path).is_ok_and(|actual| actual == identity);
@@ -82,7 +112,7 @@ fn status(api: &Loomc, value: loomc_status_t) -> Result<()> {
 }
 struct Handle<T> {
     raw: *mut T,
-    api: Arc<Loomc>,
+    api: Arc<Api>,
     release: unsafe extern "C" fn(*mut T),
 }
 impl<T> Drop for Handle<T> {
@@ -93,7 +123,7 @@ impl<T> Drop for Handle<T> {
     }
 }
 fn output<T>(
-    api: &Arc<Loomc>,
+    api: &Arc<Api>,
     release: unsafe extern "C" fn(*mut T),
     call: impl FnOnce(*mut *mut T) -> loomc_status_t,
 ) -> Result<Handle<T>> {
@@ -109,7 +139,7 @@ fn output<T>(
     Ok(h)
 }
 fn result_call<T>(
-    api: &Arc<Loomc>,
+    api: &Arc<Api>,
     release: unsafe extern "C" fn(*mut T),
     call: impl FnOnce(*mut *mut T, *mut *mut loomc_result_t) -> loomc_status_t,
 ) -> Result<(Handle<T>, Vec<Diagnostic>)> {
@@ -132,6 +162,55 @@ fn result_call<T>(
     }
     Ok((value, diagnostics))
 }
+// The caller retains the result and confirms the extended layout before opting in.
+unsafe fn copy_diagnostic(
+    raw: *const loomc_diagnostic_t,
+    extended_diagnostics: bool,
+    source_identifier: impl Fn(*const loomc_source_t) -> String,
+) -> Diagnostic {
+    unsafe {
+        let d = &*raw.cast::<DiagnosticPrefix>();
+        let (related_locations, related_location_omitted_count) = if extended_diagnostics {
+            let extended = &*raw;
+            let locations = (0..extended.related_location_count)
+                .map(|j| {
+                    let location = &*extended.related_locations.add(j);
+                    let range = &location.range;
+                    super::RelatedLocation {
+                        label: string(location.label),
+                        source: if range.source.is_null() {
+                            String::new()
+                        } else {
+                            source_identifier(range.source)
+                        },
+                        line: range.start_line,
+                        column: range.start_column,
+                        end_line: range.end_line,
+                        end_column: range.end_column,
+                    }
+                })
+                .collect();
+            (locations, extended.related_location_omitted_count)
+        } else {
+            (Vec::new(), 0)
+        };
+        Diagnostic {
+            severity: d.severity.into(),
+            code: string(d.code),
+            message: string(d.message),
+            source: if d.range.source.is_null() {
+                String::new()
+            } else {
+                source_identifier(d.range.source)
+            },
+            line: d.range.start_line,
+            column: d.range.start_column,
+            related_locations,
+            related_location_omitted_count,
+        }
+    }
+}
+
 impl Handle<loomc_result_t> {
     fn check(&self) -> Result<Vec<Diagnostic>> {
         if self.raw.is_null() {
@@ -140,19 +219,10 @@ impl Handle<loomc_result_t> {
         unsafe {
             let diagnostics: Vec<_> = (0..self.api.loomc_result_diagnostic_count(self.raw))
                 .map(|i| {
-                    let d = &*self.api.loomc_result_diagnostic_at(self.raw, i);
-                    Diagnostic {
-                        severity: d.severity.into(),
-                        code: string(d.code),
-                        message: string(d.message),
-                        source: if d.range.source.is_null() {
-                            String::new()
-                        } else {
-                            string(self.api.loomc_source_identifier(d.range.source))
-                        },
-                        line: d.range.start_line,
-                        column: d.range.start_column,
-                    }
+                    let raw = self.api.loomc_result_diagnostic_at(self.raw, i);
+                    copy_diagnostic(raw, self.api.extended_diagnostics, |source| {
+                        string(self.api.loomc_source_identifier(source))
+                    })
                 })
                 .collect();
             if !self.api.loomc_result_succeeded(self.raw) {
@@ -173,7 +243,7 @@ pub(super) struct Prepared {
     profile: Handle<loomc_target_profile_t>,
     context: Handle<loomc_context_t>,
     environment: Handle<loomc_target_environment_t>,
-    api: Arc<Loomc>,
+    api: Arc<Api>,
     pool: Pool,
     artifact_format: &'static str,
 }
@@ -679,5 +749,70 @@ unsafe extern "C" fn include_source(
         provider
             .api
             .loomc_source_create(&options, provider.api.loomc_allocator_system(), out)
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_abi_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_result_reads_only_its_prefix() {
+        let old = Box::new(DiagnosticPrefix {
+            severity: 2,
+            code: view("old-code"),
+            message: view("old message"),
+            range: loomc_source_range_t {
+                start_line: 7,
+                ..Default::default()
+            },
+        });
+        let copied = unsafe {
+            copy_diagnostic(
+                (&*old as *const DiagnosticPrefix).cast(),
+                false,
+                |_| unreachable!(),
+            )
+        };
+        drop(old);
+        assert_eq!(copied.line, 7);
+        assert_eq!(copied.message, "old message");
+        assert!(copied.related_locations.is_empty());
+        assert_eq!(copied.related_location_omitted_count, 0);
+    }
+
+    #[test]
+    fn extended_locations_outlive_native_result_storage() {
+        let copied = {
+            let label = String::from("previous declaration");
+            let locations = [loomc_diagnostic_related_location_t {
+                label: view(&label),
+                range: loomc_source_range_t {
+                    source: std::ptr::dangling(),
+                    start_line: 4,
+                    start_column: 2,
+                    end_line: 4,
+                    end_column: 9,
+                    ..Default::default()
+                },
+            }];
+            let diagnostic = loomc_diagnostic_t {
+                severity: 2,
+                code: view("duplicate"),
+                message: view("duplicate symbol"),
+                related_locations: locations.as_ptr(),
+                related_location_count: 1,
+                related_location_omitted_count: 3,
+                ..Default::default()
+            };
+            unsafe { copy_diagnostic(&diagnostic, true, |_| String::from("header.loom")) }
+        };
+        assert_eq!(copied.related_locations[0].label, "previous declaration");
+        assert_eq!(copied.related_locations[0].source, "header.loom");
+        assert_eq!(copied.related_locations[0].end_column, 9);
+        assert_eq!(copied.related_location_omitted_count, 3);
+        assert!(
+            super::super::summarize(&[copied]).contains("header.loom:4:2: previous declaration")
+        );
     }
 }

@@ -16,7 +16,7 @@ use crate::{
     Error, Result,
     bundle::{self, Lock},
 };
-pub use report::{CompileReport, EntryChange, EntryResources};
+pub use report::{CompileReport, EntryChange, EntryResources, WaitCounts, WaitReason};
 use serde::{Deserialize, Serialize};
 pub use source::{CxxSource, CxxStandard, Source};
 use std::{
@@ -68,6 +68,29 @@ pub struct Diagnostic {
     pub line: u32,
     /// One-based source column, or zero when unavailable.
     pub column: u32,
+    /// Labeled locations providing context, in compiler order.
+    #[serde(default)]
+    pub related_locations: Vec<RelatedLocation>,
+    /// Additional locations omitted by the compiler's diagnostic limit.
+    #[serde(default)]
+    pub related_location_omitted_count: usize,
+}
+
+/// A source location related to a compiler diagnostic, owned by Rust.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RelatedLocation {
+    /// Relationship to the primary diagnostic, such as a previous use.
+    pub label: String,
+    /// Source identifier, even when the compiler did not retain source text.
+    pub source: String,
+    /// One-based starting line, or zero when unavailable.
+    pub line: u32,
+    /// One-based starting column, or zero when unavailable.
+    pub column: u32,
+    /// One-based ending line, or zero when unavailable.
+    pub end_line: u32,
+    /// One-based ending column, or zero when unavailable.
+    pub end_column: u32,
 }
 /// AMDGPU workgroup scheduling domain. Explicit modes require compiler support.
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -394,6 +417,18 @@ fn summarize(diagnostics: &[Diagnostic]) -> String {
         message.push_str("\nhint: ");
         message.push_str(hint);
     }
+    for related in &first.related_locations {
+        message.push_str(&format!(
+            "\n{}:{}:{}: {}",
+            related.source, related.line, related.column, related.label
+        ));
+    }
+    if first.related_location_omitted_count != 0 {
+        message.push_str(&format!(
+            "\n({} additional related location(s) omitted)",
+            first.related_location_omitted_count
+        ));
+    }
     let suppressed = errors().count() - 1;
     if suppressed > 0 {
         message.push_str(&format!(
@@ -425,6 +460,8 @@ mod diagnostic_tests {
             source: String::new(),
             line,
             column: 1,
+            related_locations: Vec::new(),
+            related_location_omitted_count: 0,
         }
     }
     #[test]

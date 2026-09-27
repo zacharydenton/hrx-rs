@@ -1,0 +1,16 @@
+diff --git a/loom/py/loom/target/arch/amdgpu/descriptors/api.py b/loom/py/loom/target/arch/amdgpu/descriptors/api.py
+index 5cae629aa5..b783b3f8c8 100644
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/api.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/api.py
+@@ -1477,8 +1477,10 @@ _AMDGPU_CORE_DESCRIPTOR_SET_BUILDERS = {
+         flags=_AMDGPU_CORE_DESCRIPTOR_SET_BUILDER_FLAG_GFX125X,
+     ),
+     "rdna3_5": _AmdgpuCoreDescriptorSetBuilder(
++        # gfx1151 qualification: the bandwidth reservation delays independent
++        # LDS loads and regresses WMMA convolution. Keep completion latency and
++        # source hazards while allowing those loads to remain in flight.
+         valu_sgpr_separation_cycles=5,
+-        lds_bits_per_lane_per_cycle=32,
+         base=_AMDGPU_RDNA3_5_CORE_DESCRIPTOR_SET_BASE,
+         overlay_rows=_gfx115x_core_overlays,
+         overlay_descriptors=_gfx115x_core_overlay_descriptors,
