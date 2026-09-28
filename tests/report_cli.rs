@@ -47,3 +47,92 @@ fn report_cli_preserves_unknowns_and_rejects_incompatible_evidence() {
     std::fs::write(&path, b"{broken").unwrap();
     assert!(!run(&["report", "show", &path]).status.success());
 }
+
+#[test]
+fn wait_diffs_match_identities_and_preserve_missing_counts() {
+    let root = tempfile::tempdir().unwrap();
+    let row = |reason: &str, count: u64| {
+        json!({"function":"worker", "counter":"lds",
+        "reason":reason, "summary":{"action_count":count, "drained_count":count}})
+    };
+    let mut baseline = json!({"compiler":"fixture-compiler", "target":"gfx1151", "processor_mode":"default",
+        "document":{"kind":"loom.compile_report", "schema_version":0, "backend":"amdgpu-hsaco",
+        "target_key":"gfx1151", "mode":"details", "entries":{"count":1,"rows":[{"function":"worker"}]},
+        "wait_reason_summary_rows":{"count":2,"rows":[row("ssa_use", u64::MAX), row("storage_reuse", 4)]}}});
+    let before = save(root.path(), "before.json", &baseline);
+    let mut candidate = baseline.clone();
+    candidate["document"]["wait_reason_summary_rows"] = json!({"count":2,
+        "rows":[row("new_reason", 3), row("ssa_use", 0)]});
+    let after = save(root.path(), "after.json", &candidate);
+    let output = run(&["report", "diff", &before, &after]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Inspect large signed deltas through the typed API: JSON consumers may use floats.
+    let a: hrx::loom::CompileReport = serde_json::from_value(baseline.clone()).unwrap();
+    let b: hrx::loom::CompileReport = serde_json::from_value(candidate.clone()).unwrap();
+    let changes = a.wait_reason_changes(&b).unwrap().unwrap();
+    assert_eq!(changes.len(), 3);
+    assert_eq!(changes[0].reason, "new_reason");
+    assert!(changes[0].before.is_none());
+    assert_eq!(changes[0].delta["action_count"], None);
+    assert_eq!(changes[1].reason, "ssa_use");
+    assert_eq!(
+        changes[1].delta["drained_count"],
+        Some(-i128::from(u64::MAX))
+    );
+    assert_eq!(changes[1].delta["max_outstanding_before"], None);
+    assert_eq!(changes[2].reason, "storage_reuse");
+    assert!(changes[2].after.is_none());
+    assert_eq!(changes[2].delta["action_count"], None);
+
+    baseline["document"]
+        .as_object_mut()
+        .unwrap()
+        .remove("wait_reason_summary_rows");
+    let unavailable: hrx::loom::CompileReport = serde_json::from_value(baseline).unwrap();
+    assert!(unavailable.wait_reason_changes(&b).unwrap().is_none());
+    candidate["document"]["wait_reason_summary_rows"] = json!({"count":0});
+    let empty: hrx::loom::CompileReport = serde_json::from_value(candidate).unwrap();
+    assert!(
+        empty
+            .wait_reason_changes(&empty)
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn report_cli_rejects_incomplete_collections_and_ambiguous_wait_identities() {
+    let root = tempfile::tempdir().unwrap();
+    let row = json!({"function":"worker","counter":"lds","reason":"ssa_use","summary":{"action_count":1}});
+    let evidence = json!({"compiler":"fixture-compiler", "target":"gfx1151", "processor_mode":"default",
+        "document":{"kind":"loom.compile_report", "schema_version":0, "backend":"amdgpu-hsaco",
+        "target_key":"gfx1151", "mode":"details", "entries":{"count":1,"rows":[{"function":"worker"}]},
+        "wait_reason_summary_rows":{"count":1,"rows":[row.clone()]}}});
+    for (section, value) in [
+        ("entries", json!({"count":1})),
+        ("entries", json!({"count":1,"rows":[null]})),
+        ("entries", json!({"count":2,"rows":[{"function":"worker"}]})),
+        (
+            "wait_reason_summary_rows",
+            json!({"count":2,"rows":[row.clone()]}),
+        ),
+        ("wait_reason_summary_rows", json!({"count":1,"rows":null})),
+    ] {
+        let mut malformed = evidence.clone();
+        malformed["document"][section] = value;
+        let path = save(root.path(), "malformed.json", &malformed);
+        assert!(!run(&["report", "show", &path]).status.success());
+    }
+    for rows in [json!([row.clone(), row]), json!([{"summary":{}}])] {
+        let mut ambiguous = evidence.clone();
+        ambiguous["document"]["wait_reason_summary_rows"] =
+            json!({"count":rows.as_array().unwrap().len(),"rows":rows});
+        let path = save(root.path(), "ambiguous.json", &ambiguous);
+        assert!(!run(&["report", "diff", &path, &path]).status.success());
+    }
+}

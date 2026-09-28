@@ -69,10 +69,6 @@ moves per iteration and runs 1.007-1.073x faster, with byte-identical output.
 Unrelated kernels compile to identical code objects. The patch adds a pass test
 and an assembly test; each fails without its half of the change.
 
-The candidate applies seven compiler patches. Optional patch 0007 is retained after
-paired hardware qualification. Patches 0002 and 0004 are preserved under
-`patches/retired` but are not applied; 0008 belongs to the removed legacy runtime.
-
 ## Rebuild
 
 Use `scripts/fetch-native-inputs.py` and `scripts/rebuild-hrx.sh`, documented in

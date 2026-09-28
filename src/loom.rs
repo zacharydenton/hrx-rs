@@ -16,7 +16,9 @@ use crate::{
     Error, Result,
     bundle::{self, Lock},
 };
-pub use report::{CompileReport, EntryChange, EntryResources, WaitCounts, WaitReason};
+pub use report::{
+    CompileReport, EntryChange, EntryResources, WaitCounts, WaitReason, WaitReasonChange,
+};
 use serde::{Deserialize, Serialize};
 pub use source::{CxxSource, CxxStandard, Source};
 use std::{

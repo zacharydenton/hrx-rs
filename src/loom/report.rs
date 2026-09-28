@@ -69,6 +69,50 @@ pub struct WaitCounts {
     pub full_drain_count: Option<u64>,
     /// Waits permitting some requests to remain outstanding.
     pub partial_wait_count: Option<u64>,
+    /// Total packets drained by these waits.
+    pub drained_count: Option<u64>,
+    /// Most packets drained by one wait.
+    pub max_drained_count: Option<u64>,
+    /// Maximum block-local outstanding packets before a wait.
+    pub max_outstanding_before: Option<u64>,
+    /// Maximum block-local outstanding packets before a full drain.
+    pub max_full_drain_outstanding_before: Option<u64>,
+}
+
+/// Wait evidence paired by function, counter and reason, independent of row order.
+#[derive(Clone, Debug, Serialize)]
+pub struct WaitReasonChange {
+    /// Compiled function shared by the compared rows.
+    pub function: String,
+    /// Target counter name.
+    pub counter: String,
+    /// Compiler explanation for this wait family.
+    pub reason: String,
+    /// Evidence before the change, or null for an added reason.
+    pub before: Option<WaitCounts>,
+    /// Evidence after the change, or null for a removed reason.
+    pub after: Option<WaitCounts>,
+    /// Signed after-minus-before changes, only for known facts on both sides.
+    pub delta: BTreeMap<&'static str, Option<i128>>,
+}
+
+impl WaitCounts {
+    fn fields(&self) -> [(&'static str, Option<u64>); 9] {
+        [
+            ("action_count", self.action_count),
+            ("explicit_action_count", self.explicit_action_count),
+            ("planned_action_count", self.planned_action_count),
+            ("full_drain_count", self.full_drain_count),
+            ("partial_wait_count", self.partial_wait_count),
+            ("drained_count", self.drained_count),
+            ("max_drained_count", self.max_drained_count),
+            ("max_outstanding_before", self.max_outstanding_before),
+            (
+                "max_full_drain_outstanding_before",
+                self.max_full_drain_outstanding_before,
+            ),
+        ]
+    }
 }
 
 /// Resource change for one named function; missing or unknown facts stay null.
@@ -140,12 +184,10 @@ impl CompileReport {
     pub fn entries(&self) -> Result<Vec<EntryResources>> {
         self.validate()?;
         let rows = self
-            .document
-            .pointer("/entries/rows")
-            .and_then(Value::as_array);
+            .rows("entries")?
+            .ok_or_else(|| Error::Message("report entries are missing".into()))?;
         Ok(rows
-            .into_iter()
-            .flatten()
+            .iter()
             .map(|row| {
                 let number = |path| row.pointer(path).and_then(Value::as_u64);
                 EntryResources {
@@ -178,17 +220,114 @@ impl CompileReport {
     /// not collected; `Some([])` means it was collected with no wait rows.
     pub fn wait_reasons(&self) -> Result<Option<Vec<WaitReason>>> {
         self.validate()?;
-        let Some(section) = self.document.get("wait_reason_summary_rows") else {
+        self.rows("wait_reason_summary_rows")?
+            .map(|rows| {
+                rows.iter()
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(Error::from)
+            })
+            .transpose()
+    }
+
+    fn rows(&self, name: &str) -> Result<Option<&[Value]>> {
+        let Some(section) = self.document.get(name).filter(|value| !value.is_null()) else {
             return Ok(None);
         };
-        if let Some(rows) = section.get("rows") {
-            return Ok(Some(serde_json::from_value(rows.clone())?));
+        let rows = match section.get("rows") {
+            Some(Value::Array(rows)) => rows.as_slice(),
+            None if section["count"].as_u64() == Some(0) => &[],
+            _ => {
+                return Err(Error::Message(format!(
+                    "report {name} is missing valid rows"
+                )));
+            }
+        };
+        if let Some(count) = section.get("count")
+            && count.as_u64() != Some(rows.len() as u64)
+        {
+            return Err(Error::Message(format!(
+                "report {name} count does not match its rows"
+            )));
         }
-        if section["count"].as_u64() == Some(0) {
-            return Ok(Some(Vec::new()));
+        if rows.iter().any(|row| !row.is_object()) {
+            return Err(Error::Message(format!(
+                "report {name} contains a non-object row"
+            )));
         }
-        Err(Error::Message(
-            "report wait reasons are missing their rows".into(),
+        Ok(Some(rows))
+    }
+
+    /// Compare wait reasons by semantic identity. `None` means at least one
+    /// report lacks wait evidence; an empty vector means both collected no rows.
+    /// Added/removed reasons have null deltas, never invented zero counts.
+    pub fn wait_reason_changes(&self, after: &Self) -> Result<Option<Vec<WaitReasonChange>>> {
+        self.ensure_comparable(after)?;
+        let before_rows = self.wait_reasons()?;
+        let after_rows = after.wait_reasons()?;
+        let (Some(before_rows), Some(after_rows)) = (before_rows, after_rows) else {
+            return Ok(None);
+        };
+        let index =
+            |rows: Vec<WaitReason>| -> Result<BTreeMap<(String, String, String), WaitCounts>> {
+                let mut indexed = BTreeMap::new();
+                for row in rows {
+                    let identity = row
+                        .function
+                        .zip(row.counter)
+                        .zip(row.reason)
+                        .filter(|((function, counter), reason)| {
+                            !function.is_empty() && !counter.is_empty() && !reason.is_empty()
+                        })
+                        .map(|((function, counter), reason)| (function, counter, reason))
+                        .ok_or_else(|| {
+                            Error::Message("report wait reason has no complete identity".into())
+                        })?;
+                    if indexed.insert(identity, row.summary).is_some() {
+                        return Err(Error::Message(
+                            "report contains duplicate wait reason identities".into(),
+                        ));
+                    }
+                }
+                Ok(indexed)
+            };
+        let mut before = index(before_rows)?;
+        let mut after = index(after_rows)?;
+        let identities: std::collections::BTreeSet<_> =
+            before.keys().chain(after.keys()).cloned().collect();
+        Ok(Some(
+            identities
+                .into_iter()
+                .map(|identity| {
+                    let before = before.remove(&identity);
+                    let after = after.remove(&identity);
+                    let unknown = WaitCounts::default();
+                    let delta = before
+                        .as_ref()
+                        .unwrap_or(&unknown)
+                        .fields()
+                        .into_iter()
+                        .zip(after.as_ref().unwrap_or(&unknown).fields())
+                        .map(|((field, before), (_, after))| {
+                            (
+                                field,
+                                before
+                                    .zip(after)
+                                    .map(|(before, after)| i128::from(after) - i128::from(before)),
+                            )
+                        })
+                        .collect();
+                    WaitReasonChange {
+                        function: identity.0,
+                        counter: identity.1,
+                        reason: identity.2,
+                        before,
+                        after,
+                        delta,
+                    }
+                })
+                .collect(),
         ))
     }
 
@@ -199,9 +338,13 @@ impl CompileReport {
         let index = |report: &Self| -> Result<BTreeMap<String, EntryResources>> {
             let mut rows = BTreeMap::new();
             for row in report.entries()? {
-                let name = row.function.clone().ok_or_else(|| {
-                    Error::Message("report entry has no function identity".into())
-                })?;
+                let name = row
+                    .function
+                    .clone()
+                    .filter(|name| !name.is_empty())
+                    .ok_or_else(|| {
+                        Error::Message("report entry has no function identity".into())
+                    })?;
                 if rows.insert(name, row).is_some() {
                     return Err(Error::Message(
                         "report contains duplicate function identities".into(),

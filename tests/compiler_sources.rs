@@ -75,6 +75,20 @@ fn report_modes_are_distinct_and_details_survive_cache_hits() -> hrx::Result<()>
     assert_ne!(plain.path(), summary.path());
     assert_ne!(summary.path(), details.path());
     assert_eq!(details.report().unwrap().json()["mode"], "details");
+    let report = details.report().unwrap();
+    let waits = report.wait_reasons()?.expect("detailed wait evidence");
+    assert!(!waits.is_empty());
+    assert!(
+        waits.iter().all(|row| row.summary.drained_count.is_some()
+            && row.summary.max_outstanding_before.is_some())
+    );
+    let changes = report.wait_reason_changes(report)?.unwrap();
+    assert_eq!(changes.len(), waits.len());
+    assert!(
+        changes
+            .iter()
+            .all(|row| row.delta.values().all(|delta| *delta == Some(0)))
+    );
     assert_eq!(
         details.report().unwrap().json(),
         module.compile(&detailed_request)?.report().unwrap().json()

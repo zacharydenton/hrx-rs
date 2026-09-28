@@ -113,13 +113,19 @@ pub fn report(args: &[String]) -> Result<()> {
         [command, before, after] if command == "diff" => {
             let before = load(before)?;
             let after = load(after)?;
-            before.ensure_comparable(&after)?;
+            #[derive(serde::Serialize)]
+            struct Diff<'a> {
+                compiler: &'a str,
+                changes: Vec<hrx::loom::EntryChange>,
+                wait_reason_changes: Option<Vec<hrx::loom::WaitReasonChange>>,
+            }
             println!(
                 "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "compiler": before.compiler_identity(),
-                    "changes": before.changes(&after)?
-                }))?
+                serde_json::to_string_pretty(&Diff {
+                    compiler: before.compiler_identity(),
+                    changes: before.changes(&after)?,
+                    wait_reason_changes: before.wait_reason_changes(&after)?,
+                })?
             );
         }
         _ => {
