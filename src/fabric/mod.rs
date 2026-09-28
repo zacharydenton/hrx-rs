@@ -41,6 +41,7 @@ pub use xdna::{XdnaBinding, XdnaCompletion, XdnaProgram};
 pub(crate) mod profile;
 pub use profile::{DeviceInterval, DeviceProfile, ProfiledGpu};
 mod queue;
+pub(crate) use queue::GraphArena;
 pub use queue::{Completion, PreparedGpu, Queue};
 mod executable;
 pub use executable::{Argument, Kernel};

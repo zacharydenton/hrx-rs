@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- GPU graph dispatch arguments share immutable 64 KiB arena pages and one
+  construction fence. Nodes retain their argument backing across graph replay;
+  allocation accounting charges each page once. Ordinary dispatch preparation
+  keeps its independent argument and fence storage.
+
 - Large GPU graphs now split into ordered native batches before reaching the
   20-bit indirect-buffer limit. This fixes full-model batched prefill failures.
   Profiled graphs retain one timestamp sequence across batch boundaries.

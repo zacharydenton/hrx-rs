@@ -349,6 +349,46 @@ impl Device {
     }
 }
 
+/// Private graph construction storage. Nodes are never submitted individually.
+/// Argument pages become immutable before the graph can be launched.
+#[derive(Default)]
+pub(crate) struct GraphArena {
+    page: Option<Buffer>,
+    used: usize,
+    fence: Option<Buffer>,
+}
+impl GraphArena {
+    fn pack(&mut self, queue: &Queue, bytes: &[u8]) -> Result<(Buffer, usize, Buffer, usize)> {
+        let fabric = queue.device().fabric();
+        let size = bytes.len().max(64).next_multiple_of(64);
+        let mut allocated = 0;
+        if self
+            .page
+            .as_ref()
+            .is_none_or(|p| size > p.len() - self.used)
+        {
+            self.page =
+                Some(fabric.allocate(size.max(64 * 1024), std::slice::from_ref(queue.device()))?);
+            self.used = 0;
+            allocated += self.page.as_ref().unwrap().len();
+        }
+        let page = self.page.as_ref().unwrap();
+        let offset = self.used;
+        page.write(offset, bytes)?;
+        self.used += size;
+        if self.fence.is_none() {
+            self.fence = Some(fabric.allocate_shared(64, std::slice::from_ref(queue.device()))?);
+            allocated += 64;
+        }
+        Ok((
+            page.clone(),
+            offset,
+            self.fence.as_ref().unwrap().clone(),
+            allocated,
+        ))
+    }
+}
+
 impl Queue {
     pub(super) fn identity(&self) -> usize {
         Arc::as_ptr(&self.0) as usize
@@ -365,6 +405,26 @@ impl Queue {
         block: [u16; 3],
         arguments: &[Argument<'_>],
     ) -> Result<PreparedGpu> {
+        unsafe { self.prepare_inner(kernel, grid, block, arguments, None) }
+    }
+    pub(crate) unsafe fn prepare_graph(
+        &self,
+        kernel: &Kernel,
+        grid: [u32; 3],
+        block: [u16; 3],
+        arguments: &[Argument<'_>],
+        arena: &mut GraphArena,
+    ) -> Result<PreparedGpu> {
+        unsafe { self.prepare_inner(kernel, grid, block, arguments, Some(arena)) }
+    }
+    unsafe fn prepare_inner(
+        &self,
+        kernel: &Kernel,
+        grid: [u32; 3],
+        block: [u16; 3],
+        arguments: &[Argument<'_>],
+        arena: Option<&mut GraphArena>,
+    ) -> Result<PreparedGpu> {
         if !Arc::ptr_eq(&kernel.device().0, &self.0.device.0) {
             return Err(Error::Message(
                 "kernel belongs to another native device".into(),
@@ -372,10 +432,23 @@ impl Queue {
         }
         let fabric = Fabric(self.0.device.0.endpoint.0.instance.clone());
         let (packed, mut buffers) = kernel.arguments(arguments)?;
-        let argument_buffer =
-            fabric.allocate(packed.len().max(64), std::slice::from_ref(&self.0.device))?;
-        argument_buffer.write(0, &packed)?;
-        let fence = fabric.allocate_shared(64, std::slice::from_ref(&self.0.device))?;
+        let (argument_buffer, argument_offset, fence, argument_storage) = if let Some(arena) = arena
+        {
+            arena.pack(self, &packed)?
+        } else {
+            let buffer =
+                fabric.allocate(packed.len().max(64), std::slice::from_ref(&self.0.device))?;
+            buffer.write(0, &packed)?;
+            {
+                let bytes = buffer.len() + 64;
+                (
+                    buffer,
+                    0,
+                    fabric.allocate_shared(64, std::slice::from_ref(&self.0.device))?,
+                    bytes,
+                )
+            }
+        };
         let address = fence.device_address(&self.0.device)?;
         let scratch = if kernel.0.info.private_bytes != 0 {
             let mut info = amdf_gpu_endpoint_info_t {
@@ -425,7 +498,7 @@ impl Queue {
                 grid,
                 block,
                 &packed,
-                argument_buffer.device_address(&self.0.device)?,
+                argument_buffer.device_address(&self.0.device)? + argument_offset as u64,
                 scratch
                     .as_ref()
                     .map(|(buffer, waves, engines)| (buffer, *waves, *engines)),
@@ -442,9 +515,9 @@ impl Queue {
             1,
         ]);
         pad(&mut words);
-        let storage_bytes = argument_buffer.len()
-            + fence.len()
-            + scratch.as_ref().map_or(0, |(buffer, _, _)| buffer.len());
+        // Arena pages are charged once, at their first graph node.
+        let storage_bytes =
+            argument_storage + scratch.as_ref().map_or(0, |(buffer, _, _)| buffer.len());
         buffers.push(argument_buffer.clone());
         if let Some((scratch, _, _)) = scratch {
             buffers.push(scratch);

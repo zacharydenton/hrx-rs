@@ -729,6 +729,7 @@ impl Stream {
         block: [u32; 3],
         constants: &Constants,
         bindings: &[View<'_>],
+        arena: Option<&mut fabric::GraphArena>,
     ) -> Result<fabric::PreparedGpu> {
         if kernel.device_id() != self.device_id() {
             return Err(Error::Message("kernel belongs to another device".into()));
@@ -760,9 +761,20 @@ impl Stream {
             }
         }
         unsafe {
-            self.inner
-                .queue
-                .prepare(&kernel.native, grid, block.map(|v| v as u16), &args)
+            match arena {
+                Some(arena) => self.inner.queue.prepare_graph(
+                    &kernel.native,
+                    grid,
+                    block.map(|v| v as u16),
+                    &args,
+                    arena,
+                ),
+                None => {
+                    self.inner
+                        .queue
+                        .prepare(&kernel.native, grid, block.map(|v| v as u16), &args)
+                }
+            }
         }
     }
     /// Enqueue a kernel invocation with declaration-order constants and buffers.
@@ -796,7 +808,7 @@ impl Stream {
                 return self.inner.submit(&entry.command);
             }
             let command =
-                unsafe { self.prepare_dispatch(kernel, grid, block, constants, bindings) }?;
+                unsafe { self.prepare_dispatch(kernel, grid, block, constants, bindings, None) }?;
             self.inner.submit(&command)?;
             let bytes = command.storage_bytes();
             if bytes > DISPATCH_CACHE_BYTES {
@@ -823,7 +835,7 @@ impl Stream {
             Ok(())
         } else {
             self.inner.submit(&unsafe {
-                self.prepare_dispatch(kernel, grid, block, constants, bindings)
+                self.prepare_dispatch(kernel, grid, block, constants, bindings, None)
             }?)
         }
     }
@@ -1117,6 +1129,7 @@ pub struct Graph<'a> {
     stream: &'a Stream,
     id: u64,
     nodes: Vec<(Recorded<'a>, Option<u32>)>,
+    arena: fabric::GraphArena,
     budget_uses: BudgetUses,
 }
 enum Recorded<'a> {
@@ -1141,6 +1154,7 @@ impl Stream {
             stream: self,
             id: NEXT_GRAPH_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             nodes: Vec::new(),
+            arena: fabric::GraphArena::default(),
             budget_uses: BudgetUses::default(),
         })
     }
@@ -1242,8 +1256,14 @@ impl<'a> Graph<'a> {
     ) -> Result<Node> {
         self.validate_dependencies(after)?;
         let command = unsafe {
-            self.stream
-                .prepare_dispatch(kernel, grid, block, constants, bindings)
+            self.stream.prepare_dispatch(
+                kernel,
+                grid,
+                block,
+                constants,
+                bindings,
+                Some(&mut self.arena),
+            )
         }?;
         self.budget_uses.retain(bindings);
         Ok(self.record(Recorded::Prepared(command), after))

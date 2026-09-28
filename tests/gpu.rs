@@ -900,3 +900,71 @@ fn large_graph_replays_across_native_batch_boundaries() -> hrx::Result<()> {
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "requires Strix Halo and the native runtime bundle"]
+fn graph_argument_arena_crosses_pages_and_retains_bindings() -> hrx::Result<()> {
+    let mut stream = Stream::open()?;
+    let compiler = hrx::loom::Compiler::resolve(None)?;
+    let module = compiler.module(include_str!("kernels/euler.loom"));
+    let mut request = hrx::loom::Specialization::new("krea2_euler");
+    request.set_config("krea2.euler.grid_x", "1");
+    request.set_config("krea2.euler.grid_y", "1");
+    let artifact = module.compile(&request)?;
+    let kernel = unsafe { stream.load_artifact(&artifact)? };
+    const COUNT: usize = 2049;
+    let output = stream.allocate(COUNT * 512)?;
+    let velocity = stream.allocate(512)?;
+    stream.upload_blocking(
+        velocity.binding(),
+        &(0..256)
+            .flat_map(|_| 0x3f80u16.to_le_bytes())
+            .collect::<Vec<_>>(),
+    )?;
+    let mut graph = stream.graph()?;
+    let mut after = Vec::new();
+    for i in 0..COUNT {
+        let mut constants = Constants::new();
+        match kernel.info().constant_byte_length {
+            8 => {
+                constants.push(256u32)?;
+            }
+            12 => {
+                constants.push(256u64)?;
+            }
+            n => panic!("Euler ABI: {n}"),
+        }
+        constants.push((i % 4 + 1) as f32 * 0.5)?;
+        let node = unsafe {
+            graph.dispatch(
+                &after,
+                &kernel,
+                [1; 3],
+                [256, 1, 1],
+                &constants,
+                &[output.binding().slice(i * 512, 512)?, velocity.binding()],
+            )?
+        };
+        after = vec![node];
+    }
+    let mut exec = graph.finish()?;
+    drop(velocity);
+    drop(kernel);
+    drop(artifact);
+    drop(module);
+    drop(compiler);
+    for _ in 0..2 {
+        stream.fill(output.binding(), 0)?;
+        stream.launch(&mut exec)?;
+        let mut actual = vec![0u8; COUNT * 512];
+        stream.read_blocking(output.binding(), &mut actual)?;
+        for (i, row) in actual.chunks_exact(512).enumerate() {
+            let expected = [0x3f00u16, 0x3f80, 0x3fc0, 0x4000][i % 4].to_le_bytes();
+            assert!(
+                row.chunks_exact(2).all(|v| v == expected),
+                "argument slot {i}"
+            );
+        }
+    }
+    Ok(())
+}
