@@ -104,6 +104,45 @@ fn report_modes_are_distinct_and_details_survive_cache_hits() -> hrx::Result<()>
 }
 
 #[test]
+#[ignore = "requires the native compiler"]
+fn attention_report_exposes_the_actual_lds_residency_threshold() -> hrx::Result<()> {
+    let compiler = Compiler::resolve(None)?;
+    let module = compiler.module(include_str!(
+        "../native/qualification/attention_gqa_lds_f16_wmma.loom"
+    ));
+    let mut request =
+        Specialization::new("krea2_attention_gqa_lds_f16_wmma").with_report(ReportMode::Details);
+    for (key, value) in [
+        ("q_stride", "512"),
+        ("kv_stride", "128"),
+        ("out_stride", "512"),
+        ("tokens", "512"),
+        ("token_capacity", "544"),
+        ("scale", "0.08838834764831845"),
+    ] {
+        request.set_config(format!("krea2.attention_gqa_lds_f16_wmma.{key}"), value);
+    }
+    let artifact = module.compile(&request)?;
+    let report = artifact.report().unwrap();
+    let guidance = report.guidance()?;
+    assert!(guidance.residency_available);
+    let suggestion = guidance
+        .suggestions
+        .iter()
+        .find(|s| s.kind == "amdgpu.residency_cliff")
+        .unwrap();
+    assert!(
+        suggestion
+            .action
+            .contains("amdgpu.lds by 256 bytes/workgroup to at most 21504")
+    );
+    for (path, value) in &suggestion.evidence {
+        assert_eq!(report.json().pointer(path), Some(value));
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires native C/C++ importer"]
 fn c23_imports_link_with_loom_and_concurrent_cpp_imports_are_isolated() -> hrx::Result<()> {
     use hrx::loom::{CxxStandard, Source};

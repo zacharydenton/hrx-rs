@@ -3,6 +3,8 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+mod guidance;
+pub use guidance::{ReportGuidance, ReportSuggestion};
 
 /// Structured evidence tied to the exact compiler which produced it.
 #[derive(Clone, Debug, Serialize, Deserialize)]

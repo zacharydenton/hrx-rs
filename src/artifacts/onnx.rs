@@ -8,6 +8,12 @@ use std::{
     path::Path,
 };
 
+/// ONNX protobuf messages and serialization using HRX's matching runtime.
+pub mod proto {
+    pub use super::super::onnx_proto::*;
+    pub use protobuf::Message;
+}
+
 /// A parsed ONNX model with initializer and edge indexes.
 pub struct Model {
     name: String,
