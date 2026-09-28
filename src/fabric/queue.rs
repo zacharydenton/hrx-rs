@@ -213,6 +213,39 @@ fn pad(words: &mut Vec<u32>) {
     words.resize(words.len() + count - 1, 0);
 }
 
+// The native indirect-buffer size field is 20 bits. Padding needs up to nine
+// words; dependency barriers take ten and each optional marker at most 32.
+const INDIRECT_WORD_LIMIT: usize = 1 << 20;
+fn batch_ranges(
+    commands: impl IntoIterator<Item = (usize, bool)>,
+    profiled: bool,
+) -> Result<Vec<std::ops::Range<usize>>> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    let mut end = 0;
+    let mut words = 0;
+    for (payload, dependency) in commands {
+        let size = payload
+            .checked_add(if dependency { 10 } else { 0 })
+            .and_then(|n| n.checked_add(if profiled { 2 * (10 + 32) } else { 0 }))
+            .filter(|n| *n < INDIRECT_WORD_LIMIT - 9)
+            .ok_or_else(|| {
+                Error::Unsupported("native command exceeds indirect command capacity".into())
+            })?;
+        if words + size >= INDIRECT_WORD_LIMIT - 9 {
+            ranges.push(start..end);
+            start = end;
+            words = 0;
+        }
+        words += size;
+        end += 1;
+    }
+    if start != end {
+        ranges.push(start..end);
+    }
+    Ok(ranges)
+}
+
 impl Device {
     /// Create a native PM4 queue with one serialized host producer.
     pub fn queue(&self) -> Result<Queue> {
@@ -446,7 +479,7 @@ impl Queue {
     /// The supplied barriers must order every conflicting access. Commands must
     /// obey their kernel contracts and must not use this batch's storage elsewhere.
     pub unsafe fn prepare_batch(&self, commands: &[(PreparedGpu, bool)]) -> Result<PreparedGpu> {
-        self.prepare_batch_inner(commands, None)
+        self.prepare_batch_inner(commands, None, 0)
     }
     /// Instrument every prepared command, including nested batches as one span.
     /// Completion barriers serialize the sampled commands. This is diagnostic
@@ -463,13 +496,46 @@ impl Queue {
             return Err(Error::Message("profile labels must match commands".into()));
         }
         let capture = profile::ProfileCapture::new(self, labels)?;
-        let commands = self.prepare_batch_inner(commands, Some(&capture))?;
+        let commands = self.prepare_batch_inner(commands, Some(&capture), 0)?;
         Ok(ProfiledGpu { commands, capture })
+    }
+    /// Prepare a graph as bounded submissions on this ordered queue. Build all
+    /// batches before launching any, retaining one shared timestamp capture.
+    /// Safety: the same kernel/access contracts as `prepare_batch` apply.
+    pub(crate) unsafe fn prepare_graph_batches(
+        &self,
+        commands: &[(PreparedGpu, bool)],
+        labels: Option<&[String]>,
+    ) -> Result<(Vec<PreparedGpu>, Option<profile::ProfileCapture>)> {
+        let capture = if let Some(labels) = labels {
+            if commands.len() != labels.len() || commands.is_empty() {
+                return Err(Error::Message(
+                    "profile labels must match nonempty commands".into(),
+                ));
+            }
+            Some(profile::ProfileCapture::new(self, labels)?)
+        } else {
+            None
+        };
+        let ranges = batch_ranges(
+            commands
+                .iter()
+                .map(|(command, dependency)| (command.inner.dispatch_range.len(), *dependency)),
+            capture.is_some(),
+        )?;
+        let batches = ranges
+            .into_iter()
+            .map(|range| {
+                self.prepare_batch_inner(&commands[range.clone()], capture.as_ref(), range.start)
+            })
+            .collect::<Result<_>>()?;
+        Ok((batches, capture))
     }
     fn prepare_batch_inner(
         &self,
         commands: &[(PreparedGpu, bool)],
         profile: Option<&profile::ProfileCapture>,
+        profile_start: usize,
     ) -> Result<PreparedGpu> {
         if commands.is_empty() {
             return Err(Error::Message("empty native command batch".into()));
@@ -497,24 +563,27 @@ impl Queue {
                 barrier(&mut indirect);
                 profile
                     .api
-                    .emit(address + index as u64 * 16, &mut indirect)?;
+                    .emit(address + (profile_start + index) as u64 * 16, &mut indirect)?;
             }
             indirect.extend_from_slice(&command.inner.words[command.inner.dispatch_range.clone()]);
             if let (Some(profile), Some(address)) = (profile, timestamp_address) {
                 barrier(&mut indirect);
-                profile
-                    .api
-                    .emit(address + index as u64 * 16 + 8, &mut indirect)?;
+                profile.api.emit(
+                    address + (profile_start + index) as u64 * 16 + 8,
+                    &mut indirect,
+                )?;
             }
             buffers.extend(command.inner.work.buffers.iter().cloned());
             kernels.extend(command.inner.work._kernels.iter().cloned());
             dependencies.extend(command.inner.work.dependencies.iter().cloned());
         }
         pad(&mut indirect);
-        if indirect.len() >= (1 << 20) {
-            return Err(Error::Unsupported(
-                "native batch exceeds indirect command capacity".into(),
-            ));
+        if indirect.len() >= INDIRECT_WORD_LIMIT {
+            return Err(Error::Unsupported(format!(
+                "native batch exceeds indirect command capacity: {} words for {} commands",
+                indirect.len(),
+                commands.len()
+            )));
         }
         let fabric = self.device().fabric();
         let storage = fabric.allocate_access(
@@ -910,6 +979,28 @@ fn transfer_range(buffer: &Buffer, offset: usize, length: usize) -> Result<()> {
 #[cfg(test)]
 mod event_tests {
     use super::*;
+
+    #[test]
+    fn graph_batch_ranges_reserve_barriers_markers_and_padding() -> Result<()> {
+        assert!(batch_ranges([], false)?.is_empty());
+        assert_eq!(batch_ranges([(100, false); 3], false)?, vec![0..3]);
+        let near_limit = INDIRECT_WORD_LIMIT - 20;
+        assert_eq!(
+            batch_ranges([(near_limit, true), (1, false)], false)?,
+            vec![0..1, 1..2]
+        );
+        assert!(batch_ranges([(INDIRECT_WORD_LIMIT - 9, false)], false).is_err());
+        assert!(batch_ranges([(usize::MAX, true)], true).is_err());
+        assert_eq!(
+            batch_ranges([(INDIRECT_WORD_LIMIT / 2 - 10, false); 2], false)?,
+            vec![0..2]
+        );
+        assert_eq!(
+            batch_ranges([(INDIRECT_WORD_LIMIT / 2 - 10, false); 2], true)?,
+            vec![0..1, 1..2]
+        );
+        Ok(())
+    }
 
     #[test]
     #[ignore = "requires gfx1151 and provisioned native libraries"]

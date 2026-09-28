@@ -848,3 +848,55 @@ fn profiled_graph_replay_reports_device_ticks_and_preserves_results() -> hrx::Re
     assert!(stream.launch_profiled(&mut ordinary).is_err());
     Ok(())
 }
+
+#[test]
+#[ignore = "requires gfx1151 and provisioned native libraries"]
+fn large_graph_replays_across_native_batch_boundaries() -> hrx::Result<()> {
+    let mut stream = Stream::open()?;
+    let source = stream.allocate(16)?;
+    let scratch = stream.allocate(16)?;
+    // 30,000 payloads exceed one native IB for ordinary and profiled graphs.
+    const ROWS: usize = 10_000;
+    let output = stream.allocate(ROWS * 16)?;
+    for profiled in [false, true] {
+        let mut graph = stream.graph()?;
+        let mut after = Vec::new();
+        for i in 0..ROWS {
+            let fill = graph.fill(&after, source.binding(), (i % 251 + 1) as u8)?;
+            let copied = graph.copy(&[fill], scratch.binding(), source.binding())?;
+            let saved = graph.copy(
+                &[copied],
+                output.binding().slice(i * 16, 16)?,
+                scratch.binding(),
+            )?;
+            after = vec![saved];
+        }
+        let mut graph = if profiled {
+            graph.finish_profiled(&(0..ROWS * 3).map(|i| i.to_string()).collect::<Vec<_>>())?
+        } else {
+            graph.finish()?
+        };
+        for _ in 0..2 {
+            stream.fill(output.binding(), 0)?;
+            if profiled {
+                let result = stream.launch_profiled(&mut graph)?;
+                assert_eq!(result.intervals.len(), ROWS * 3);
+                for (i, interval) in result.intervals.iter().enumerate() {
+                    assert_eq!(interval.label, i.to_string());
+                    assert!(interval.end_tick >= interval.start_tick);
+                    if i > 0 {
+                        assert!(interval.start_tick >= result.intervals[i - 1].end_tick);
+                    }
+                }
+            } else {
+                stream.launch(&mut graph)?;
+            }
+            let mut bytes = vec![0; ROWS * 16];
+            stream.read_blocking(output.binding(), &mut bytes)?;
+            for (i, row) in bytes.chunks_exact(16).enumerate() {
+                assert_eq!(row, &[(i % 251 + 1) as u8; 16]);
+            }
+        }
+    }
+    Ok(())
+}

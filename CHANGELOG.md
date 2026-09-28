@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Large GPU graphs now split into ordered native batches before reaching the
+  20-bit indirect-buffer limit. This fixes full-model batched prefill failures.
+  Profiled graphs retain one timestamp sequence across batch boundaries.
+  All batches are prepared before any submission, and replay retains their
+  buffers and the final completion point.
+
 ## 0.8.10 — native bundle with compiler patch 0011 and device timestamps
 
 - New native bundle `native-20260927-468508b9e`, the same pinned HRX source

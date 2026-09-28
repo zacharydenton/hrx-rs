@@ -1128,7 +1128,7 @@ enum Recorded<'a> {
 /// Reusable prepared GPU graph and its last immutable completion point.
 pub struct GraphExec {
     inner: Arc<Inner>,
-    commands: Option<fabric::PreparedGpu>,
+    commands: Vec<fabric::PreparedGpu>,
     profile: Option<fabric::profile::ProfileCapture>,
     last: Option<fabric::Completion>,
     failed: bool,
@@ -1167,7 +1167,7 @@ impl Stream {
             ));
         }
         graph.failed = true;
-        if let Some(command) = &graph.commands {
+        for command in &graph.commands {
             self.inner.submit(command)?;
         }
         graph.last = self
@@ -1254,6 +1254,7 @@ impl<'a> Graph<'a> {
         Ok(self.record(Recorded::Join, after))
     }
     /// Transfer recorded commands and allocation charges into owned replay state.
+    /// Large graphs use ordered batches within the native indirect-buffer limit.
     pub fn finish(self) -> Result<GraphExec> {
         self.finish_inner(None)
     }
@@ -1279,24 +1280,14 @@ impl<'a> Graph<'a> {
             }
             ordered.push((command, barrier));
         }
-        let (commands, profile) = if let Some(labels) = labels {
-            // The same validated edges and retained bindings as normal replay.
-            let profiled = unsafe {
-                self.stream
-                    .inner
-                    .queue
-                    .prepare_profiled_batch(&ordered, labels)
-            }?;
-            (Some(profiled.commands), Some(profiled.capture))
-        } else if ordered.is_empty() {
-            (None, None)
-        } else {
-            // Graph edges order conflicting accesses; all binding backing is retained.
-            (
-                Some(unsafe { self.stream.inner.queue.prepare_batch(&ordered) }?),
-                None,
-            )
-        };
+        // Every batch is prepared before submission. The queue orders batches,
+        // including dependencies and scratch aliases that cross a split.
+        let (commands, profile) = unsafe {
+            self.stream
+                .inner
+                .queue
+                .prepare_graph_batches(&ordered, labels)
+        }?;
         Ok(GraphExec {
             inner: self.stream.inner.clone(),
             commands,
