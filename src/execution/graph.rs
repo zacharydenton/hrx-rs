@@ -80,6 +80,8 @@ impl Graph {
     }
     /// Integrate owned native GPU execution into this graph's hazards and
     /// producer dependencies. The callback runs on a worker, never in `poll`.
+    /// Dependencies are resolved on the host before invoking dependent regions;
+    /// graph completion is not enqueued as a wait on a native stream queue.
     ///
     /// # Safety
     /// The callback must retain all private native resources it uses, access

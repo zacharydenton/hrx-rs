@@ -12,6 +12,7 @@ categories = ["hardware-support", "science"]
 include = [
     "/src/**",
     "/docs/GPU-NPU.md",
+    "/benchmarks/queue-pool/**",
     "/tests/**",
     "/examples/**",
     "/native/**",

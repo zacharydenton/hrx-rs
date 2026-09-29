@@ -22,29 +22,45 @@ pub struct ExportInfo {
 struct Inner {
     device: fabric::Device,
     queue: fabric::Queue,
-    last: Mutex<Option<fabric::Completion>>,
+    timeline: StreamTimeline,
     free: Mutex<Vec<fabric::Buffer>>,
     dispatch_cache: Mutex<Vec<CachedDispatch>>,
     transfer_cache: Mutex<Vec<CachedTransfer>>,
 }
-impl Inner {
-    fn submit(&self, command: &fabric::PreparedGpu) -> Result<()> {
-        let done = match unsafe { command.dispatch() } {
-            Ok(done) => done,
-            Err(Error::Busy(_)) => {
-                self.wait()?;
-                unsafe { command.dispatch() }?
-            }
-            Err(error) => return Err(error),
-        };
+#[derive(Default)]
+struct StreamTimeline {
+    producer: Mutex<()>,
+    last: Mutex<Option<fabric::Completion>>,
+}
+impl StreamTimeline {
+    fn submit(&self, dispatch: impl FnOnce() -> Result<fabric::Completion>) -> Result<()> {
+        // Serialize publication without blocking observers while another stream
+        // occupies the shared queue. Only published work enters the timeline.
+        let _producer = self
+            .producer
+            .lock()
+            .map_err(|_| Error::DeviceLost("stream producer poisoned".into()))?;
+        let done = dispatch()?;
         *self
             .last
             .lock()
             .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))? = Some(done);
         Ok(())
     }
+    fn snapshot(&self) -> Result<Option<fabric::Completion>> {
+        Ok(self
+            .last
+            .lock()
+            .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))?
+            .clone())
+    }
+}
+impl Inner {
+    fn submit(&self, command: &fabric::PreparedGpu) -> Result<()> {
+        self.timeline.submit(|| unsafe { command.dispatch_wait() })
+    }
     fn drain_for_drop(&self) -> bool {
-        self.last.lock().ok().is_some_and(|last| {
+        self.timeline.snapshot().ok().is_some_and(|last| {
             last.as_ref().is_none_or(|done| {
                 done.wait_timeout(std::time::Duration::from_secs(10))
                     .unwrap_or(false)
@@ -52,12 +68,7 @@ impl Inner {
         })
     }
     fn wait(&self) -> Result<()> {
-        if let Some(done) = self
-            .last
-            .lock()
-            .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))?
-            .as_ref()
-        {
+        if let Some(done) = self.timeline.snapshot()? {
             done.wait()?;
         }
         Ok(())
@@ -92,13 +103,29 @@ impl Device {
     pub fn target(&self) -> &Target {
         self.native.target()
     }
-    /// Create an independent ordered native command queue.
+    /// Set the maximum number of native queues shared by this device's streams.
+    ///
+    /// The count must be positive. Call before creating the first stream on this
+    /// device; changing the count afterward returns [`Error::Busy`]. Repeating
+    /// the current count is allowed. Clones and reopened handles to this live
+    /// device share the setting, including streams created by [`Stream::open`].
+    /// Queues are created lazily, and allocation can fail at the device's limit.
+    pub fn set_stream_queue_count(&self, count: usize) -> Result<()> {
+        self.native.set_stream_queue_count(count)
+    }
+    /// Maximum native queue count for this device's streams (eight by default).
+    pub fn stream_queue_count(&self) -> Result<usize> {
+        self.native.stream_queue_count()
+    }
+    /// Create an ordered stream assigned to a bounded pool of native queues.
+    /// Assignment is round-robin, without priority or load awareness. A long
+    /// command or event wait can delay other streams assigned to the same queue.
     pub fn stream(&self) -> Result<Stream> {
         Ok(Stream {
             inner: Arc::new(Inner {
                 device: self.native.clone(),
-                queue: self.native.queue()?,
-                last: Mutex::new(None),
+                queue: self.native.stream_queue()?,
+                timeline: StreamTimeline::default(),
                 free: Mutex::new(Vec::with_capacity(16)),
                 dispatch_cache: Mutex::new(Vec::with_capacity(64)),
                 transfer_cache: Mutex::new(Vec::with_capacity(128)),
@@ -494,19 +521,17 @@ impl Stream {
         self.budget_uses.get_mut().clear();
         Ok(())
     }
-    /// Snapshot preceding work without a host wait.
+    /// Snapshot preceding published work without a host wait. A submission still
+    /// waiting for shared queue capacity is not included.
     pub fn record_event(&mut self) -> Result<Event> {
         Ok(Event {
             device: self.device_id(),
-            done: self
-                .inner
-                .last
-                .lock()
-                .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))?
-                .clone(),
+            done: self.inner.timeline.snapshot()?,
         })
     }
     /// Order subsequent stream work after an immutable event.
+    /// Events refer only to already-published native commands; they cannot name
+    /// future work from a scheduler callback or an unlaunched graph.
     pub fn wait_event(&mut self, event: &Event) -> Result<()> {
         if event.device != self.device_id() {
             return Err(Error::Message("event belongs to another device".into()));
@@ -929,9 +954,8 @@ impl Submission<'_> {
         let done = self
             .stream
             .inner
-            .last
-            .lock()
-            .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))?
+            .timeline
+            .snapshot()?
             .as_ref()
             .map_or(Ok(true), fabric::Completion::is_complete)?;
         if done {
@@ -1184,12 +1208,7 @@ impl Stream {
         for command in &graph.commands {
             self.inner.submit(command)?;
         }
-        graph.last = self
-            .inner
-            .last
-            .lock()
-            .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))?
-            .clone();
+        graph.last = self.inner.timeline.snapshot()?;
         graph.failed = false;
         Ok(())
     }
@@ -1384,6 +1403,43 @@ impl std::fmt::Debug for Submission<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn observing_a_stream_does_not_wait_for_unpublished_work() {
+        use std::{
+            sync::{Arc, mpsc},
+            time::Duration,
+        };
+        let timeline = Arc::new(super::StreamTimeline::default());
+        let (started, running) = mpsc::channel();
+        let (release, gate) = mpsc::channel();
+        let producer = timeline.clone();
+        let worker = std::thread::spawn(move || {
+            producer.submit(|| {
+                started.send(()).unwrap();
+                gate.recv().unwrap();
+                Err(crate::Error::Busy(
+                    "simulated queue capacity failure".into(),
+                ))
+            })
+        });
+        running.recv_timeout(Duration::from_secs(1)).unwrap();
+        let observer = timeline.clone();
+        let (seen, observed) = mpsc::channel();
+        let reader = std::thread::spawn(move || seen.send(observer.snapshot()).unwrap());
+        let snapshot = observed.recv_timeout(Duration::from_secs(1));
+        // Always release the producer before asserting, even if locking regresses.
+        release.send(()).unwrap();
+        assert!(matches!(worker.join().unwrap(), Err(crate::Error::Busy(_))));
+        reader.join().unwrap();
+        assert!(
+            snapshot
+                .expect("observer blocked on unpublished work")
+                .unwrap()
+                .is_none()
+        );
+        assert!(timeline.snapshot().unwrap().is_none());
+    }
+
     #[test]
     fn compiled_workgroup_dimensions_are_enforced() {
         let info = super::ExportInfo {

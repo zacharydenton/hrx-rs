@@ -269,6 +269,7 @@ impl Endpoint {
         Ok(Device(Arc::new(DeviceInner {
             endpoint: self.clone(),
             raw,
+            stream_queues: Default::default(),
         })))
     }
 }
@@ -279,6 +280,7 @@ pub struct Device(Arc<DeviceInner>);
 struct DeviceInner {
     endpoint: Endpoint,
     raw: *mut amdf_device_t,
+    stream_queues: std::sync::Mutex<queue::StreamQueues>,
 }
 unsafe impl Send for DeviceInner {}
 unsafe impl Sync for DeviceInner {}

@@ -108,6 +108,16 @@ fn main() -> hrx::Result<()> {
 ```
 
 `Device` selects a GPU, `Stream` orders work, and `Buffer` owns an allocation.
+Streams share up to eight native queues per device by default, so native queue
+capacity does not limit the number of streams. Each stream stays on one queue to
+preserve its order. Assignment is round-robin, without priority or load awareness:
+a long kernel or event wait can delay other streams assigned to that queue.
+To tune this tradeoff, call `device.set_stream_queue_count(count)?` before
+creating its first stream. The positive count is shared by clones and reopened
+handles to the live device; `device.stream_queue_count()?` reads it. Queues are
+created lazily, and an excessive count can still exhaust native queue resources.
+See the [queue pool measurements](benchmarks/queue-pool/README.md) for throughput
+and latency comparisons, their limitations, and the reproducible benchmark.
 A buffer is bound to its device, not to the stream that allocated it: any stream
 on that device may use it, and `record_event`/`wait_event` order conflicting
 access. Unordered cross-stream use yields whichever bytes the device held.

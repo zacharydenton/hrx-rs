@@ -119,7 +119,7 @@ fn nested_views_bound_stream_and_graph_operations() -> hrx::Result<()> {
 #[ignore = "requires gfx1151"]
 fn independent_streams_move_between_threads() -> hrx::Result<()> {
     let device = hrx::Device::open(0)?;
-    let streams = (0..4)
+    let streams = (0..32)
         .map(|_| device.stream())
         .collect::<hrx::Result<Vec<_>>>()?;
     let workers: Vec<_> = streams
@@ -144,6 +144,81 @@ fn independent_streams_move_between_threads() -> hrx::Result<()> {
         let (mut stream, readback, expected) = worker.join().expect("stream worker panicked")?;
         assert_eq!(readback.wait(&mut stream)?, expected);
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires gfx1151"]
+fn stream_queue_count_is_shared_by_device_handles() -> hrx::Result<()> {
+    for count in [1, 2, 8] {
+        let device = Device::open(0)?;
+        assert!(device.set_stream_queue_count(0).is_err());
+        device.set_stream_queue_count(count)?;
+        assert_eq!(device.clone().stream_queue_count()?, count);
+        assert_eq!(Device::open(0)?.stream_queue_count()?, count);
+        let mut streams = (0..32)
+            .map(|_| Stream::open())
+            .collect::<hrx::Result<Vec<_>>>()?;
+        device.set_stream_queue_count(count)?;
+        assert!(matches!(
+            device.set_stream_queue_count(count + 1),
+            Err(hrx::Error::Busy(_))
+        ));
+        for (index, stream) in streams.iter_mut().enumerate() {
+            let buffer = stream.allocate(64)?;
+            stream.fill(buffer.binding(), index as u8)?;
+            let mut bytes = [0; 64];
+            stream.read_blocking(buffer.binding(), &mut bytes)?;
+            assert_eq!(bytes, [index as u8; 64]);
+        }
+        drop(streams);
+        assert!(matches!(
+            device.set_stream_queue_count(count + 1),
+            Err(hrx::Error::Busy(_))
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires gfx1151"]
+fn many_streams_share_queues_and_exchange_events() -> hrx::Result<()> {
+    let device = Device::open(0)?;
+    // Reopening a device and Stream::open must join the same bounded pool.
+    let mut streams = (0..128)
+        .map(|index| match index % 3 {
+            0 => device.clone().stream(),
+            1 => Device::open(0)?.stream(),
+            _ => Stream::open(),
+        })
+        .collect::<hrx::Result<Vec<_>>>()?;
+    let identities: std::collections::HashSet<_> = streams.iter().map(Stream::id).collect();
+    assert_eq!(identities.len(), streams.len());
+    let buffer = streams[0].allocate(64)?;
+    let mut ready = streams[0].record_event()?;
+    // A stride of one pool's size exercises events between streams on the same
+    // queue as well as between queues when advancing to the next offset.
+    let queues = device.stream_queue_count()?;
+    for offset in 0..queues {
+        for index in (offset..streams.len()).step_by(queues) {
+            let stream = &mut streams[index];
+            stream.wait_event(&ready)?;
+            stream.fill(buffer.binding(), index as u8)?;
+            ready = stream.record_event()?;
+        }
+    }
+    ready.synchronize()?;
+    streams[0].wait_event(&ready)?;
+    let mut actual = [0; 64];
+    streams[0].read_blocking(buffer.binding(), &mut actual)?;
+    assert_eq!(actual, [127; 64]);
+    // Retained events and buffers keep their execution resources alive.
+    drop(streams);
+    ready.synchronize()?;
+    let mut replacement = device.stream()?;
+    replacement.fill(buffer.binding(), 42)?;
+    replacement.read_blocking(buffer.binding(), &mut actual)?;
+    assert_eq!(actual, [42; 64]);
     Ok(())
 }
 

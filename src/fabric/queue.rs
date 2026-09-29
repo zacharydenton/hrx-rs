@@ -2,7 +2,7 @@ use super::*;
 use std::{
     collections::VecDeque,
     sync::{
-        Mutex,
+        Mutex, Weak,
         atomic::{AtomicU32, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -11,6 +11,38 @@ use std::{
 /// A serialized host producer for one native GPU PM4 queue.
 #[derive(Clone)]
 pub struct Queue(Arc<QueueInner>);
+
+// Weak slots avoid a device -> queue -> device ownership cycle. Streams,
+// prepared commands and completions keep their assigned queue alive.
+pub(super) struct StreamQueues {
+    slots: Vec<Weak<QueueInner>>,
+    limit: usize,
+    next: usize,
+}
+impl Default for StreamQueues {
+    fn default() -> Self {
+        Self {
+            slots: Vec::new(),
+            // See benchmarks/queue-pool for the gfx1151 throughput/latency tradeoff.
+            limit: 8,
+            next: 0,
+        }
+    }
+}
+impl StreamQueues {
+    fn set_limit(&mut self, count: usize) -> Result<()> {
+        if count == 0 {
+            return Err(Error::Message("stream queue count must be positive".into()));
+        }
+        if count != self.limit && !self.slots.is_empty() {
+            return Err(Error::Busy(
+                "configure stream queues before creating the first stream".into(),
+            ));
+        }
+        self.limit = count;
+        Ok(())
+    }
+}
 struct QueueInner {
     device: Device,
     raw: *mut amdf_user_queue_t,
@@ -247,6 +279,51 @@ fn batch_ranges(
 }
 
 impl Device {
+    pub(crate) fn set_stream_queue_count(&self, count: usize) -> Result<()> {
+        self.0
+            .stream_queues
+            .lock()
+            .map_err(|_| Error::DeviceLost("stream queue pool poisoned".into()))?
+            .set_limit(count)
+    }
+
+    pub(crate) fn stream_queue_count(&self) -> Result<usize> {
+        Ok(self
+            .0
+            .stream_queues
+            .lock()
+            .map_err(|_| Error::DeviceLost("stream queue pool poisoned".into()))?
+            .limit)
+    }
+
+    pub(crate) fn stream_queue(&self) -> Result<Queue> {
+        let mut pool = self
+            .0
+            .stream_queues
+            .lock()
+            .map_err(|_| Error::DeviceLost("stream queue pool poisoned".into()))?;
+        let slot = pool.next;
+        if slot == pool.slots.len() {
+            pool.slots
+                .try_reserve(1)
+                .map_err(|_| Error::Message("stream queue pool allocation failed".into()))?;
+            let queue = self.queue()?;
+            pool.slots.push(Arc::downgrade(&queue.0));
+            pool.next = (slot + 1) % pool.limit;
+            return Ok(queue);
+        }
+        let queue = match pool.slots[slot].upgrade() {
+            Some(queue) => Queue(queue),
+            None => {
+                let queue = self.queue()?;
+                pool.slots[slot] = Arc::downgrade(&queue.0);
+                queue
+            }
+        };
+        pool.next = (slot + 1) % pool.limit;
+        Ok(queue)
+    }
+
     /// Create a native PM4 queue with one serialized host producer.
     pub fn queue(&self) -> Result<Queue> {
         if self.endpoint().engine() != Engine::Gpu {
@@ -845,6 +922,16 @@ impl PreparedGpu {
     /// Callers order conflicting accesses on other queues and obey the native
     /// executable's binding contracts.
     pub unsafe fn dispatch(&self) -> Result<Completion> {
+        unsafe { self.dispatch_inner(false) }
+    }
+
+    /// Wait for shared queue capacity without holding its producer lock.
+    /// Return Busy if a full ring has no pending completion to wait for.
+    pub(crate) unsafe fn dispatch_wait(&self) -> Result<Completion> {
+        unsafe { self.dispatch_inner(true) }
+    }
+
+    unsafe fn dispatch_inner(&self, wait: bool) -> Result<Completion> {
         let mut previous = self
             .inner
             .previous
@@ -854,37 +941,54 @@ impl PreparedGpu {
             .checked_add(1)
             .ok_or_else(|| Error::DeviceLost("prepared completion timeline exhausted".into()))?;
         let words = &self.inner.words;
-        let mut state = self
-            .queue
-            .0
-            .state
-            .lock()
-            .map_err(|_| Error::DeviceLost("queue producer poisoned".into()))?;
-        // Reap completed submissions even if their public completion was dropped.
-        while let Some(work) = state.pending.front() {
-            if !self.queue.0.poll(&work.work, work.value)? {
-                break;
-            }
-            state.pending.pop_front();
-        }
-        if state.pending.len() >= 4096 {
-            return Err(Error::Busy("native queue submission capacity".into()));
-        }
         let capacity = self.queue.0.info.ring_byte_length / 4;
-        let cursor = state.write & (capacity - 1);
-        let wrap = if words.len() as u64 > capacity - cursor {
-            capacity - cursor
-        } else {
-            0
+        let (mut state, cursor, wrap, required) = loop {
+            let mut state = self
+                .queue
+                .0
+                .state
+                .lock()
+                .map_err(|_| Error::DeviceLost("queue producer poisoned".into()))?;
+            // Reap completed submissions even if their public completion was dropped.
+            while let Some(work) = state.pending.front() {
+                if !self.queue.0.poll(&work.work, work.value)? {
+                    break;
+                }
+                state.pending.pop_front();
+            }
+            let cursor = state.write & (capacity - 1);
+            let wrap = if words.len() as u64 > capacity - cursor {
+                capacity - cursor
+            } else {
+                0
+            };
+            let required = wrap + words.len() as u64;
+            let read = unsafe {
+                (&*(self.queue.0.info.read_index_address as *const AtomicU64))
+                    .load(Ordering::Acquire)
+            };
+            let outstanding = state.write.wrapping_sub(read) & (capacity - 1);
+            let full = if state.pending.len() >= 4096 {
+                Some("native queue submission capacity")
+            } else if required >= capacity - outstanding {
+                Some("native command ring is full")
+            } else {
+                None
+            };
+            let Some(reason) = full else {
+                break (state, cursor, wrap, required);
+            };
+            if !wait {
+                return Err(Error::Busy(reason.into()));
+            }
+            let oldest = state.pending.front().map(|pending| Completion {
+                queue: self.queue.clone(),
+                work: pending.work.clone(),
+                value: pending.value,
+            });
+            drop(state);
+            wait_for_capacity(oldest)?;
         };
-        let required = wrap + words.len() as u64;
-        let read = unsafe {
-            (&*(self.queue.0.info.read_index_address as *const AtomicU64)).load(Ordering::Acquire)
-        };
-        let outstanding = state.write.wrapping_sub(read) & (capacity - 1);
-        if required >= capacity - outstanding {
-            return Err(Error::Busy("native command ring is full".into()));
-        }
         let published = state
             .write
             .checked_add(required)
@@ -934,6 +1038,14 @@ impl PreparedGpu {
             value,
         })
     }
+}
+
+fn wait_for_capacity(oldest: Option<Completion>) -> Result<()> {
+    // A stale native read index or an invalid command must not cause an
+    // unbounded spin when there is no submitted work whose fence we can await.
+    oldest
+        .ok_or_else(|| Error::Busy("native command ring is full without pending work".into()))?
+        .wait()
 }
 
 impl Queue {
@@ -1052,6 +1164,122 @@ fn transfer_range(buffer: &Buffer, offset: usize, length: usize) -> Result<()> {
 #[cfg(test)]
 mod event_tests {
     use super::*;
+
+    #[test]
+    fn a_full_ring_without_pending_work_returns_busy() {
+        assert!(matches!(wait_for_capacity(None), Err(Error::Busy(_))));
+    }
+
+    #[test]
+    fn stream_queue_configuration_is_positive_and_frozen_after_first_use() -> Result<()> {
+        let mut pool = StreamQueues::default();
+        assert!(pool.set_limit(0).is_err());
+        pool.set_limit(2)?;
+        assert_eq!(pool.limit, 2);
+        assert!(
+            pool.slots.is_empty(),
+            "configuration must not allocate queues"
+        );
+        // Even an expired slot records that streams have used this device.
+        pool.slots.push(Weak::new());
+        pool.set_limit(2)?;
+        assert!(matches!(pool.set_limit(8), Err(Error::Busy(_))));
+        assert_eq!(pool.limit, 2);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires gfx1151 and provisioned native libraries"]
+    fn stream_queue_pool_is_bounded_shared_and_weak() -> Result<()> {
+        let device = Device::open(Engine::Gpu, 0)?;
+        device.set_stream_queue_count(2)?;
+        let queues = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let reopened = Device::open(Engine::Gpu, 0)?;
+                        (0..16)
+                            .map(|_| reopened.stream_queue())
+                            .collect::<Result<Vec<_>>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .collect::<Result<Vec<_>>>()
+        })?;
+        let identities: std::collections::HashSet<_> = queues
+            .iter()
+            .flatten()
+            .map(|queue| Arc::as_ptr(&queue.0))
+            .collect();
+        assert_eq!(identities.len(), 2);
+        let weak: Vec<_> = queues
+            .iter()
+            .flatten()
+            .map(|queue| Arc::downgrade(&queue.0))
+            .collect();
+        drop(queues);
+        assert!(weak.iter().all(|queue| queue.upgrade().is_none()));
+        let replacement = device.stream_queue()?;
+        assert_eq!(replacement.device().id(), device.id());
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires gfx1151 and provisioned native libraries"]
+    fn shared_queue_submission_waits_for_other_producers() -> Result<()> {
+        let device = Device::open(Engine::Gpu, 0)?;
+        let fabric = device.fabric();
+        let queue = device.stream_queue()?;
+        let gate = Completion {
+            queue: queue.clone(),
+            work: Arc::new(Work {
+                fence: fabric.allocate_shared(64, std::slice::from_ref(&device))?,
+                _kernels: Vec::new(),
+                buffers: Vec::new(),
+                leases: Mutex::new(Vec::new()),
+                retired: AtomicU32::new(0),
+                active: AtomicU32::new(1),
+                dependencies: Vec::new(),
+            }),
+            value: 1,
+        };
+        let buffer = fabric.allocate(64, std::slice::from_ref(&device))?;
+        let fill = queue.prepare_fill(&buffer, 0, 64, 19)?;
+        let final_fill = queue.prepare_fill(&buffer, 0, 64, 42)?;
+        unsafe { queue.prepare_wait(&gate)?.dispatch()? };
+        let mut submitted = 0;
+        loop {
+            match unsafe { fill.dispatch() } {
+                Ok(_) => submitted += 1,
+                Err(Error::Busy(_)) => break,
+                Err(error) => {
+                    gate.work.fence.write(0, &1u32.to_le_bytes())?;
+                    return Err(error);
+                }
+            }
+        }
+        let (sent, received) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            sent.send(unsafe { final_fill.dispatch_wait() }).unwrap();
+        });
+        let blocked = received.recv_timeout(Duration::from_millis(50));
+        gate.work.fence.write(0, &1u32.to_le_bytes())?;
+        worker.join().unwrap();
+        assert!(submitted > 0);
+        assert!(matches!(
+            blocked,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        let done = received.recv().unwrap()?;
+        assert!(done.wait_timeout(Duration::from_secs(5))?);
+        let mut actual = [0; 64];
+        buffer.read(0, &mut actual)?;
+        assert_eq!(actual, [42; 64]);
+        Ok(())
+    }
 
     #[test]
     fn graph_batch_ranges_reserve_barriers_markers_and_padding() -> Result<()> {

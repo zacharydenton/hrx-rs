@@ -9,6 +9,93 @@ use std::{
     },
     time::Duration,
 };
+
+#[test]
+fn scoped_callback_dependencies_wait_on_the_host_for_late_work() -> Result<()> {
+    let runtime = Runtime::new()?;
+    let (started, running) = mpsc::channel();
+    let (release, gate) = mpsc::channel();
+    let published = Arc::new(AtomicUsize::new(0));
+    let state = published.clone();
+    let mut graph = runtime.graph();
+    // Empty bindings let this exercise the real scoped-callback scheduler
+    // without hardware. The callback models submission delayed by host work.
+    unsafe {
+        graph.gpu_scoped(&[], move |_| {
+            started.send(()).unwrap();
+            gate.recv().unwrap();
+            state.store(1, Ordering::Release);
+            Ok(())
+        })?;
+    }
+    let producer = graph.prepare()?.submit()?;
+    running.recv_timeout(Duration::from_secs(1)).unwrap();
+    let mut next = runtime.graph();
+    let state = published.clone();
+    unsafe {
+        next.gpu_scoped(&[], move |_| {
+            assert_eq!(state.load(Ordering::Acquire), 1);
+            state.store(2, Ordering::Release);
+            Ok(())
+        })?;
+    }
+    let consumer = next
+        .prepare()?
+        .submit_after(std::slice::from_ref(&producer))?;
+    let completed_early = consumer.wait_timeout(Duration::from_millis(20))?;
+    release.send(()).unwrap();
+    assert!(!completed_early);
+    assert!(consumer.wait_timeout(Duration::from_secs(1))?);
+    assert_eq!(published.load(Ordering::Acquire), 2);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires native GPU"]
+fn scoped_callback_can_submit_mid_graph_on_one_shared_queue() -> Result<()> {
+    let device = crate::Device::open(0)?;
+    device.set_stream_queue_count(1)?;
+    let mut stream = device.stream()?;
+    let runtime = Runtime::new()?;
+    let scratch = runtime.allocate(64, MemoryPlacement::GpuLocal)?;
+    let output = runtime.allocate(64, MemoryPlacement::HostVisible)?;
+    let copied = runtime.allocate(64, MemoryPlacement::HostVisible)?;
+    let (started, running) = mpsc::channel();
+    let (release, gate) = mpsc::channel();
+    let mut graph = runtime.graph();
+    graph.fill(scratch.view(), 1)?;
+    // All native streams share one queue. The callback submits its writes only
+    // after the producer graph's host completion has been handed to a consumer.
+    unsafe {
+        graph.gpu_scoped(
+            &[GpuAccess {
+                view: scratch.view(),
+                access: Access::Write,
+            }],
+            move |views| {
+                started.send(()).unwrap();
+                gate.recv().unwrap();
+                stream.fill(views[0], 42)?;
+                stream.synchronize()
+            },
+        )?;
+    }
+    graph.copy_on(output.view(), scratch.view(), GpuLane::Download)?;
+    let producer = graph.prepare()?.submit()?;
+    running.recv_timeout(Duration::from_secs(5)).unwrap();
+    let mut next = runtime.graph();
+    next.copy_on(copied.view(), output.view(), GpuLane::Upload)?;
+    let consumer = next
+        .prepare()?
+        .submit_after(std::slice::from_ref(&producer))?;
+    let completed_early = consumer.wait_timeout(Duration::from_millis(20))?;
+    release.send(()).unwrap();
+    assert!(!completed_early);
+    assert!(consumer.wait_timeout(Duration::from_secs(5))?);
+    assert_eq!(&*copied.map_read()?, &[42; 64]);
+    Ok(())
+}
+
 #[test]
 #[ignore = "requires native GPU"]
 fn allocation_stream_does_not_retain_released_tracked_storage() -> Result<()> {
