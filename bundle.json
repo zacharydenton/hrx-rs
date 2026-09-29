@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "target": "x86_64-unknown-linux-gnu-gfx1151",
-  "revision": "HRX fbbf300312; native libamdf; rebased compiler policies; Ubuntu 26.04",
-  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260929-fbbf300312/hrx-linux-x86_64-gfx1151.tar.gz",
-  "archive_sha256": "aa64ec747e16dda1fb57b799783fb032db2717ae4baeabd3e839fa006e1a372f",
+  "revision": "HRX fbbf300312; fix retained value-domain arena lifetime; Ubuntu 26.04",
+  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260929-fbbf300312-fix1/hrx-linux-x86_64-gfx1151.tar.gz",
+  "archive_sha256": "57fa0d8509b7b495076feb7556edfb80e92829eb0b832788ce663e0758d60d68",
   "files": {
     "LICENSE-AMDGPU-ISA.txt": "4b58c86ef9b8f1be198079e5b62ea5c2bea0cc2f9187d21463a9c5e4ca75d69c",
     "LICENSE-CORE-MATH.txt": "4639ae96f455d387fd2b042ce11a2713ac3ee9bfc82591182683f4ee503be011",
@@ -16,11 +16,11 @@
     "LICENSE-linux-gpl2-license.txt": "8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa",
     "LICENSE-linux-syscall-note.txt": "8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f",
     "LICENSE-linux-uapi.txt": "aa58e02703c9fe5ddb9ff0a971db64f6f3a331fe9f855efb86ff0abeb6ecef3f",
-    "NOTICE": "54a41f4cef753d142be4532cf1f0526672924543f38a7ca5f5095bc5a40f38ac",
-    "THIRD-PARTY.json": "41e645bfa26f65dd77d854bb9caaca174dd3f1856c95a77aa915f4bf310650d7",
+    "NOTICE": "d8098eaf9375bfb92436e26a2293ec4accb7a4db144ad8152692a2ee0f968831",
+    "THIRD-PARTY.json": "09026ec4894f407f1f96123ae0c26d22c160e6944c217bb01588cfef2870561d",
     "libamdf.so": "a535883a40639339e89fd6c6e5e8c4937e31cda7bfd12b859e03b550f98b133d",
     "libhrx_fabric.so": "96e0482d466a06eab19c392fde3de4d307bbe49b23e0065459f7df917e3cea28",
-    "libloomc.so": "47c69de53b8d71e2c742d338f7efd44519965c497babbba6261040afe7deb0f7",
-    "provenance.json": "bc1a6bf88def1df9ae25fe27074f5549bf8ac9ada09b0e9cf7af0a4cd2eea7e6"
+    "libloomc.so": "02c418c6c1f0b1eec5b13ffd0f44afdef64d5fc36278d1c2e1c7f06bdd4a9e93",
+    "provenance.json": "7e575066feeeb443ffd563a8876fabd610906137c9bc6f04282dfc1019af2656"
   }
 }

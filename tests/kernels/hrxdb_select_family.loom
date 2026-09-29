@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: MIT
+// From hrxdb e06d1aa67ae49e52b8ac472e52fba358b54c5ce3, kernels/select_family.loom.
+// Copyright (c) 2026 hrxdb contributors
+// Regression: merge selection grows a value domain during temporary analysis.
+// Each group owns 1024 candidates. Each wave selects a score/ID pair, then
+// eight-lane clusters combine the eight wave winners. Scores and IDs are
+// invalidated together; equal scores always prefer the lower insertion ID.
+amdgpu.target<gfx1151> @target {subgroup_size = 32}
+config.decl @db.select.limit : %value: index where [range(%value, 1, 1073741824)]
+config.decl @db.batch : %value: index where [range(%value, 1, 256)]
+config.decl @db.select.first : %value: index where [range(%value, 0, 1)]
+template.decl @db.candidate_id(%first: index, %ids: buffer, %count: index, %at: index, %input_offset: offset, %row_base: index) -> (i32)
+template.def<@db.candidate_id> @db.row_id(%first: index, %ids: buffer, %count: index, %at: index, %input_offset: offset, %row_base: index) -> (i32) where [eq(%first, 1)] {
+  %global = index.add %at, %row_base : index
+  %id = index.cast %global : index to i32
+  template.return %id : i32
+}
+template.def<@db.candidate_id> @db.merge_id(%first: index, %ids: buffer, %count: index, %at: index, %input_offset: offset, %row_base: index) -> (i32) where [eq(%first, 0)] {
+  %zero = index.constant 0 : offset
+  %iv = buffer.view %ids[%input_offset] : buffer -> view<[%count]xi32>
+  %id = view.load %iv[%at] : view<[%count]xi32> -> i32
+  template.return %id : i32
+}
+kernel.def target(@target) export("select") @select(%count_arg: i32) {
+  %one = index.constant 1 : index
+  %batch = config.get @db.batch : index
+  %threads = index.constant 256 : index
+  %count_raw = index.cast %count_arg : i32 to index
+  %count = index.assume %count_raw [range(%count_raw, 1, 1073741824)] : index
+  %c1023 = index.constant 1023 : index
+  %c1024 = index.constant 1024 : index
+  %rounded = index.add %count, %c1023 : index
+  %groups = index.div %rounded, %c1024 : index
+  kernel.launch.config workgroups(%groups, %batch, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%count_arg: i32, %k_arg: i32, %row_base_arg: i32, %scores: buffer, %ids: buffer, %out_scores: buffer, %out_ids: buffer) {
+  %first = config.get @db.select.first : index
+  %zero = index.constant 0 : offset
+  %i0 = index.constant 0 : index
+  %i1 = index.constant 1 : index
+  %i4 = index.constant 4 : index
+  %c256 = index.constant 256 : index
+  %c1023 = index.constant 1023 : index
+  %c1024 = index.constant 1024 : index
+  %tid0 = kernel.workitem.id<x> : index
+  %tid = index.assume %tid0 [range(%tid0, 0, 255)] : index
+  %group0 = kernel.workgroup.id<x> : index
+  %group = index.assume %group0 [range(%group0, 0, 1048575)] : index
+  %count0 = index.cast %count_arg : i32 to index
+  %count = index.assume %count0 [range(%count0, 1, 1073741824)] : index
+  %k0 = index.cast %k_arg : i32 to index
+  %k = index.assume %k0 [range(%k0, 1, 32)] : index
+  %base = index.mul %group, %c1024 : index
+  %start = index.add %base, %tid : index
+  %outbase = index.mul %group, %k : index
+  %rounded = index.add %count, %c1023 : index
+  %groups = index.div %rounded, %c1024 : index
+  %out_count = index.mul %groups, %k : index
+  %query0 = kernel.workgroup.id<y> : index
+  %batch_count = config.get @db.batch : index
+  %query = index.assume %query0 [range(%query0, 0, 255), lt(%query0, %batch_count)] : index
+  %limit = config.get @db.select.limit : index
+  %input_span = index.assume %count [range(%count, 1, 1073741824), le(%count, %limit)] : index
+  %output_span = index.assume %out_count [range(%out_count, 1, 1073741824), le(%out_count, %limit)] : index
+  %c4offset = index.constant 4 : offset
+  %input_bytes = index.scale %input_span, %c4offset : index, offset -> offset
+  %input_offset = index.scale %query, %input_bytes : index, offset -> offset
+  %output_bytes = index.scale %output_span, %c4offset : index, offset -> offset
+  %output_offset = index.scale %query, %output_bytes : index, offset -> offset
+  %row_base_raw = index.cast %row_base_arg : i32 to index
+  %row_base = index.assume %row_base_raw [range(%row_base_raw, 0, 1073741823)] : index
+  %sv = buffer.view %scores[%input_offset] : buffer -> view<[%count]xf32>
+  %os = buffer.view %out_scores[%output_offset] : buffer -> view<[%out_count]xf32>
+  %oi = buffer.view %out_ids[%output_offset] : buffer -> view<[%out_count]xi32>
+  %badbits = scalar.constant -8388608 : i32
+  %neg = scalar.bitcast %badbits : i32 to f32
+  %sentinel = scalar.constant 2147483647 : i32
+  %negs = vector.splat %neg : vector<4xf32>
+  %sentinels = vector.splat %sentinel : vector<4xi32>
+  %leader = index.cmp eq, %tid, %i0 : index
+  %initial_scores, %initial_ids = scf.for %j = [%i0 to %i4 step %i1](%ss = %negs : vector<4xf32>, %ii = %sentinels : vector<4xi32>) -> (vector<4xf32>, vector<4xi32>) unroll {
+    %off = index.mul %j, %c256 : index
+    %ix = index.add %start, %off : index
+    %valid = index.cmp ult, %ix, %count : index
+    %safe = scf.select %valid, %ix, %i0 : index
+    %at = index.assume %safe [range(%safe, 0, 1073741823), lt(%safe, %count)] : index
+    %value = view.load %sv[%at] : view<[%count]xf32> -> f32
+    %ident = template.apply<@db.candidate_id>(%first, %ids, %count, %at, %input_offset, %row_base) : (index, buffer, index, index, offset, index) -> (i32)
+    %ordered = scalar.cmpf ord, %value, %value : f32
+    %live = scalar.andi %valid, %ordered : i1
+    %score = scf.select %live, %value, %neg : f32
+    %id = scf.select %valid, %ident, %sentinel : i32
+    %next_s = vector.insert %score into %ss[%j] : f32, vector<4xf32>
+    %next_i = vector.insert %id into %ii[%j] : i32, vector<4xi32>
+    scf.yield %next_s, %next_i : vector<4xf32>, vector<4xi32>
+  }
+  %lane0 = kernel.subgroup.lane.id : index
+  %lane = index.assume %lane0 [range(%lane0, 0, 31)] : index
+  %wave0 = kernel.subgroup.id : index
+  %wave = index.assume %wave0 [range(%wave0, 0, 7)] : index
+  %wave_leader = index.cmp eq, %lane, %i0 : index
+  // Alternate two sets of wave winners. The barrier for rank r+1 ensures
+  // every wave has finished reading rank r before rank r+2 overwrites it.
+  // This needs one workgroup barrier per rank, including repeated ties.
+  %scratch_bytes = index.constant 64 : offset
+  %score_scratch = buffer.alloca<workgroup> align(16) %scratch_bytes : buffer
+  %id_scratch = buffer.alloca<workgroup> align(16) %scratch_bytes : buffer
+  %ws = buffer.view %score_scratch[%zero] : buffer -> view<16xf32>
+  %wi = buffer.view %id_scratch[%zero] : buffer -> view<16xi32>
+  %end_scores, %end_ids = scf.for %rank = [%i0 to %k step %i1](%ss = %initial_scores : vector<4xf32>, %ii = %initial_ids : vector<4xi32>) -> (vector<4xf32>, vector<4xi32>) {
+    %local = vector.reduce<maxnumf> %ss, %neg : vector<4xf32>, f32
+    %wave_score = kernel.subgroup.reduce<maxnumf> %local : f32
+    %wave_scores = vector.splat %wave_score : vector<4xf32>
+    %equal = vector.cmpf oeq, %ss, %wave_scores : vector<4xf32> -> vector<4xi1>
+    %candidates = vector.select %equal, %ii, %sentinels : vector<4xi32>
+    %local_id = vector.reduce<minui> %candidates, %sentinel : vector<4xi32>, i32
+    %wave_id = kernel.subgroup.reduce<minui> %local_id : i32
+    %i2 = index.constant 2 : index
+    %i8 = index.constant 8 : index
+    %parity = index.rem %rank, %i2 : index
+    %scratch_base = index.mul %parity, %i8 : index
+    %scratch_at = index.add %scratch_base, %wave : index
+    scf.if %wave_leader {
+      view.store %wave_score, %ws[%scratch_at] : f32, view<16xf32>
+      view.store %wave_id, %wi[%scratch_at] : i32, view<16xi32>
+    }
+    kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+    // Every eight-lane cluster reads the same eight pairs, so all threads
+    // recover the same winner without another workgroup-wide reduction.
+    %read_wave = index.rem %lane, %i8 : index
+    %read_at = index.add %scratch_base, %read_wave : index
+    %peer_score = view.load %ws[%read_at] : view<16xf32> -> f32
+    %peer_id = view.load %wi[%read_at] : view<16xi32> -> i32
+    %best = kernel.subgroup.reduce<maxnumf> %peer_score {cluster_size = 8} : f32
+    %tied = scalar.cmpf oeq, %peer_score, %best : f32
+    %tied_id = scf.select %tied, %peer_id, %sentinel : i32
+    %best_id = kernel.subgroup.reduce<minui> %tied_id {cluster_size = 8} : i32
+    scf.if %leader {
+      %out0 = index.add %outbase, %rank : index
+      %out = index.assume %out0 [range(%out0, 0, 33554431), lt(%out0, %out_count)] : index
+      view.store %best, %os[%out] : f32, view<[%out_count]xf32>
+      view.store %best_id, %oi[%out] : i32, view<[%out_count]xi32>
+    }
+    %best_ids = vector.splat %best_id : vector<4xi32>
+    %chosen = vector.cmpi eq, %ii, %best_ids : vector<4xi32> -> vector<4xi1>
+    %next_s = vector.select %chosen, %negs, %ss : vector<4xf32>
+    %next_i = vector.select %chosen, %sentinels, %ii : vector<4xi32>
+    scf.yield %next_s, %next_i : vector<4xf32>, vector<4xi32>
+  }
+  kernel.return
+}

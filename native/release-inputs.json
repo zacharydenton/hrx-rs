@@ -8,7 +8,8 @@
       "0005-materialize-encoding-config.patch": "91d2be463c6046e2571eb6bba86902da6d1e9d5b3cf2b91e70682c5131f310e0",
       "0009-amdgpu-profile-processor-mode.patch": "0b9de2b276bfd35638fd330923bda34a6e6170d0236cf188ddc03f517cbf9f06",
       "0011-loop-carried-accumulator-reuse.patch": "0cc5abe94c89407e3c994cd1e8effbeed65b058dcd56fc2c7b91caa1ec432690",
-      "0012-retain-rdna35-lds-overlap.patch": "996bd9356c74a294f65b564676f8731ee8dd00aee5b9da9030fe07d6def66509"
+      "0012-retain-rdna35-lds-overlap.patch": "996bd9356c74a294f65b564676f8731ee8dd00aee5b9da9030fe07d6def66509",
+      "0013-retain-value-domain-arena.patch": "6e8eaffa6e4deaf2ddedd1c419c50cc687bf94d898ddc79859d12b407ef43b83"
     }
   },
   "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",

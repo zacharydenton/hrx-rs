@@ -32,10 +32,17 @@ processor-mode extension described below.
   generic address lowering are retained without their bandwidth reservation.
   Requalify this local performance policy when updating the compiler or target.
 
+- `0013-retain-value-domain-arena.patch` fixes the 0.8.14 compiler crash in
+  hrxdb merge selection. The local value domain owns its acquisition arena;
+  symbolic queries cannot grow its retained value-ID list in temporary storage.
+  Internal registration no longer accepts a caller-selected arena. A native
+  regression destroys the query arena before reading and releasing the domain;
+  `tests/compiler_sources.rs` also compiles the failing hrxdb kernel without a GPU.
+
 Earlier SMEM, GFX11 VMEM-source reuse, dependent-inline-type and allocation-layout
-patches are no longer in the active set. Only the five files above are applied.
+patches are no longer in the active set. Only the six files above are applied.
 Historical performance measurements do not establish performance of a new pin.
-The matching runtime is published as `native-20260929-fbbf300312` and selected
+The matching runtime is published as `native-20260929-fbbf300312-fix1` and selected
 by `bundle.json`. Use `HRX_RUNTIME_DIR` to select a local rebuild.
 
 ## Rebuild
@@ -80,3 +87,11 @@ no statistically clear regression was detected, and these results do not
 establish general throughput or latency improvements. Release CPU checks,
 clippy, documentation and the feature matrix also passed. Builds and test
 processes used bounded memory with one Cargo job.
+
+### 0.8.15 lifetime regression
+
+The same Rust executable with hrxdb `e06d1aa6` succeeds on all four reported
+shapes with the 0.8.13 compiler, segfaults with the 0.8.14 compiler, and succeeds
+with patch 0013. The new Rust compile-only regression also segfaults against the
+released 0.8.14 library and passes with the fixed library. The preceding 0.8.14
+qualification did not include this merge-selection path.

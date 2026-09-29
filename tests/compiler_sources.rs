@@ -264,3 +264,23 @@ extern "C" i32x16 transform(i32x16 input) { return input + 1; }
     assert!(artifact.bytes().starts_with(b"\x7fELF"));
     Ok(())
 }
+
+#[test]
+#[ignore = "requires the native compiler; no GPU is needed"]
+fn hrxdb_merge_selection_preserves_value_domain_storage() -> hrx::Result<()> {
+    let compiler = Compiler::resolve(None)?;
+    let module = compiler.module(include_str!("kernels/hrxdb_select_family.loom"));
+    // Merge selection (first=0) grows the source value domain while temporary
+    // symbolic analysis is active. The domain must survive that arena's reset.
+    for first in [0, 1] {
+        let request = Specialization::new("select")
+            .with_config("db.select.first", first.to_string())
+            .with_config("db.batch", "1")
+            .with_config("db.select.limit", "1073741824")
+            .with_report(ReportMode::Summary);
+        let artifact = module.compile(&request)?;
+        assert!(artifact.bytes().starts_with(b"\x7fELF"));
+        assert!(artifact.report().is_some());
+    }
+    Ok(())
+}

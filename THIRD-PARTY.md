@@ -29,3 +29,7 @@ Apache-2.0 WITH LLVM-exception headers. Original Rust and native bridge code is 
 SPDX header is retained, and the license text is `src/artifacts/LICENSE-ONNX.txt`).
 `src/artifacts/onnx_proto.rs` is generated from it by rust-protobuf 3.7.2 through
 `scripts/generate-onnx-bindings.sh`.
+
+The compiler regression fixture `tests/kernels/hrxdb_select_family.loom` comes
+from hrxdb revision `e06d1aa67ae49e52b8ac472e52fba358b54c5ce3` (MIT). Its
+license is retained in `tests/kernels/LICENSE-hrxdb.txt`.

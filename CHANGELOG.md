@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.15 — fix native compiler value-domain lifetime
+
+- Fix a compiler use-after-free introduced by the 0.8.14 native refresh.
+  Temporary symbolic analysis could move a persistent value-ID table into its
+  scratch arena; lowering cleanup then read freed storage. The value domain
+  now retains its acquisition arena for all growth.
+- Add the hrxdb merge-selection compile regression and a native lifetime test.
+  The reported 512×2, 768×2, 512×1000 and 128×4 searcher repros now succeed.
+  Queue pooling and Rust runtime behavior are unchanged.
+
 ## 0.8.14 — shared stream queues and native compiler refresh
 
 - Streams share a configurable bounded queue pool (eight queues by default),

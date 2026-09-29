@@ -29,10 +29,10 @@ python3 scripts/fetch-native-inputs.py --work artifacts/native-release
 CONTAINER_ENGINE=podman HRX_BUILD_JOBS=2 HRX_BUILD_MEMORY=8g \
   bash scripts/rebuild-hrx.sh artifacts/native-release
 python3 scripts/stage-native-release.py --work artifacts/native-release \
-  --release-tag native-20260929-fbbf300312
+  --release-tag native-20260929-fbbf300312-fix1
 cargo run --release --bin hrx -- pack artifacts/native-release/stage-amdf \
   artifacts/native-release/output \
-  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260929-fbbf300312/hrx-linux-x86_64-gfx1151.tar.gz \
+  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260929-fbbf300312-fix1/hrx-linux-x86_64-gfx1151.tar.gz \
   'HRX fbbf300312; native libamdf; rebased compiler policies; Ubuntu 26.04' gfx1151
 ```
 

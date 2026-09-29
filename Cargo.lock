@@ -875,7 +875,7 @@ dependencies = [
 
 [[package]]
 name = "hrx-rs"
-version = "0.8.14"
+version = "0.8.15"
 dependencies = [
  "flate2",
  "hf-hub",
