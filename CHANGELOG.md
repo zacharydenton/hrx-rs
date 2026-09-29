@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.8.14 — shared stream queues and native compiler refresh
+
+- Streams share a configurable bounded queue pool (eight queues by default),
+  removing the one-queue-per-stream hardware ceiling. Queue backpressure and
+  stream timeline locking preserve submission and event ordering.
+- Refresh the native bundle to HRX `fbbf300312`, rebasing the CU/WGP profile,
+  accumulator-reuse and LDS-overlap patches onto upstream's current compiler.
+  Rust ABI bindings remain compatible.
+- Native builds default to two jobs with an 8 GiB container limit.
+- Fix the fabric lease regression test to check Busy before completion polling
+  can retire the newest dispatch.
 
 - GPU graph dispatch arguments share immutable 64 KiB arena pages and one
   construction fence. Nodes retain their argument backing across graph replay;

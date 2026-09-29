@@ -27,4 +27,4 @@ cmake -S "$source_dir" -B "$build_dir" -G Ninja \
   -DLOOM_TARGET_AMDGPU_TARGETS=gfx1151 -DLOOM_TARGET_XDNA=ON \
   -DLOOM_EMIT_XDNA=ON -DLOOM_IMPORT_CXX=ON \
   -DLOOM_EXECUTE_DEFAULTS=OFF -DLOOM_EXECUTE_IREE_HAL=OFF
-cmake --build "$build_dir" --target amdf loomc_shared hrx_fabric -j "${HRX_BUILD_JOBS:-8}"
+cmake --build "$build_dir" --target amdf loomc_shared hrx_fabric -j "${HRX_BUILD_JOBS:-2}"

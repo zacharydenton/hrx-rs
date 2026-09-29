@@ -1,8 +1,17 @@
 diff --git a/loom/py/loom/target/arch/amdgpu/descriptors/api.py b/loom/py/loom/target/arch/amdgpu/descriptors/api.py
-index 5cae629aa5..b783b3f8c8 100644
+index 0e992893d0..796c13a8b0 100644
 --- a/loom/py/loom/target/arch/amdgpu/descriptors/api.py
 +++ b/loom/py/loom/target/arch/amdgpu/descriptors/api.py
-@@ -1477,8 +1477,10 @@ _AMDGPU_CORE_DESCRIPTOR_SET_BUILDERS = {
+@@ -1418,6 +1418,8 @@ class _AmdgpuCoreDescriptorSetBuilder:
+     valu_sgpr_separation_cycles: int = 0
+     # LDS bandwidth per lane of one SIMD issue pass; zero keeps the base model.
+     lds_bits_per_lane_per_cycle: int = 0
++    # Keep width-specific classes without reserving LDS bandwidth when disabled.
++    lds_reserve_bandwidth: bool = True
+ 
+ 
+ _GFX125X_EXTRA_DESCRIPTORS = (
+@@ -1479,8 +1481,12 @@ _AMDGPU_CORE_DESCRIPTOR_SET_BUILDERS = {
          flags=_AMDGPU_CORE_DESCRIPTOR_SET_BUILDER_FLAG_GFX125X,
      ),
      "rdna3_5": _AmdgpuCoreDescriptorSetBuilder(
@@ -10,7 +19,77 @@ index 5cae629aa5..b783b3f8c8 100644
 +        # LDS loads and regresses WMMA convolution. Keep completion latency and
 +        # source hazards while allowing those loads to remain in flight.
          valu_sgpr_separation_cycles=5,
--        lds_bits_per_lane_per_cycle=32,
+         lds_bits_per_lane_per_cycle=32,
++        lds_reserve_bandwidth=False,
          base=_AMDGPU_RDNA3_5_CORE_DESCRIPTOR_SET_BASE,
          overlay_rows=_gfx115x_core_overlays,
          overlay_descriptors=_gfx115x_core_overlay_descriptors,
+@@ -1608,7 +1614,8 @@ def _build_amdgpu_core_descriptor_set_from_spec(
+         )
+     if builder.lds_bits_per_lane_per_cycle:
+         descriptor_set = _with_lds_service_timing(
+-            descriptor_set, builder.lds_bits_per_lane_per_cycle
++            descriptor_set, builder.lds_bits_per_lane_per_cycle,
++            reserve_bandwidth=builder.lds_reserve_bandwidth,
+         )
+     # Execution pipelines overlap, but a wave issues one encoded instruction
+     # at a time. A VOPD packet still occupies one instruction issue slot.
+diff --git a/loom/py/loom/target/arch/amdgpu/descriptors/timing.py b/loom/py/loom/target/arch/amdgpu/descriptors/timing.py
+index b7c2f37438..cf01c0a92a 100644
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/timing.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/timing.py
+@@ -38,7 +38,10 @@ from .common import (
+ 
+ 
+ def _with_lds_service_timing(
+-    descriptor_set: DescriptorSet, bits_per_lane_per_cycle: int
++    descriptor_set: DescriptorSet,
++    bits_per_lane_per_cycle: int,
++    *,
++    reserve_bandwidth: bool = True,
+ ) -> DescriptorSet:
+     # Independent addresses still contend for the LDS execution pipeline.
+     # Model the minimum service of one SIMD issue pass from packet width;
+@@ -86,7 +89,11 @@ def _with_lds_service_timing(
+                 name=f"{parent.name}.service{cycles}",
+                 issue_uses=(
+                     *parent.issue_uses,
+-                    IssueUse(service_resource, cycles=cycles, units=1),
++                    *(
++                        (IssueUse(service_resource, cycles=cycles, units=1),)
++                        if reserve_bandwidth
++                        else ()
++                    ),
+                 ),
+             )
+         descriptors.append(replace(descriptor, schedule_class=variants[key].name))
+diff --git a/loom/py/loom/target/arch/amdgpu/descriptors/timing_test.py b/loom/py/loom/target/arch/amdgpu/descriptors/timing_test.py
+index 06dfe912a7..9bc30528d5 100644
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/timing_test.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/timing_test.py
+@@ -166,3 +166,25 @@ def test_other_producers_preserve_their_result_timing() -> None:
+     # The selected producer fixes the class of a mixed SGPR/VGPR source.
+     assert vector_move.operands[1].read_event == "amdgpu.sgpr.read"
+     assert scalar_load.operands[1].read_event == "amdgpu.sgpr.read"
++
++
++def test_lds_overlap_preserves_required_classes_and_completion_hazards() -> None:
++    descriptors = tuple(
++        _amdgpu_contract_descriptor_from_overlay(overlay)
++        for overlay in (
++            _ds_read_overlay(width_bits=128, units=4),
++            _ds_write_overlay(width_bits=32, units=1),
++        )
++    )
++    original = replace(_AMDGPU_RDNA3_CORE_DESCRIPTOR_SET_BASE, descriptors=descriptors)
++    timed = _with_lds_service_timing(original, 32)
++    overlap = _with_lds_service_timing(original, 32, reserve_bandwidth=False)
++    assert overlap.descriptors == timed.descriptors
++    assert {row.name for row in overlap.schedule_classes} == {
++        row.name for row in timed.schedule_classes
++    }
++    parents = {row.name: row for row in original.schedule_classes}
++    variants = {row.name: row for row in overlap.schedule_classes}
++    for before, after in zip(descriptors, overlap.descriptors, strict=True):
++        parent = parents[before.schedule_class]
++        assert replace(variants[after.schedule_class], name=parent.name) == parent

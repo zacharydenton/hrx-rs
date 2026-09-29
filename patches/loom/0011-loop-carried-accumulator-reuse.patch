@@ -1,33 +1,3 @@
-Keep loop-carried matrix accumulators in place across the back edge.
-
-A loop that rescales a WMMA accumulator lane by lane and multiplies into it,
-as online-softmax attention does, copied every accumulator register on the
-back edge each iteration. Three allocation decisions caused this:
-
-- low-decompose-cfg-tuples split the loop-carried tuple into independent
-  lanes, which allocation could not place back into the aligned tuple the
-  matrix instruction requires. A back edge that forwards a tuple its producer
-  defines whole now keeps the argument whole; joins outside loops and lanes
-  assembled by low.concat still decompose.
-- A loop result is read after the loop, so each lane's linear end point
-  spanned the whole body even after its last use there. Unit liveness now
-  records each unit's last use per semantic segment for multi-unit values
-  with several segments. Conflict and coalescing checks release a unit after
-  that use unless the value is live out of the segment. Values whose storage
-  outlives their segments keep the linear lifetimes.
-- Concat reservations took the first free aligned span. A reservation whose
-  result reaches a branch destination through copies and tied results now
-  tries that destination's location first.
-
-With all three, the rescale multiplies write the lanes they read, the WMMA
-accumulates in place, and the back edge carries no copies. In the krea2 fp16
-attention kernel on gfx1151, 56 of 77 per-iteration back-edge moves go away.
-The kernel runs 1.007-1.073x faster from 1040 to 9000 tokens with
-byte-identical output. Unrelated kernels, such as the int8 GEMMs, compile to
-identical code objects. The added assembly test fails without the allocation
-changes, and the added pass test fails without the decomposition change.
-Existing codegen, AMDGPU target, transform and tooling tests are unchanged.
-
 diff --git a/loom/src/loom/codegen/low/allocation/active_set.c b/loom/src/loom/codegen/low/allocation/active_set.c
 index bf8a254313..3bf1e5f82d 100644
 --- a/loom/src/loom/codegen/low/allocation/active_set.c
@@ -56,35 +26,8 @@ index ddc0293f86..56bf1064c6 100644
  }
  
  iree_status_t loom_low_allocation_active_unit_index_initialize(
-diff --git a/loom/src/loom/codegen/low/allocation/coalescing.c b/loom/src/loom/codegen/low/allocation/coalescing.c
-index bfd4ddb97d..9f4bad0672 100644
---- a/loom/src/loom/codegen/low/allocation/coalescing.c
-+++ b/loom/src/loom/codegen/low/allocation/coalescing.c
-@@ -122,10 +122,19 @@ static bool loom_low_allocation_coalescing_value_units_live_at_point(
-     IREE_ASSERT_LE((uint64_t)end_point_start + unit_offset + unit_count,
-                    unit_liveness->point_count);
-     for (uint32_t i = 0; i < unit_count; ++i) {
--      if (unit_liveness->end_points[end_point_start + unit_offset + i] >
--          program_point) {
--        return true;
-+      const uint32_t unit_end_point =
-+          unit_liveness->end_points[end_point_start + unit_offset + i];
-+      if (unit_end_point <= program_point) {
-+        continue;
-+      }
-+      bool refined_live = true;
-+      if (loom_low_allocation_unit_segment_ends_unit_live_at_point(
-+              &unit_liveness->unit_segment_ends, end_point_start,
-+              unit_offset + i, unit_end_point, program_point, &refined_live) &&
-+          !refined_live) {
-+        continue;
-       }
-+      return true;
-     }
-   }
- 
 diff --git a/loom/src/loom/codegen/low/allocation/concat_reservation.c b/loom/src/loom/codegen/low/allocation/concat_reservation.c
-index c13975efa6..df02e007e0 100644
+index 97e8d6458b..a06ee9a151 100644
 --- a/loom/src/loom/codegen/low/allocation/concat_reservation.c
 +++ b/loom/src/loom/codegen/low/allocation/concat_reservation.c
 @@ -6,6 +6,7 @@
@@ -95,7 +38,7 @@ index c13975efa6..df02e007e0 100644
  #include "loom/codegen/low/allocation/live_range.h"
  #include "loom/codegen/low/allocation/storage.h"
  #include "loom/target/residency.h"
-@@ -237,6 +238,59 @@ loom_low_allocation_concat_reservation_default_source_assembles_result(
+@@ -250,6 +251,59 @@ loom_low_allocation_concat_reservation_default_source_assembles_result(
    return iree_ok_status();
  }
  
@@ -155,13 +98,13 @@ index c13975efa6..df02e007e0 100644
  // Chooses a concat result span that can also accept the current source slice.
  // Scheduled allocation may see scalar concat sources long before the concat op,
  // so selecting only for the future result interval can reserve a span that the
-@@ -319,9 +373,19 @@ static bool loom_low_allocation_concat_reservation_find_location_for_source(
+@@ -339,9 +393,18 @@ static bool loom_low_allocation_concat_reservation_find_location_for_source(
    const uint64_t candidate_count =
        is_explicit ? descriptor_set->physical_register_view_count
                    : (uint64_t)last_base / result_alignment + 1;
 -  for (uint64_t candidate_index = 0; candidate_index < candidate_count;
 -       ++candidate_index) {
--    uint32_t base = (uint32_t)candidate_index * result_alignment;
+-    uint32_t base = 0;
 +  // Linear classes first try the base of the destination the result reaches.
 +  uint32_t preferred_base = 0;
 +  const bool has_preferred_base =
@@ -173,16 +116,24 @@ index c13975efa6..df02e007e0 100644
 +  for (uint64_t probe = has_preferred_base ? 0 : 1; probe < candidate_count + 1;
 +       ++probe) {
 +    const uint64_t candidate_index = probe == 0 ? 0 : probe - 1;
-+    uint32_t base = probe == 0 ? preferred_base
-+                               : (uint32_t)candidate_index * result_alignment;
++    uint32_t base = preferred_base;
      if (is_explicit) {
        const loom_low_physical_register_view_t* view =
            &descriptor_set->physical_register_views[candidate_index];
+@@ -355,7 +418,7 @@ static bool loom_low_allocation_concat_reservation_find_location_for_source(
+               result_interval->unit_count)) {
+         continue;
+       }
+-    } else {
++    } else if (probe != 0) {
+       base = loom_low_allocation_search_linear_candidate_base(
+           candidate_index, last_base, result_alignment, preferred_alignment);
+     }
 diff --git a/loom/src/loom/codegen/low/allocation/live_range.c b/loom/src/loom/codegen/low/allocation/live_range.c
-index 63accd99b1..2e1b1ac100 100644
+index aee138c7cc..878bb50b57 100644
 --- a/loom/src/loom/codegen/low/allocation/live_range.c
 +++ b/loom/src/loom/codegen/low/allocation/live_range.c
-@@ -207,11 +207,148 @@ static bool loom_low_allocation_live_range_storage_overlaps(
+@@ -216,11 +216,148 @@ static bool loom_low_allocation_live_range_storage_overlaps(
        storage_segments, lhs->liveness_segments, rhs->liveness_segments);
  }
  
@@ -331,7 +282,7 @@ index 63accd99b1..2e1b1ac100 100644
      const loom_low_allocation_assignment_t* lhs,
      const loom_low_allocation_assignment_t* rhs) {
    IREE_ASSERT_ARGUMENT(descriptor_set);
-@@ -312,6 +449,12 @@ bool loom_low_allocation_live_range_assignments_conflict(
+@@ -321,6 +458,12 @@ bool loom_low_allocation_live_range_assignments_conflict(
            rhs->start_point >= lhs_unit_end_point) {
          continue;
        }
@@ -344,7 +295,7 @@ index 63accd99b1..2e1b1ac100 100644
        return true;
      }
      return false;
-@@ -335,6 +478,12 @@ bool loom_low_allocation_live_range_assignments_conflict(
+@@ -344,6 +487,12 @@ bool loom_low_allocation_live_range_assignments_conflict(
          rhs_unit_start_point >= lhs_unit_end_point) {
        continue;
      }
@@ -358,10 +309,10 @@ index 63accd99b1..2e1b1ac100 100644
    }
    return false;
 diff --git a/loom/src/loom/codegen/low/allocation/live_range.h b/loom/src/loom/codegen/low/allocation/live_range.h
-index 15b6b34bd3..756122c41d 100644
+index 6878b3a729..81ecabdb38 100644
 --- a/loom/src/loom/codegen/low/allocation/live_range.h
 +++ b/loom/src/loom/codegen/low/allocation/live_range.h
-@@ -77,15 +77,65 @@ bool loom_low_allocation_live_range_values_overlap(
+@@ -82,15 +82,65 @@ bool loom_low_allocation_live_range_values_overlap(
      loom_value_id_t rhs_value_id, uint32_t rhs_start_point,
      uint32_t rhs_end_point);
  
@@ -428,10 +379,10 @@ index 15b6b34bd3..756122c41d 100644
      const loom_low_allocation_assignment_t* rhs);
  
 diff --git a/loom/src/loom/codegen/low/allocation/live_range_test.cc b/loom/src/loom/codegen/low/allocation/live_range_test.cc
-index 15b367f77f..60276f2688 100644
+index 67331ee608..2a548b9594 100644
 --- a/loom/src/loom/codegen/low/allocation/live_range_test.cc
 +++ b/loom/src/loom/codegen/low/allocation/live_range_test.cc
-@@ -203,11 +203,13 @@ TEST(LowAllocationLiveRangeTest, ChecksAssignmentConflicts) {
+@@ -237,11 +237,13 @@ TEST(LowAllocationLiveRangeTest, ChecksAssignmentConflicts) {
    EXPECT_TRUE(loom_low_allocation_live_range_assignments_conflict(
        &descriptor_set, /*storage_segments=*/nullptr,
        /*unit_start_points=*/nullptr, unit_end_points,
@@ -447,7 +398,7 @@ index 15b367f77f..60276f2688 100644
  }
  
  TEST(LowAllocationLiveRangeTest, RefinesAssignmentConflictsByUnitStart) {
-@@ -237,11 +239,12 @@ TEST(LowAllocationLiveRangeTest, RefinesAssignmentConflictsByUnitStart) {
+@@ -271,11 +273,12 @@ TEST(LowAllocationLiveRangeTest, RefinesAssignmentConflictsByUnitStart) {
  
    EXPECT_FALSE(loom_low_allocation_live_range_assignments_conflict(
        &descriptor_set, /*storage_segments=*/nullptr, unit_start_points,
@@ -463,7 +414,7 @@ index 15b367f77f..60276f2688 100644
        &overlaps_second_unit_start));
  }
  
-@@ -265,7 +268,8 @@ TEST(LowAllocationLiveRangeTest, AssignmentConflictsRejectDisjointLifetime) {
+@@ -299,7 +302,8 @@ TEST(LowAllocationLiveRangeTest, AssignmentConflictsRejectDisjointLifetime) {
    EXPECT_FALSE(loom_low_allocation_live_range_assignments_conflict(
        &descriptor_set, /*storage_segments=*/nullptr,
        /*unit_start_points=*/nullptr,
@@ -473,7 +424,7 @@ index 15b367f77f..60276f2688 100644
  }
  
  TEST(LowAllocationLiveRangeTest, PreservesSparseGapsAgainstContiguousStorage) {
-@@ -317,13 +321,13 @@ TEST(LowAllocationLiveRangeTest, PreservesSparseGapsAgainstContiguousStorage) {
+@@ -351,13 +355,13 @@ TEST(LowAllocationLiveRangeTest, PreservesSparseGapsAgainstContiguousStorage) {
            /*unit_count=*/1, /*unit_point_start=*/1);
        EXPECT_EQ(loom_low_allocation_live_range_assignments_conflict(
                      &descriptor_set, segments, /*unit_start_points=*/nullptr,
@@ -490,7 +441,7 @@ index 15b367f77f..60276f2688 100644
                  expected_conflict);
      };
      check_contiguous(4, 20, false);
-@@ -375,7 +379,8 @@ TEST(LowAllocationLiveRangeTest, AssignmentConflictsUsePhysicalStorageOverlap) {
+@@ -409,7 +413,8 @@ TEST(LowAllocationLiveRangeTest, AssignmentConflictsUsePhysicalStorageOverlap) {
    EXPECT_TRUE(loom_low_allocation_live_range_assignments_conflict(
        &descriptor_set, /*storage_segments=*/nullptr,
        /*unit_start_points=*/nullptr, unit_end_points,
@@ -501,10 +452,10 @@ index 15b367f77f..60276f2688 100644
  
  }  // namespace
 diff --git a/loom/src/loom/codegen/low/allocation/loop_edge_relocation.c b/loom/src/loom/codegen/low/allocation/loop_edge_relocation.c
-index f050597cb6..232fb6b687 100644
+index 8e53a1b196..be41792689 100644
 --- a/loom/src/loom/codegen/low/allocation/loop_edge_relocation.c
 +++ b/loom/src/loom/codegen/low/allocation/loop_edge_relocation.c
-@@ -261,7 +261,8 @@ static iree_status_t loom_low_allocation_loop_edge_relocation_group_supported(
+@@ -391,7 +391,8 @@ static iree_status_t loom_low_allocation_loop_edge_relocation_group_supported(
              context->unit_liveness->storage_segments.entries,
              context->unit_liveness->start_points,
              context->unit_liveness->end_points,
@@ -514,7 +465,7 @@ index f050597cb6..232fb6b687 100644
        return iree_ok_status();
      }
      member_index = state->groups.next_members[member_index];
-@@ -443,7 +444,8 @@ static bool loom_low_allocation_loop_edge_relocation_assignment_conflicts(
+@@ -775,7 +776,8 @@ static bool loom_low_allocation_loop_edge_relocation_assignment_conflicts(
              context->unit_liveness->storage_segments.entries,
              context->unit_liveness->start_points,
              context->unit_liveness->end_points,
@@ -524,35 +475,21 @@ index f050597cb6..232fb6b687 100644
        return true;
      }
      member_index = state->groups.next_members[member_index];
-@@ -606,7 +608,8 @@ static bool loom_low_allocation_loop_edge_relocation_eviction_location_is_legal(
+@@ -1012,7 +1014,8 @@ static bool loom_low_allocation_loop_edge_assignment_index_conflicts(
              context->unit_liveness->storage_segments.entries,
              context->unit_liveness->start_points,
              context->unit_liveness->end_points,
--            context->unit_liveness->point_count, &assignment,
+-            context->unit_liveness->point_count, candidate,
 +            context->unit_liveness->point_count,
-+            &context->unit_liveness->unit_segment_ends, &assignment,
-             &context->assignments[i])) {
-       return false;
-     }
-diff --git a/loom/src/loom/codegen/low/allocation/target_constraints.c b/loom/src/loom/codegen/low/allocation/target_constraints.c
-index a755a0975e..f3ac082cbe 100644
---- a/loom/src/loom/codegen/low/allocation/target_constraints.c
-+++ b/loom/src/loom/codegen/low/allocation/target_constraints.c
-@@ -1591,7 +1591,8 @@ static bool loom_low_allocation_fixed_interval_conflicts(
-     if (loom_low_allocation_live_range_assignments_conflict(
-             descriptor_set, unit_liveness->storage_segments.entries,
-             unit_liveness->start_points, unit_liveness->end_points,
--            unit_liveness->point_count, fixed_assignment, candidate) &&
-+            unit_liveness->point_count, &unit_liveness->unit_segment_ends,
-+            fixed_assignment, candidate) &&
-         !loom_low_allocation_target_constraints_fixed_value_is_tied_alias(
-             constraints, fixed_value, candidate)) {
++            &context->unit_liveness->unit_segment_ends, candidate,
+             &context->assignments[existing_assignment_index])) {
        return true;
+     }
 diff --git a/loom/src/loom/codegen/low/allocation/unit_liveness.c b/loom/src/loom/codegen/low/allocation/unit_liveness.c
-index 2842dda955..4b31e428e3 100644
+index ca494c43c4..8a6789f88a 100644
 --- a/loom/src/loom/codegen/low/allocation/unit_liveness.c
 +++ b/loom/src/loom/codegen/low/allocation/unit_liveness.c
-@@ -207,6 +207,46 @@ static bool loom_low_allocation_unit_liveness_value_ordinal_for_value(
+@@ -206,6 +206,46 @@ static bool loom_low_allocation_unit_liveness_value_ordinal_for_value(
    return true;
  }
  
@@ -599,7 +536,7 @@ index 2842dda955..4b31e428e3 100644
  static iree_status_t loom_low_allocation_unit_liveness_note_unit_use_at_point(
      loom_low_allocation_unit_liveness_t* unit_liveness,
      const loom_liveness_analysis_t* liveness,
-@@ -253,6 +293,8 @@ static iree_status_t loom_low_allocation_unit_liveness_note_unit_use_at_point(
+@@ -252,6 +292,8 @@ static iree_status_t loom_low_allocation_unit_liveness_note_unit_use_at_point(
        *unit_end_point = end_point;
      }
    }
@@ -608,7 +545,7 @@ index 2842dda955..4b31e428e3 100644
    return iree_ok_status();
  }
  
-@@ -774,6 +816,86 @@ static iree_status_t loom_low_allocation_unit_liveness_note_body_op_unit_uses(
+@@ -930,6 +972,86 @@ loom_low_allocation_unit_liveness_note_decomposed_edge_uses(
    return iree_ok_status();
  }
  
@@ -692,22 +629,44 @@ index 2842dda955..4b31e428e3 100644
 +  return iree_ok_status();
 +}
 +
- iree_status_t loom_low_allocation_unit_liveness_initialize(
-     const loom_module_t* module, const loom_low_resolved_target_t* target,
+ static iree_status_t loom_low_allocation_unit_liveness_initialize_impl(
+     const loom_low_resolved_target_t* target,
      const loom_low_placement_table_t* placement,
-@@ -862,6 +984,10 @@ iree_status_t loom_low_allocation_unit_liveness_initialize(
+@@ -1018,6 +1140,10 @@ static iree_status_t loom_low_allocation_unit_liveness_initialize_impl(
      unit_point_start += interval->unit_count;
    }
  
 +  IREE_RETURN_IF_ERROR(
 +      loom_low_allocation_unit_liveness_initialize_segment_ends(
-+          liveness, arena, out_unit_liveness));
++          liveness, result_arena, out_unit_liveness));
 +
    // Unit liveness refines the value-granular analysis inside blocks so
-   // operations like low.slice can release dead units independently. CFG
-   // boundaries are still value-granular: every unit of a block live-in/out
-@@ -1272,5 +1398,15 @@ iree_status_t loom_low_allocation_unit_liveness_propagate_storage_relations(
-       }
+   // operations like low.slice and decomposable CFG edge payloads can release
+   // dead units independently. Interleaving operations with their block
+@@ -1136,10 +1262,18 @@ bool loom_low_allocation_unit_liveness_storage_component_live_at_point(
+   IREE_ASSERT_LE((uint64_t)point_start + unit_offset + unit_count,
+                  unit_liveness->point_count);
+   for (uint32_t i = 0; i < unit_count; ++i) {
+-    if (unit_liveness->end_points[point_start + unit_offset + i] >
+-        program_point) {
+-      return true;
++    const uint32_t unit_end_point =
++        unit_liveness->end_points[point_start + unit_offset + i];
++    if (unit_end_point <= program_point) {
++      continue;
++    }
++    bool refined_live = true;
++    if (loom_low_allocation_unit_segment_ends_unit_live_at_point(
++            &unit_liveness->unit_segment_ends, point_start, unit_offset + i,
++            unit_end_point, program_point, &refined_live) && !refined_live) {
++      continue;
+     }
++    return true;
+   }
+   return false;
+ }
+@@ -1450,6 +1584,16 @@ iree_status_t loom_low_allocation_unit_liveness_retain_tied_storage(
+                       relation->source_ordinal);
      }
    }
 +  // Storage that outlives a value's semantic segments is not described by
@@ -722,8 +681,9 @@ index 2842dda955..4b31e428e3 100644
 +  }
    return iree_ok_status();
  }
+ 
 diff --git a/loom/src/loom/codegen/low/allocation/unit_liveness.h b/loom/src/loom/codegen/low/allocation/unit_liveness.h
-index 420884130c..66a280937a 100644
+index 76a5b54db1..64206ef547 100644
 --- a/loom/src/loom/codegen/low/allocation/unit_liveness.h
 +++ b/loom/src/loom/codegen/low/allocation/unit_liveness.h
 @@ -14,6 +14,7 @@

@@ -2,21 +2,21 @@
   "schema": 1,
   "hrx": {
     "repository": "https://github.com/ROCm/hrx-system",
-    "revision": "244cd3801bd5e504529a3089ee6f9d99a779dee4",
+    "revision": "fbbf3003121cce0322c771345505979809c84165",
     "patches": {
       "0001-vopd-source-cache-banks.patch": "7b8784f70a92200c1e2fdc60562cafe9bcdf82a537568ee9f2dfba5de6ce609d",
       "0005-materialize-encoding-config.patch": "91d2be463c6046e2571eb6bba86902da6d1e9d5b3cf2b91e70682c5131f310e0",
-      "0009-amdgpu-profile-processor-mode.patch": "318db9d69eb9ccb0fd22d7f69fb1571e9ed628a2d2649769d71e585cc49255e2",
-      "0011-loop-carried-accumulator-reuse.patch": "0f569e0c6d4d563ab7aba499a21a524baf7a65b2ca33d1230a83b55d8e0b7d10",
-      "0012-retain-rdna35-lds-overlap.patch": "b88250f0f93cee10d556135ab3f7677a50df29975950bd6718bda27edf76f721"
+      "0009-amdgpu-profile-processor-mode.patch": "0b9de2b276bfd35638fd330923bda34a6e6170d0236cf188ddc03f517cbf9f06",
+      "0011-loop-carried-accumulator-reuse.patch": "0cc5abe94c89407e3c994cd1e8effbeed65b058dcd56fc2c7b91caa1ec432690",
+      "0012-retain-rdna35-lds-overlap.patch": "996bd9356c74a294f65b564676f8731ee8dd00aee5b9da9030fe07d6def66509"
     }
   },
   "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",
   "downloads": {
     "hrx-system": {
-      "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/244cd3801bd5e504529a3089ee6f9d99a779dee4",
-      "archive": "hrx-system-244cd3801bd5e504529a3089ee6f9d99a779dee4.tar.gz",
-      "sha256": "7c326156e6f0d009db09fe72e7e31936243d68501902598ff888449f88a00283"
+      "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/fbbf3003121cce0322c771345505979809c84165",
+      "archive": "hrx-system-fbbf3003121cce0322c771345505979809c84165.tar.gz",
+      "sha256": "776be236345a501859dd469ed78feb00aa93d71a59d105adcac2c3b6992a0267"
     },
     "spirv_headers": {
       "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",

@@ -26,14 +26,20 @@ Use Python 3.12+, patch, tar, and Docker or Podman. Starting in this repository:
 
 ```sh
 python3 scripts/fetch-native-inputs.py --work artifacts/native-release
-CONTAINER_ENGINE=docker bash scripts/rebuild-hrx.sh artifacts/native-release
+CONTAINER_ENGINE=podman HRX_BUILD_JOBS=2 HRX_BUILD_MEMORY=8g \
+  bash scripts/rebuild-hrx.sh artifacts/native-release
 python3 scripts/stage-native-release.py --work artifacts/native-release \
-  --release-tag native-20260923-468508b9e
+  --release-tag native-20260929-fbbf300312
 cargo run --release --bin hrx -- pack artifacts/native-release/stage-amdf \
   artifacts/native-release/output \
-  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260923-468508b9e/hrx-linux-x86_64-gfx1151.tar.gz \
-  'HRX 468508b9e; native libamdf; qualified allocation and layout; Ubuntu 26.04' gfx1151
+  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260929-fbbf300312/hrx-linux-x86_64-gfx1151.tar.gz \
+  'HRX fbbf300312; native libamdf; rebased compiler policies; Ubuntu 26.04' gfx1151
 ```
+
+The container build defaults to two jobs and an 8 GiB memory limit, with no
+additional swap allowance. `HRX_BUILD_JOBS` and `HRX_BUILD_MEMORY` override these
+limits. The job count is passed into the container. Direct `build-amdf.sh` builds
+also default to two jobs; apply an external memory limit when building on the host.
 
 The source archive contains upstream inputs, local patches, the native bridge,
 license texts, and rebuild scripts. To rebuild from the archive, extract it,

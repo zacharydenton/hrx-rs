@@ -1,73 +1,42 @@
 # Loom compiler patches
 
 These patches apply to public `ROCm/hrx-system` commit
-`468508b9e27e749972382f78e1c67d6db7bec27e`; `base-revision` is the machine-readable
-pin. The patches use the upstream C API without adding private ABI entrypoints.
+`fbbf3003121cce0322c771345505979809c84165`; `base-revision` is the machine-readable
+pin. `native/release-inputs.json` records the source archive and each active
+patch's SHA-256. The public upstream ABI remains the boundary, with the typed
+processor-mode extension described below.
 
-`0001-vopd-source-cache-banks.patch` fixes AMDGPU VOPD register-bank constraints.
-FMAMK addends use hardware SRC2, whose bank mask is 1, even though they occupy
-the encoded VSRC1 field. Treating that field as SRC1 (mask 3) admits illegal
-dual instructions and corrupts vision GELU outputs. Allocation and native
-emission now check the actual source cache, including mixed FMAMK/FMAC pairs;
-legal dual instructions remain enabled. The patch includes generator tests and
-native assembly/placement regression fixtures and retains upstream license
-headers. It originated in fork commit
-[`675cc43bc`](https://github.com/zacharydenton/hrx-system/commit/675cc43bc).
+- `0001-vopd-source-cache-banks.patch` fixes AMDGPU VOPD source-cache bank
+  constraints. FMAMK addends use hardware SRC2 even though they occupy encoded
+  VSRC1. Allocation and emission check the actual source cache, retaining legal
+  dual instructions. Generator and native assembly regressions cover the rule.
+- `0005-materialize-encoding-config.patch` resolves configured i4/i8 encodings
+  into concrete encoding definitions before native emission. It includes
+  canonicalization and matrix-fragment regressions.
+- `0009-amdgpu-profile-processor-mode.patch` retains the typed default/CU/WGP
+  extension across profile specialization and serialization, uses the matching
+  occupancy domain, and emits consistent native and assembly descriptors.
+  Explicit modes require GFX11/GFX12. The rebase uses upstream's new kernel
+  emission path and metadata-owned descriptor interface. Its unsupported-mode
+  diagnostic is now AMDGPU_052, preserving upstream's new AMDGPU_051 diagnostic.
+- `0011-loop-carried-accumulator-reuse.patch` retains whole-tuple back edges,
+  records per-unit last uses within semantic segments, and prefers a concat's
+  eventual edge destination when reserving registers. The rebase uses upstream's
+  retained storage-component query and indexed loop-edge conflict search;
+  it does not restore the removed recursive coalescing walk or fixed-storage
+  scans. Storage extending beyond semantic segments remains conservative.
+  The patch includes liveness, tuple-decomposition, and assembly regressions.
+- `0012-retain-rdna35-lds-overlap.patch` retains the previously qualified gfx1151
+  LDS overlap policy. Completion latency and source hazards remain active while
+  independent loads can remain in flight. Width-specific classes required by
+  generic address lowering are retained without their bandwidth reservation.
+  Requalify this local performance policy when updating the compiler or target.
 
-`0003-smem-storage-reuse-drain.patch` fully drains SMEM before overwriting pending scalar-load
-destination registers. A partial wait could mark a pointer load complete while it was
-still outstanding, allowing its destination to be overwritten. The patch has a
-deterministic assembly regression and an optional 34-line Loom GPU reproducer.
-The reduced kernel did not fault reliably on hardware; use the assembly regression
-for a deterministic check. The isolated upstream fix is
-on fork branch `fix/loom-smem-storage-reuse`, commit
-[`aa5f5c66a`](https://github.com/zacharydenton/hrx-system/commit/aa5f5c66a).
-
-`0005-materialize-encoding-config.patch` resolves configured i4/i8 encodings
-into concrete encoding definitions so generic kernel families specialize through
-native emission.
-
-Patch 0006 (dependent inline types) has been removed: upstream now substitutes
-arguments during materialization. All five original regression cases pass with
-the unmodified compiler at this revision.
-
-`0007-gfx11-vmem-source-reuse.patch` removes memory-completion leases for GFX11
-VMEM address/resource SGPR sources. Hardware interlocks their consumption;
-reusing an address does not require waiting for the loaded value. Result-write
-leases and the SMEM fix remain active. A minimal gfx1151 assembly test reuses
-the address immediately and waits before consuming the destination. It fails
-before the fix and passes afterward. The isolated fix is on fork branch
-[`fix/loom-gfx11-vmem-source-reuse`](https://github.com/zacharydenton/hrx-system/tree/fix/loom-gfx11-vmem-source-reuse),
-commit [`beaff74b2`](https://github.com/zacharydenton/hrx-system/commit/beaff74b2).
-
-`0009-amdgpu-profile-processor-mode.patch` adds a typed AMDGPU profile
-extension for default, CU, or WGP execution. The policy survives target
-specialization and module serialization, selects the occupancy domain, and
-sets the native and assembly kernel descriptors consistently. Explicit modes
-are supported on GFX11/GFX12. Older libraries reject the nonempty extension
-chain instead of silently ignoring it. The patch includes native profile,
-serialization, and occupancy tests plus generator validation.
-
-`0010-retain-qualified-allocation-layout.patch` retains the preceding masked
-restore-block placement and structural-source-first allocation for linear
-register files. Named physical register views retain consumer-first allocation.
-The two newer policies interact to add loop copies and earlier waits, slowing
-ArcFace by 32% and SCRFD by 11%. Keeping both qualified policies restores the
-released timings; changing either alone is insufficient. Physical register
-views, semantic live-segment alias checks, and all newer completion fixes remain
-active. Three exact-reference convolution shapes extend the paired corpus.
-
-`0011-loop-carried-accumulator-reuse.patch` keeps loop-carried matrix
-accumulators in place. A loop that rescales an accumulator lane by lane and
-multiplies into it, as online-softmax attention does, copied every accumulator
-register on the back edge. Three decisions caused this, and the patch changes
-each. Tuple decomposition keeps a back edge's whole-tuple argument intact. Unit
-liveness releases each unit after its last use in a segment the value does not
-leave live. Concat reservations first try the branch destination their result
-reaches. In krea2's fp16 attention on gfx1151 this removes 56 of 77 back-edge
-moves per iteration and runs 1.007-1.073x faster, with byte-identical output.
-Unrelated kernels compile to identical code objects. The patch adds a pass test
-and an assembly test; each fails without its half of the change.
+Earlier SMEM, GFX11 VMEM-source reuse, dependent-inline-type and allocation-layout
+patches are no longer in the active set. Only the five files above are applied.
+Historical performance measurements do not establish performance of a new pin.
+The matching runtime is published as `native-20260929-fbbf300312` and selected
+by `bundle.json`. Use `HRX_RUNTIME_DIR` to select a local rebuild.
 
 ## Rebuild
 
@@ -75,5 +44,39 @@ Use `scripts/fetch-native-inputs.py` and `scripts/rebuild-hrx.sh`, documented in
 [native/RELEASE.md](../../native/RELEASE.md). For a development checkout,
 `LOOM_SOURCE=/path/to/clean/pinned/source bash scripts/apply-loom-patches.sh`
 applies the active compiler set. `scripts/build-amdf.sh SOURCE BUILD` then applies
-the reviewed native build, queue and cache-policy patches and builds the three native libraries.
-The manifest records every applied patch digest.
+the native build, queue and cache-policy patches and builds all three libraries.
+The compiler patches must be applied in filename order.
+
+## Validation at this pin
+
+The 2026-09-29 integration built all three native libraries with Clang 21 on
+Ubuntu 26.04. Regenerating the Rust bindings produced no semantic changes.
+All eight compiler/native patches applied to the pinned archive with zero fuzz;
+the resulting patched files exactly matched the build source.
+
+- `cargo test --all-targets`: 109 passed; hardware-dependent tests stayed ignored.
+- `compiler_sources` with `--ignored --test-threads=1` against the new compiler:
+  all seven passed, including C/C++ import and offline XDNA compilation.
+- Descriptor timing, VOPD tables and occupancy Python suites: 35 passed.
+- Native live-range, unit-liveness, target-constraint, occupancy and AMDGPU C API
+  test executables: all five passed.
+- The six patched `.loom-test` fixtures: all 85 cases passed.
+
+Native regression tests used additional AMDGPU targets and `loom-check-test`
+to include test descriptors. Release libraries use the original gfx1151/XDNA
+configuration.
+
+Release qualification also passed all 93 ignored hardware/compiler cases with
+NPU enabled, including the shared queue pool, large graph batching, argument
+arena and GPU/NPU execution checks. The fabric suite used an explicit
+`HRX_AMDF_LIBRARY` path; its Busy assertion now runs before completion polling
+can retire the new dispatch. A timing-only DAG assertion narrowly missed its
+threshold on the first run and passed on rerun.
+
+The paired compiler corpus passed numerical checks for all nine attention,
+GEMM and convolution cases (30 alternating pairs per case) against the previous
+published compiler. Timing confidence intervals were wide on this shared host;
+no statistically clear regression was detected, and these results do not
+establish general throughput or latency improvements. Release CPU checks,
+clippy, documentation and the feature matrix also passed. Builds and test
+processes used bounded memory with one Cargo job.

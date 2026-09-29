@@ -30,5 +30,8 @@ import json, pathlib, sys
 print(json.loads((pathlib.Path(sys.argv[1]) / 'native/release-inputs.json').read_text())['build_image'])
 PYCODE
 )"
-"${CONTAINER_ENGINE:-podman}" run --rm -v "$work_dir:/work" -v "$repo_dir:/repo:ro" \
+"${CONTAINER_ENGINE:-podman}" run --rm \
+  --memory="${HRX_BUILD_MEMORY:-8g}" --memory-swap="${HRX_BUILD_MEMORY:-8g}" \
+  -e HRX_BUILD_JOBS="${HRX_BUILD_JOBS:-2}" \
+  -v "$work_dir:/work" -v "$repo_dir:/repo:ro" \
   "$build_image" bash /repo/scripts/build-gpu-runtime-container.sh

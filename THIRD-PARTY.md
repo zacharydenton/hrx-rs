@@ -1,7 +1,7 @@
 # Native components and source provenance
 
 The unified 0.8 native distribution contains three libraries built from
-HRX/IREE revision `556c648e8f301ad9656d325687cc93b417ea78ff`:
+HRX/IREE revision `fbbf3003121cce0322c771345505979809c84165`:
 
 | Library | Purpose | Principal license |
 | --- | --- | --- |

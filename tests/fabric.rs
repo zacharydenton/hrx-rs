@@ -49,10 +49,12 @@ void fill(const unsigned* input, unsigned* output) {
         input.write(0, &input_bytes)?;
         output.write(0, &[0xcd; 256])?;
         let done = unsafe { prepared.dispatch() }?;
+        // Check the lease before polling any completion: observing an older
+        // fence may also retire this dispatch if it has already finished.
+        assert!(matches!(output.write(0, &[0]), Err(hrx::Error::Busy(_))));
         if let Some(earlier) = &earlier {
             assert!(earlier.is_complete()?);
         }
-        assert!(matches!(output.write(0, &[0]), Err(hrx::Error::Busy(_))));
         if !done.wait_timeout(std::time::Duration::from_secs(10))? {
             // Keep the hardware ownership chain live after a failed qualification.
             std::mem::forget(done);
