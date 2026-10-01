@@ -39,6 +39,9 @@ impl Drop for Memory {
     }
 }
 impl Buffer {
+    pub(crate) fn identity(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
     pub(crate) fn same_backing(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

@@ -74,6 +74,139 @@ impl Inner {
         Ok(())
     }
 }
+impl Inner {
+    fn prepare_fill(self: &Arc<Self>, dst: View<'_>, value: u8) -> Result<fabric::PreparedGpu> {
+        owns(self, dst.owner)?;
+        let mut cache = self
+            .transfer_cache
+            .lock()
+            .map_err(|_| Error::DeviceLost("transfer cache poisoned".into()))?;
+        if let Some(entry) = cache.iter().find(|entry| {
+            entry.destination.same_backing(&dst.owner.native)
+                && entry.destination_offset == dst.offset
+                && entry.length == dst.length
+                && entry.source.is_none()
+                && entry.value == value
+        }) {
+            return Ok(entry.command.clone());
+        }
+        let command = self
+            .queue
+            .prepare_fill(&dst.owner.native, dst.offset, dst.length, value)?;
+        // Other streams may use this device-scoped allocation. Only cache when
+        // its owning stream can evict the entry when the public buffer drops.
+        if Arc::ptr_eq(&dst.owner.owner, self) {
+            if cache.len() == 128 {
+                cache.remove(0);
+            }
+            cache.push(CachedTransfer {
+                destination: dst.owner.native.clone(),
+                destination_offset: dst.offset,
+                length: dst.length,
+                source: None,
+                value,
+                command: command.clone(),
+            });
+        }
+        Ok(command)
+    }
+    fn prepare_copy(self: &Arc<Self>, dst: View<'_>, src: View<'_>) -> Result<fabric::PreparedGpu> {
+        owns(self, dst.owner)?;
+        owns(self, src.owner)?;
+        if dst.len() != src.len() {
+            return Err(Error::Message("copy requires equal spans".into()));
+        }
+        let mut cache = self
+            .transfer_cache
+            .lock()
+            .map_err(|_| Error::DeviceLost("transfer cache poisoned".into()))?;
+        if let Some(entry) = cache.iter().find(|entry| {
+            entry.destination.same_backing(&dst.owner.native)
+                && entry.destination_offset == dst.offset
+                && entry.length == dst.length
+                && entry.source.as_ref().is_some_and(|(buffer, offset)| {
+                    buffer.same_backing(&src.owner.native) && *offset == src.offset
+                })
+        }) {
+            return Ok(entry.command.clone());
+        }
+        let command = self.queue.prepare_copy(
+            &dst.owner.native,
+            dst.offset,
+            &src.owner.native,
+            src.offset,
+            src.length,
+        )?;
+        if Arc::ptr_eq(&dst.owner.owner, self) && Arc::ptr_eq(&src.owner.owner, self) {
+            if cache.len() == 128 {
+                cache.remove(0);
+            }
+            cache.push(CachedTransfer {
+                destination: dst.owner.native.clone(),
+                destination_offset: dst.offset,
+                length: dst.length,
+                source: Some((src.owner.native.clone(), src.offset)),
+                value: 0,
+                command: command.clone(),
+            });
+        }
+        Ok(command)
+    }
+    unsafe fn prepare_dispatch(
+        self: &Arc<Self>,
+        kernel: &Kernel,
+        grid: [u32; 3],
+        block: [u32; 3],
+        constants: &Constants,
+        bindings: &[View<'_>],
+        arena: Option<&mut fabric::GraphArena>,
+    ) -> Result<fabric::PreparedGpu> {
+        if kernel.device_id() != self.device.id() {
+            return Err(Error::Message("kernel belongs to another device".into()));
+        }
+        validate_export_launch(&kernel.info, grid, block)?;
+        if constants.len != kernel.info.constant_byte_length as usize
+            || bindings.len() != kernel.info.binding_count as usize
+        {
+            return Err(Error::Message(
+                "kernel binding or constant byte count mismatch".into(),
+            ));
+        }
+        for view in bindings {
+            owns(self, view.owner)?;
+        }
+        let mut args = Vec::with_capacity(kernel.layout.len());
+        let mut scalar = 0;
+        let mut binding = 0;
+        for &(kind, size) in kernel.layout.iter() {
+            if kind == 1 {
+                args.push(fabric::Argument::Value(
+                    &constants.bytes[scalar..scalar + size],
+                ));
+                scalar += size;
+            } else {
+                let view = bindings[binding];
+                args.push(fabric::Argument::Buffer(&view.owner.native, view.offset));
+                binding += 1;
+            }
+        }
+        unsafe {
+            match arena {
+                Some(arena) => self.queue.prepare_graph(
+                    &kernel.native,
+                    grid,
+                    block.map(|v| v as u16),
+                    &args,
+                    arena,
+                ),
+                None => self
+                    .queue
+                    .prepare(&kernel.native, grid, block.map(|v| v as u16), &args),
+            }
+        }
+    }
+}
+
 /// An owned GPU address and execution domain.
 #[derive(Clone)]
 pub struct Device {
@@ -573,85 +706,10 @@ impl Stream {
         self.read_blocking(src.try_slice(offset, bytes.len())?, bytes)
     }
     fn prepare_fill(&self, dst: View<'_>, value: u8) -> Result<fabric::PreparedGpu> {
-        self.owns(dst.owner)?;
-        let mut cache = self
-            .inner
-            .transfer_cache
-            .lock()
-            .map_err(|_| Error::DeviceLost("transfer cache poisoned".into()))?;
-        if let Some(entry) = cache.iter().find(|entry| {
-            entry.destination.same_backing(&dst.owner.native)
-                && entry.destination_offset == dst.offset
-                && entry.length == dst.length
-                && entry.source.is_none()
-                && entry.value == value
-        }) {
-            return Ok(entry.command.clone());
-        }
-        let command =
-            self.inner
-                .queue
-                .prepare_fill(&dst.owner.native, dst.offset, dst.length, value)?;
-        // Other streams may use this device-scoped allocation. Only cache when
-        // its owning stream can evict the entry when the public buffer drops.
-        if Arc::ptr_eq(&dst.owner.owner, &self.inner) {
-            if cache.len() == 128 {
-                cache.remove(0);
-            }
-            cache.push(CachedTransfer {
-                destination: dst.owner.native.clone(),
-                destination_offset: dst.offset,
-                length: dst.length,
-                source: None,
-                value,
-                command: command.clone(),
-            });
-        }
-        Ok(command)
+        self.inner.prepare_fill(dst, value)
     }
     fn prepare_copy(&self, dst: View<'_>, src: View<'_>) -> Result<fabric::PreparedGpu> {
-        self.owns(dst.owner)?;
-        self.owns(src.owner)?;
-        if dst.len() != src.len() {
-            return Err(Error::Message("copy requires equal spans".into()));
-        }
-        let mut cache = self
-            .inner
-            .transfer_cache
-            .lock()
-            .map_err(|_| Error::DeviceLost("transfer cache poisoned".into()))?;
-        if let Some(entry) = cache.iter().find(|entry| {
-            entry.destination.same_backing(&dst.owner.native)
-                && entry.destination_offset == dst.offset
-                && entry.length == dst.length
-                && entry.source.as_ref().is_some_and(|(buffer, offset)| {
-                    buffer.same_backing(&src.owner.native) && *offset == src.offset
-                })
-        }) {
-            return Ok(entry.command.clone());
-        }
-        let command = self.inner.queue.prepare_copy(
-            &dst.owner.native,
-            dst.offset,
-            &src.owner.native,
-            src.offset,
-            src.length,
-        )?;
-        if Arc::ptr_eq(&dst.owner.owner, &self.inner) && Arc::ptr_eq(&src.owner.owner, &self.inner)
-        {
-            if cache.len() == 128 {
-                cache.remove(0);
-            }
-            cache.push(CachedTransfer {
-                destination: dst.owner.native.clone(),
-                destination_offset: dst.offset,
-                length: dst.length,
-                source: Some((src.owner.native.clone(), src.offset)),
-                value: 0,
-                command: command.clone(),
-            });
-        }
-        Ok(command)
+        self.inner.prepare_copy(dst, src)
     }
     /// Enqueue a native byte-pattern fill.
     pub fn fill(&self, dst: View<'_>, value: u8) -> Result<()> {
@@ -756,50 +814,9 @@ impl Stream {
         bindings: &[View<'_>],
         arena: Option<&mut fabric::GraphArena>,
     ) -> Result<fabric::PreparedGpu> {
-        if kernel.device_id() != self.device_id() {
-            return Err(Error::Message("kernel belongs to another device".into()));
-        }
-        validate_export_launch(&kernel.info, grid, block)?;
-        if constants.len != kernel.info.constant_byte_length as usize
-            || bindings.len() != kernel.info.binding_count as usize
-        {
-            return Err(Error::Message(
-                "kernel binding or constant byte count mismatch".into(),
-            ));
-        }
-        for view in bindings {
-            self.owns(view.owner)?;
-        }
-        let mut args = Vec::with_capacity(kernel.layout.len());
-        let mut scalar = 0;
-        let mut binding = 0;
-        for &(kind, size) in kernel.layout.iter() {
-            if kind == 1 {
-                args.push(fabric::Argument::Value(
-                    &constants.bytes[scalar..scalar + size],
-                ));
-                scalar += size;
-            } else {
-                let view = bindings[binding];
-                args.push(fabric::Argument::Buffer(&view.owner.native, view.offset));
-                binding += 1;
-            }
-        }
         unsafe {
-            match arena {
-                Some(arena) => self.inner.queue.prepare_graph(
-                    &kernel.native,
-                    grid,
-                    block.map(|v| v as u16),
-                    &args,
-                    arena,
-                ),
-                None => {
-                    self.inner
-                        .queue
-                        .prepare(&kernel.native, grid, block.map(|v| v as u16), &args)
-                }
-            }
+            self.inner
+                .prepare_dispatch(kernel, grid, block, constants, bindings, arena)
         }
     }
     /// Enqueue a kernel invocation with declaration-order constants and buffers.
@@ -1150,15 +1167,15 @@ pub struct Node {
 static NEXT_GRAPH_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// Owned native commands being recorded under checked dependency edges.
 pub struct Graph<'a> {
-    stream: &'a Stream,
+    inner: Arc<Inner>,
+    _borrow: std::marker::PhantomData<&'a Stream>,
     id: u64,
-    nodes: Vec<(Recorded<'a>, Option<u32>)>,
+    nodes: Vec<(Recorded, Option<u32>)>,
+    bindings: std::collections::HashMap<usize, usize>,
     arena: fabric::GraphArena,
     budget_uses: BudgetUses,
 }
-enum Recorded<'a> {
-    Fill(View<'a>, u8),
-    Copy(View<'a>, View<'a>),
+enum Recorded {
     Prepared(fabric::PreparedGpu),
     Join,
 }
@@ -1174,10 +1191,19 @@ pub struct GraphExec {
 impl Stream {
     /// Begin a dependency-checked recording borrowing this stream.
     pub fn graph(&self) -> Result<Graph<'_>> {
+        self.owned_graph()
+    }
+    /// Begin a recording that owns its execution domain and each prepared command.
+    /// Buffers and kernels need only live through their recording call. Native
+    /// allocations and residency charges remain held by the graph. Pooled leases
+    /// still require caller-controlled reuse and ordering through final replay.
+    pub fn owned_graph(&self) -> Result<Graph<'static>> {
         Ok(Graph {
-            stream: self,
+            inner: self.inner.clone(),
+            _borrow: std::marker::PhantomData,
             id: NEXT_GRAPH_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             nodes: Vec::new(),
+            bindings: std::collections::HashMap::new(),
             arena: fabric::GraphArena::default(),
             budget_uses: BudgetUses::default(),
         })
@@ -1214,6 +1240,19 @@ impl Stream {
     }
 }
 impl<'a> Graph<'a> {
+    /// Total exposed bytes of distinct allocations referenced by recorded nodes.
+    /// Repeated views and pooled reuse of the same backing count only once.
+    pub fn binding_bytes(&self) -> usize {
+        self.bindings.values().sum()
+    }
+    fn retain_bindings(&mut self, bindings: &[View<'_>]) {
+        self.budget_uses.retain(bindings);
+        for view in bindings {
+            self.bindings
+                .insert(view.owner.native.identity(), view.owner.bytes());
+        }
+    }
+
     fn validate_dependencies(&self, after: &[Node]) -> Result<()> {
         for node in after {
             if node.graph != self.id || node.index as usize >= self.nodes.len() {
@@ -1227,7 +1266,7 @@ impl<'a> Graph<'a> {
         }
         Ok(())
     }
-    fn record(&mut self, command: Recorded<'a>, after: &[Node]) -> Node {
+    fn record(&mut self, command: Recorded, after: &[Node]) -> Node {
         let index = self.nodes.len() as u32;
         self.nodes
             .push((command, after.iter().map(|node| node.index).max()));
@@ -1237,27 +1276,29 @@ impl<'a> Graph<'a> {
         }
     }
     /// Record a byte fill after checked predecessor nodes.
-    pub fn fill(&mut self, after: &[Node], dst: View<'a>, pattern: u8) -> Result<Node> {
+    pub fn fill(&mut self, after: &[Node], dst: View<'_>, pattern: u8) -> Result<Node> {
         self.validate_dependencies(after)?;
-        self.stream.owns(dst.owner)?;
+        owns(&self.inner, dst.owner)?;
         if dst.is_empty() {
             return Err(Error::Message("empty graph fill".into()));
         }
-        self.budget_uses.retain(&[dst]);
-        Ok(self.record(Recorded::Fill(dst, pattern), after))
+        let command = self.inner.prepare_fill(dst, pattern)?;
+        self.retain_bindings(&[dst]);
+        Ok(self.record(Recorded::Prepared(command), after))
     }
     /// Record a non-overlapping byte copy after checked predecessor nodes.
-    pub fn copy(&mut self, after: &[Node], dst: View<'a>, src: View<'a>) -> Result<Node> {
+    pub fn copy(&mut self, after: &[Node], dst: View<'_>, src: View<'_>) -> Result<Node> {
         self.validate_dependencies(after)?;
-        self.stream.owns(dst.owner)?;
-        self.stream.owns(src.owner)?;
+        owns(&self.inner, dst.owner)?;
+        owns(&self.inner, src.owner)?;
         if dst.len() != src.len() || dst.is_empty() {
             return Err(Error::Message(
                 "graph copy requires equal nonempty spans".into(),
             ));
         }
-        self.budget_uses.retain(&[dst, src]);
-        Ok(self.record(Recorded::Copy(dst, src), after))
+        let command = self.inner.prepare_copy(dst, src)?;
+        self.retain_bindings(&[dst, src]);
+        Ok(self.record(Recorded::Prepared(command), after))
     }
     /// Record a fixed native kernel invocation.
     ///
@@ -1267,15 +1308,15 @@ impl<'a> Graph<'a> {
     pub unsafe fn dispatch(
         &mut self,
         after: &[Node],
-        kernel: &'a Kernel,
+        kernel: &Kernel,
         grid: [u32; 3],
         block: [u32; 3],
         constants: &Constants,
-        bindings: &[View<'a>],
+        bindings: &[View<'_>],
     ) -> Result<Node> {
         self.validate_dependencies(after)?;
         let command = unsafe {
-            self.stream.prepare_dispatch(
+            self.inner.prepare_dispatch(
                 kernel,
                 grid,
                 block,
@@ -1284,7 +1325,7 @@ impl<'a> Graph<'a> {
                 Some(&mut self.arena),
             )
         }?;
-        self.budget_uses.retain(bindings);
+        self.retain_bindings(bindings);
         Ok(self.record(Recorded::Prepared(command), after))
     }
     /// Record a dependency join with no native payload.
@@ -1308,8 +1349,6 @@ impl<'a> Graph<'a> {
         let mut completed = 0usize;
         for (index, (node, dependency)) in self.nodes.into_iter().enumerate() {
             let command = match node {
-                Recorded::Fill(dst, value) => self.stream.prepare_fill(dst, value)?,
-                Recorded::Copy(dst, src) => self.stream.prepare_copy(dst, src)?,
                 Recorded::Prepared(command) => command,
                 Recorded::Join => continue,
             };
@@ -1321,14 +1360,10 @@ impl<'a> Graph<'a> {
         }
         // Every batch is prepared before submission. The queue orders batches,
         // including dependencies and scratch aliases that cross a split.
-        let (commands, profile) = unsafe {
-            self.stream
-                .inner
-                .queue
-                .prepare_graph_batches(&ordered, labels)
-        }?;
+        let (commands, profile) =
+            unsafe { self.inner.queue.prepare_graph_batches(&ordered, labels) }?;
         Ok(GraphExec {
-            inner: self.stream.inner.clone(),
+            inner: self.inner.clone(),
             commands,
             profile,
             last: None,

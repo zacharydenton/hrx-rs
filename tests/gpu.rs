@@ -779,6 +779,9 @@ fn small_fan_in_recording_does_not_allocate() -> hrx::Result<()> {
     for _ in 0..8 {
         graph.fill(&[first], a.binding(), 3)?;
     }
+    // Recording now prepares native commands immediately. Warm that command
+    // too, so the allocation check still isolates dependency resolution.
+    graph.fill(&[first], b.binding(), 4)?;
     // A 16-entry dependency list is the documented stack capacity; the duplicate
     // forces the dedupe path, which is where the allocation used to live.
     let deps = [first, second, first];
@@ -996,7 +999,7 @@ fn graph_argument_arena_crosses_pages_and_retains_bindings() -> hrx::Result<()> 
             .flat_map(|_| 0x3f80u16.to_le_bytes())
             .collect::<Vec<_>>(),
     )?;
-    let mut graph = stream.graph()?;
+    let mut graph = stream.owned_graph()?;
     let mut after = Vec::new();
     for i in 0..COUNT {
         let mut constants = Constants::new();
@@ -1022,12 +1025,12 @@ fn graph_argument_arena_crosses_pages_and_retains_bindings() -> hrx::Result<()> 
         };
         after = vec![node];
     }
-    let mut exec = graph.finish()?;
     drop(velocity);
     drop(kernel);
     drop(artifact);
     drop(module);
     drop(compiler);
+    let mut exec = graph.finish()?;
     for _ in 0..2 {
         stream.fill(output.binding(), 0)?;
         stream.launch(&mut exec)?;
@@ -1041,5 +1044,56 @@ fn graph_argument_arena_crosses_pages_and_retains_bindings() -> hrx::Result<()> 
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires a provisioned GPU runtime"]
+fn owned_graph_records_without_execution_and_retains_dropped_buffers() -> hrx::Result<()> {
+    let manager = hrx::residency::ResidencyManager::new(16384)?;
+    let budget = manager.budget();
+    let mut stream = Stream::open()?.with_memory_budget(budget.clone());
+    let output = stream.allocate(4096)?;
+    stream.fill(output.binding(), 0x33)?;
+    let mut graph = stream.owned_graph()?;
+    {
+        let temporary = stream.allocate(4096)?;
+        let fill = graph.fill(&[], temporary.binding(), 0x71)?;
+        graph.copy(&[fill], output.binding(), temporary.binding())?;
+        assert_eq!(graph.binding_bytes(), 8192);
+    }
+    assert_eq!(budget.reserved_bytes(), 8192);
+    let mut bytes = [0; 4096];
+    stream.read_blocking(output.binding(), &mut bytes)?;
+    assert_eq!(bytes, [0x33; 4096], "recording must not execute commands");
+    let mut graph = graph.finish()?;
+    for _ in 0..2 {
+        stream.fill(output.binding(), 0)?;
+        stream.launch(&mut graph)?;
+        stream.read_blocking(output.binding(), &mut bytes)?;
+        assert_eq!(bytes, [0x71; 4096]);
+    }
+    stream.launch(&mut graph)?;
+    drop(graph); // Wait for its final replay and release temporary backing/charge.
+    assert_eq!(budget.reserved_bytes(), 4096);
+    stream.read_blocking(output.binding(), &mut bytes)?;
+    assert_eq!(bytes, [0x71; 4096]);
+    drop(output);
+    assert_eq!(budget.reserved_bytes(), 0);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires a provisioned GPU runtime"]
+fn owned_recording_survives_stream_drop_and_rejects_foreign_replay() -> hrx::Result<()> {
+    let mut graph = {
+        let stream = Stream::open()?;
+        let buffer = stream.allocate(16)?;
+        let mut recording = stream.owned_graph()?;
+        recording.fill(&[], buffer.binding(), 1)?;
+        recording
+    }
+    .finish()?;
+    assert!(Stream::open()?.launch(&mut graph).is_err());
     Ok(())
 }

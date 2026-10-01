@@ -140,6 +140,14 @@ and GPU resource use determine whether execution overlaps. Loading kernels,
 dispatching them, and sharing buffers across streams are unsafe: callers must
 validate code, arguments, memory access, and synchronization.
 
+`Stream::owned_graph` creates a recording that owns the execution domain and
+prepares each command immediately, without executing it. Buffer and kernel
+wrappers may be dropped after recording a command; the graph retains their
+native resources and allocation charges through replay. Pooled storage still
+needs explicit lifetime and ordering control: native retention prevents freeing
+backing, but does not prevent a pool from reusing it. `Graph::binding_bytes`
+reports the distinct bound allocation bytes.
+
 When dependencies follow buffer hazards rather than an application-specific
 schedule, use `Stream::access_graph`. Each dispatch binding declares
 `read()`, `write()`, or `read_write()` and HRX infers the minimal byte-range
