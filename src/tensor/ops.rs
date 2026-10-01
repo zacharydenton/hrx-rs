@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 /// Bounded shape-specialized device tensor operations in one shared context.
 pub struct TensorOps {
-    context: ModelContext,
+    pub(super) context: ModelContext,
+    pub(super) linear: PlanCache<(TensorDesc, Vec<TensorDesc>, DType), PreparedModel>,
     finite: PlanCache<TensorDesc, PreparedModel>,
     gather: PlanCache<(TensorDesc, usize), PreparedModel>,
 }
@@ -93,6 +94,7 @@ impl TensorOps {
     pub fn new(context: &ModelContext, capacity: usize) -> Result<Self> {
         Ok(Self {
             context: context.clone(),
+            linear: PlanCache::new(capacity, PreparedModel::is_idle)?,
             finite: PlanCache::new(capacity, PreparedModel::is_idle)?,
             gather: PlanCache::new(capacity, PreparedModel::is_idle)?,
         })

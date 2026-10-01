@@ -2,6 +2,7 @@
 
 use crate::{Completion, Error, Result, Runtime, execution::BufferView};
 use std::sync::Arc;
+mod linear;
 mod ops;
 pub use ops::TensorOps;
 

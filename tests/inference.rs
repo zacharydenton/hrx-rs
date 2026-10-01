@@ -1429,3 +1429,88 @@ fn many_live_allocations_do_not_exhaust_native_queues() -> hrx::Result<()> {
     assert_eq!(runtime.statistics().live_bytes, 0);
     Ok(())
 }
+
+#[test]
+#[ignore = "requires GPU and Loom compiler"]
+fn decode_linear_shares_dispatch_and_preserves_output_leases() -> hrx::Result<()> {
+    use hrx::tensor::TensorOps;
+    let context = ModelContext::new(Default::default())?;
+    let ops = TensorOps::new(&context, 4)?;
+    // Integer BF16 values keep the FP64 reference exact, including signed sums.
+    let bf16 = |v: f32| ((v.to_bits() >> 16) as u16).to_le_bytes();
+    let k = 256;
+    let input_values: Vec<_> = (0..k).map(|i| (i % 7) as f32 - 3.).collect();
+    let input = context.upload(
+        TensorDesc::new(DType::BF16, vec![1, k])?,
+        &input_values
+            .iter()
+            .flat_map(|&v| bf16(v))
+            .collect::<Vec<_>>(),
+    )?;
+    let mut weights = Vec::new();
+    let mut expected = Vec::new();
+    for n in [37, 64, 129] {
+        let values: Vec<_> = (0..n * k).map(|i| (i % 11) as f32 - 5.).collect();
+        expected.push(
+            (0..n)
+                .map(|row| {
+                    (0..k)
+                        .map(|i| input_values[i] * values[row * k + i])
+                        .sum::<f32>()
+                })
+                .collect::<Vec<_>>(),
+        );
+        weights.push(context.upload(
+            TensorDesc::new(DType::BF16, vec![n, k])?,
+            &values.iter().flat_map(|&v| bf16(v)).collect::<Vec<_>>(),
+        )?);
+    }
+    for count in 1..=3 {
+        for dtype in [DType::BF16, DType::F32] {
+            let out = ops.linear_many(&input, &weights[..count], dtype)?;
+            for (actual, expected) in out.iter().zip(&expected) {
+                let bytes = context.download(actual)?.wait()?;
+                let values: Vec<_> = if dtype == DType::F32 {
+                    bytes
+                        .chunks_exact(4)
+                        .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
+                        .collect()
+                } else {
+                    bytes
+                        .chunks_exact(2)
+                        .map(|v| {
+                            f32::from_bits(
+                                u32::from(u16::from_le_bytes(v.try_into().unwrap())) << 16,
+                            )
+                        })
+                        .collect()
+                };
+                assert_eq!(&values, expected);
+            }
+        }
+    }
+    let a = ops.linear(&input, &weights[0], DType::F32)?;
+    let b = ops.linear(&input, &weights[0], DType::F32)?;
+    let c = ops.linear(&input, &weights[0], DType::F32)?;
+    a.completion().wait()?;
+    assert!(matches!(
+        ops.linear(&input, &weights[0], DType::F32),
+        Err(Error::Busy(_))
+    ));
+    drop(a);
+    let _d = ops.linear(&input, &weights[0], DType::F32)?;
+    drop((b, c));
+    assert!(ops.linear_many(&input, &[], DType::F32).is_err());
+    assert!(ops.linear(&input, &weights[0], DType::I32).is_err());
+    let other = ModelContext::new(Default::default())?.allocate(input.desc().clone())?;
+    assert!(ops.linear(&other, &weights[0], DType::F32).is_err());
+    assert!(
+        ops.linear_fragment(
+            &TensorDesc::new(DType::BF16, vec![2, k])?,
+            &[weights[0].desc().clone()],
+            DType::F32
+        )
+        .is_err()
+    );
+    Ok(())
+}

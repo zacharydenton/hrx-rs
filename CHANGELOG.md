@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add `TensorOps::linear`, `linear_many`, and `linear_fragment` for single-row
+  BF16 decode projections, with FP32 accumulation and BF16 or FP32 output.
+  One dispatch handles up to three independent weights (Q/K/V or gate/up),
+  with checked shapes, bounded plan caching and retained output leases.
+
 ## 0.8.15 — fix native compiler value-domain lifetime
 
 - Fix a compiler use-after-free introduced by the 0.8.14 native refresh.

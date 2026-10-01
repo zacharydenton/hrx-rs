@@ -188,6 +188,13 @@ reads; the graph's memory hazards order reuse after earlier readers. Independent
 slots never share this workspace. `ModelSlot::submit_host_with` publishes packed
 host inputs directly into reserved staging without an extra host assembly buffer.
 
+`TensorOps::linear` provides a decode projection for contiguous BF16 `[1, K]`
+inputs and `[N, K]` weights, with K divisible by 128 and BF16 or F32 output.
+`linear_many` combines up to three projections in one dispatch, useful for Q/K/V
+and gate/up; `linear_fragment` records it in an inference graph. These operations
+use the same bounded prepared-plan cache and output leases as other tensor ops.
+They cover single-row decoding; larger matrix products remain caller-provided.
+
 Shared operations need not all execute on the GPU. `TensorOps::gather_rows`
 accepts checked host-selected indices while keeping complete rows on-device.
 It preserves dtype bits, duplicates and order, uses bounded power-of-two shape
