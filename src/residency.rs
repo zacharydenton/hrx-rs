@@ -96,6 +96,7 @@ impl Drop for MemoryReservation {
     }
 }
 impl Usage {
+    #[allow(deprecated, reason = "fetch_update supports the Rust 1.91 MSRV")]
     fn reserve(self: &Arc<Self>, bytes: usize) -> Option<MemoryReservation> {
         self.bytes
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {

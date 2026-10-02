@@ -141,14 +141,16 @@ impl ProfileCapture {
             .device()
             .fabric()
             .allocate_shared(bytes, std::slice::from_ref(queue.device()))?;
+        #[allow(deprecated, reason = "fetch_update supports the Rust 1.91 MSRV")]
+        let recorder = NEXT_RECORDER
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
+            .map_err(|_| Error::Message("profile recorder identity exhausted".into()))?;
         Ok(Self {
             buffer,
             api,
             labels: labels.to_vec(),
             queue: queue.identity(),
-            recorder: NEXT_RECORDER
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
-                .map_err(|_| Error::Message("profile recorder identity exhausted".into()))?,
+            recorder,
             execution: 0,
             previous_end: 0,
         })

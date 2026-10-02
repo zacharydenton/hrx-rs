@@ -114,6 +114,7 @@ impl JobPool {
         work: impl FnOnce(JobHandle) -> Result<T> + Send + 'static,
         completed: impl FnOnce(Result<T>) + Send + 'static,
     ) -> Result<JobHandle> {
+        #[allow(deprecated, reason = "fetch_update supports the Rust 1.91 MSRV")]
         self.live
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < self.capacity).then_some(n + 1)
