@@ -2,10 +2,18 @@
 
 ## Unreleased
 
+## 0.8.16 — BF16 decode projections and owned GPU graph recording
+
 - Add `TensorOps::linear`, `linear_many`, and `linear_fragment` for single-row
   BF16 decode projections, with FP32 accumulation and BF16 or FP32 output.
   One dispatch handles up to three independent weights (Q/K/V or gate/up),
   with checked shapes, bounded plan caching and retained output leases.
+- Add `Stream::owned_graph` and prepare GPU graph commands during recording.
+  Graphs retain native buffer and kernel resources and allocation charges even
+  when their wrappers are dropped before finishing the recording. Recording
+  does not execute commands, and replay remains bound to the original stream.
+- Add `Graph::binding_bytes` to report distinct bound allocation bytes.
+- Retain the qualified 0.8.15 native bundle unchanged.
 
 ## 0.8.15 — fix native compiler value-domain lifetime
 

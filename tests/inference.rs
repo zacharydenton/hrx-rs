@@ -1472,17 +1472,17 @@ fn decode_linear_shares_dispatch_and_preserves_output_leases() -> hrx::Result<()
                 let bytes = context.download(actual)?.wait()?;
                 let values: Vec<_> = if dtype == DType::F32 {
                     bytes
-                        .chunks_exact(4)
-                        .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|v| f32::from_le_bytes(*v))
                         .collect()
                 } else {
                     bytes
-                        .chunks_exact(2)
-                        .map(|v| {
-                            f32::from_bits(
-                                u32::from(u16::from_le_bytes(v.try_into().unwrap())) << 16,
-                            )
-                        })
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|v| f32::from_bits(u32::from(u16::from_le_bytes(*v)) << 16))
                         .collect()
                 };
                 assert_eq!(&values, expected);

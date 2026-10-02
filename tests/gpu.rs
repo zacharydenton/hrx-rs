@@ -971,7 +971,7 @@ fn large_graph_replays_across_native_batch_boundaries() -> hrx::Result<()> {
             }
             let mut bytes = vec![0; ROWS * 16];
             stream.read_blocking(output.binding(), &mut bytes)?;
-            for (i, row) in bytes.chunks_exact(16).enumerate() {
+            for (i, row) in bytes.as_chunks::<16>().0.iter().enumerate() {
                 assert_eq!(row, &[(i % 251 + 1) as u8; 16]);
             }
         }
@@ -1036,10 +1036,10 @@ fn graph_argument_arena_crosses_pages_and_retains_bindings() -> hrx::Result<()> 
         stream.launch(&mut exec)?;
         let mut actual = vec![0u8; COUNT * 512];
         stream.read_blocking(output.binding(), &mut actual)?;
-        for (i, row) in actual.chunks_exact(512).enumerate() {
+        for (i, row) in actual.as_chunks::<512>().0.iter().enumerate() {
             let expected = [0x3f00u16, 0x3f80, 0x3fc0, 0x4000][i % 4].to_le_bytes();
             assert!(
-                row.chunks_exact(2).all(|v| v == expected),
+                row.as_chunks::<2>().0.iter().all(|v| *v == expected),
                 "argument slot {i}"
             );
         }
