@@ -259,6 +259,7 @@ impl Fabric {
                 coherent: true,
                 ..Default::default()
             },
+            None,
         )
     }
     /// Allocate host-visible system backing with access for every listed device.
@@ -269,6 +270,19 @@ impl Fabric {
             devices,
             AMDF_MEMORY_ACCESS_READ | AMDF_MEMORY_ACCESS_WRITE,
             64,
+        )
+    }
+    /// Allocate and publish a nonempty host byte slice in one initialization pass.
+    /// The returned storage owns a copy; the input may be released immediately.
+    pub fn allocate_from(&self, data: &[u8], devices: &[Device]) -> Result<Buffer> {
+        self.create_memory(
+            data.len(),
+            devices,
+            AMDF_MEMORY_ACCESS_READ | AMDF_MEMORY_ACCESS_WRITE,
+            64,
+            None,
+            MemoryOwners::default(),
+            Some(data),
         )
     }
     /// Allocate backing under a shared residency ceiling. Clones and in-flight
@@ -291,6 +305,7 @@ impl Fabric {
                 source: None,
                 reservation: Some(reservation),
             },
+            None,
         )
     }
     pub(super) fn allocate_access(
@@ -307,6 +322,7 @@ impl Fabric {
             alignment,
             None,
             MemoryOwners::default(),
+            None,
         )
     }
     #[cfg(feature = "npu")]
@@ -330,6 +346,7 @@ impl Fabric {
                 source: Some(source.clone()),
                 reservation: None,
             },
+            None,
         )
     }
 
@@ -358,6 +375,7 @@ impl Fabric {
                 coherent: true,
                 ..Default::default()
             },
+            None,
         )
     }
     fn create_memory(
@@ -368,9 +386,17 @@ impl Fabric {
         alignment: u64,
         host: Option<*mut std::ffi::c_void>,
         owners: MemoryOwners,
+        initial_data: Option<&[u8]>,
     ) -> Result<Buffer> {
         if bytes == 0 {
             return Err(Error::Message("allocation must be nonempty".into()));
+        }
+        if initial_data
+            .is_some_and(|data| data.len() != bytes || host.is_some() || owners.source.is_some())
+        {
+            return Err(Error::Message(
+                "initial data must cover exactly one new allocation".into(),
+            ));
         }
         for (index, device) in devices.iter().enumerate() {
             if !Arc::ptr_eq(&self.0, &device.0.endpoint.0.instance)
@@ -601,7 +627,14 @@ impl Fabric {
                 memory.pointer = info.pointer.cast();
                 unsafe {
                     if host.is_none() && owners.source.is_none() {
-                        ptr::write_bytes(memory.pointer, 0, bytes);
+                        if let Some(data) = initial_data {
+                            // Fresh private backing has no device-written cache
+                            // lines to acquire. Initialize all bytes before the
+                            // single publication below or exposing a safe Buffer.
+                            ptr::copy_nonoverlapping(data.as_ptr(), memory.pointer, bytes);
+                        } else {
+                            ptr::write_bytes(memory.pointer, 0, bytes);
+                        }
                     }
                 }
                 let buffer = Buffer(Arc::new(memory));

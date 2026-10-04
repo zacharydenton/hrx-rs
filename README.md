@@ -126,6 +126,10 @@ synchronization need `&mut`. `Kernel` is `Clone`, retaining the executable.
 Transfers, fills, copies and dispatch bindings use `View`. Borrow a whole buffer
 with `buffer.binding()` and a subregion with `view.slice(offset, length)?`.
 `upload` queues a transfer through owned staging; `upload_blocking` waits for it.
+For immutable weights, `stream.allocate_from(bytes)` creates an owned copy and
+publishes it directly from the host. Fresh backing is initialized in one pass,
+without zeroing and flushing it before writing the data. The slice must be
+nonempty; allocation budgets and safe reuse of pooled storage still apply.
 Ordinary GPU buffers use cacheable system memory; stream transfers perform the
 required host cache maintenance. For direct host pointers, use
 `allocate_shared` with external synchronization, or call `Buffer::cache_control`

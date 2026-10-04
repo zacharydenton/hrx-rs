@@ -581,7 +581,18 @@ impl Stream {
     /// Allocate initialized native GPU-visible storage with unspecified contents.
     /// Empty requests round to one.
     pub fn allocate(&self, bytes: usize) -> Result<Buffer> {
-        let bytes = bytes.max(1);
+        self.allocate_initialized(bytes.max(1), None)
+    }
+    /// Allocate an owned copy of a nonempty byte slice and publish it to the GPU.
+    /// Fresh backing is initialized directly, without a preliminary zero fill.
+    /// This does not wait for unrelated stream work; no existing buffer changes.
+    pub fn allocate_from(&self, data: &[u8]) -> Result<Buffer> {
+        if data.is_empty() {
+            return Err(Error::Message("initial data must be nonempty".into()));
+        }
+        self.allocate_initialized(data.len(), Some(data))
+    }
+    fn allocate_initialized(&self, bytes: usize, data: Option<&[u8]>) -> Result<Buffer> {
         let reservation = self.reserve(bytes)?;
         let reused = if reservation.is_none() {
             let mut pool = self
@@ -596,12 +607,20 @@ impl Stream {
             None
         };
         let native = match reused {
-            Some(native) => native,
-            None => self
-                .inner
-                .device
-                .fabric()
-                .allocate(bytes, std::slice::from_ref(&self.inner.device))?,
+            Some(native) => {
+                if let Some(data) = data {
+                    native.write(0, data)?;
+                }
+                native
+            }
+            None => {
+                let fabric = self.inner.device.fabric();
+                let devices = std::slice::from_ref(&self.inner.device);
+                match data {
+                    Some(data) => fabric.allocate_from(data, devices)?,
+                    None => fabric.allocate(bytes, devices)?,
+                }
+            }
         };
         Ok(Buffer {
             native,
@@ -1507,6 +1526,55 @@ mod tests {
 #[cfg(test)]
 mod staging_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires gfx1151"]
+    fn initialized_allocations_publish_all_bytes_and_preserve_pool_and_budget_rules() -> Result<()>
+    {
+        let device = Device::open(0)?;
+        let mut stream = device.stream()?;
+        assert!(stream.allocate_from(&[]).is_err());
+        assert!(device.native.fabric().allocate_from(&[], &[]).is_err());
+        // Odd lengths exercise the final partial cache line. Repeated rounds
+        // deliberately recover the same pooled backing after GPU writes.
+        for len in [1, 63, 65, 4097] {
+            let mut prior = None;
+            for round in 0..3 {
+                let data: Vec<u8> = (0..len).map(|i| (i * 37 + round * 19) as u8).collect();
+                let input = stream.allocate_from(&data)?;
+                if let Some(prior) = prior {
+                    assert_eq!(input.native.identity(), prior);
+                }
+                prior = Some(input.native.identity());
+                let output = stream.allocate_zeroed(len)?;
+                stream.copy(output.binding(), input.binding())?;
+                let mut actual = vec![0; len];
+                stream.read_blocking(output.binding(), &mut actual)?;
+                assert_eq!(actual, data);
+                stream.fill(input.binding(), 0xa5)?;
+                // Move the retained completion prefix to unrelated backing.
+                stream.fill(output.binding(), 0)?;
+                stream.synchronize()?;
+                drop(input);
+                // Keep output out of the pool so the next input must reuse
+                // the backing just written by the GPU.
+                drop(output.into_unpooled());
+            }
+        }
+        let residency = crate::residency::ResidencyManager::new(4097)?;
+        let budget = residency.budget();
+        let mut budgeted = device.stream()?.with_memory_budget(budget.clone());
+        let input = budgeted.allocate_from(&vec![0x71; 4097])?;
+        assert_eq!(budget.reserved_bytes(), 4097);
+        assert!(budgeted.allocate_from(&[1]).is_err());
+        assert_eq!(budget.reserved_bytes(), 4097);
+        let mut actual = vec![0; 4097];
+        budgeted.read_blocking(input.binding(), &mut actual)?;
+        assert_eq!(actual, vec![0x71; 4097]);
+        drop(input);
+        assert_eq!(budget.reserved_bytes(), 0);
+        Ok(())
+    }
 
     #[test]
     #[ignore = "requires gfx1151"]
