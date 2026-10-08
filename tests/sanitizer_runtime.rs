@@ -207,41 +207,99 @@ fn graph_collects_owned_sanitizer_reports_and_charges_runtime_budget() -> hrx::R
     Ok(())
 }
 
-#[test]
-#[ignore = "requires current native compiler/bridge and gfx1151"]
-fn address_instrumentation_is_rejected_without_a_bounded_shadow_runtime() -> hrx::Result<()> {
-    let device = Device::open(Engine::Gpu, 0)?;
-    let checks = SanitizerChecks {
-        access: true,
-        ..Default::default()
-    };
-    let source = SOURCE.replace(
-        "  view.store",
-        "  sanitizer.assert.access<write> %view[0] : view<1xi32>\n  view.store",
+const ADDRESS_SOURCE: &str = r#"
+kernel.def @checked_address() {
+  %one = index.constant 1 : index
+  kernel.launch.config workgroups(%one, %one, %one) workgroup_size(%one, %one, %one) : index
+} launch(%offset: i64, %output: buffer) {
+  %bounded = scalar.assume %offset [range(%offset, 0, 9223372036854775807)] : i64
+  %byte = index.cast %bounded : i64 to offset
+  %zero = index.constant 0 : index
+  %value = scalar.constant 9 : i32
+  %global = buffer.assume.memory_space<global> %output : buffer
+  %view = buffer.view %global[%byte] : buffer -> view<1xi32>
+  sanitizer.assert.access<write> %view[0] : view<1xi32>
+  view.store %value, %view[%zero] : i32, view<1xi32>
+  kernel.return
+}
+"#;
+fn address_artifact(wave: u32) -> hrx::Result<hrx::loom::Artifact> {
+    let source = format!(
+        "amdgpu.target<gfx1151> @address_target {{subgroup_size = {wave}}}\n{}",
+        ADDRESS_SOURCE.replace("kernel.def @", "kernel.def target(@address_target) @")
     );
-    let artifact = Compiler::shared(
+    Compiler::shared(
         None,
         CompilerOptions {
             sanitizer: SanitizerOptions {
-                checks,
+                checks: SanitizerChecks {
+                    access: true,
+                    ..Default::default()
+                },
                 reporting: SanitizerReporting::ReportOnly,
             },
             ..Default::default()
         },
     )?
     .module(&source)
-    .compile(&Specialization::new("checked"))?;
-    for result in [unsafe { device.load(&artifact) }, unsafe {
-        device.load_sanitized(&artifact, &SanitizerRuntimeOptions::default())
-    }] {
-        match result {
-            Err(hrx::Error::Unsupported(message)) if message.contains("shadow storage") => (),
-            Err(error) => panic!("{}: {error}", artifact.path().display()),
-            Ok(_) => panic!(
-                "{}: unexpectedly admitted shadow instrumentation",
-                artifact.path().display()
-            ),
-        };
+    .compile(&Specialization::new("checked_address"))
+}
+#[test]
+#[ignore = "requires current native compiler/bridge and gfx1151"]
+fn address_checks_report_inaccessible_bytes_without_faulting_shadow_loads() -> hrx::Result<()> {
+    let device = Device::open(Engine::Gpu, 0)?;
+    let queue = device.aql_queue(0)?;
+    for wave in [32, 64] {
+        let artifact = address_artifact(wave)?;
+        assert!(matches!(
+            unsafe { device.load(&artifact) },
+            Err(hrx::Error::Unsupported(_))
+        ));
+        let kernel =
+            unsafe { device.load_sanitized(&artifact, &SanitizerRuntimeOptions::default()) }?;
+        let output = device.fabric().allocate(5, std::slice::from_ref(&device))?;
+        let base = output.device_address(&device)?;
+        for offset in [0u64, 4, 8, 4096, 1 << 62] {
+            output.write(0, &[0x55; 5])?;
+            let command = unsafe {
+                queue.prepare(
+                    &kernel,
+                    [1; 3],
+                    [1; 3],
+                    &[
+                        Argument::Value(&offset.to_le_bytes()),
+                        Argument::Buffer(&output, 0),
+                    ],
+                )
+            }?;
+            let done = unsafe { command.dispatch() }?;
+            assert!(
+                done.wait_timeout(std::time::Duration::from_secs(10))?,
+                "wave{wave} offset{offset}"
+            );
+            let reports = kernel.sanitizer_reports()?;
+            assert_eq!(reports.dropped, 0);
+            let mut actual = [0; 5];
+            output.read(0, &mut actual)?;
+            if offset == 0 {
+                assert!(reports.reports.is_empty(), "{reports:?}");
+                assert_eq!(actual, [9, 0, 0, 0, 0x55]);
+            } else {
+                assert_eq!(
+                    reports.reports.len(),
+                    1,
+                    "wave{wave} offset{offset}: {reports:?}"
+                );
+                let report = &reports.reports[0];
+                assert_eq!(report.check, SanitizerCheck::InvalidAccess);
+                assert!(report.site.is_some());
+                let address = report.address.as_ref().unwrap();
+                assert_eq!(address.fault_address, base.wrapping_add(offset));
+                assert_eq!(address.access_bytes, 4);
+                assert_eq!(address.access, hrx::fabric::SanitizerAccess::Write);
+                assert_eq!(actual, [0x55; 5]);
+            }
+        }
     }
     Ok(())
 }
@@ -630,5 +688,135 @@ fn simultaneous_queues_share_reports_but_keep_private_race_state() -> hrx::Resul
     assert!(first.wait_timeout(std::time::Duration::from_secs(10))?);
     assert!(second.wait_timeout(std::time::Duration::from_secs(10))?);
     assert_eq!(kernel.sanitizer_reports()?.reports.len(), 2);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires current native compiler/bridge and gfx1151"]
+fn combined_address_and_race_graphs_replay_with_bounded_ownership() -> hrx::Result<()> {
+    use hrx::execution::{
+        Access, BindingContract, ComputeEngine, KernelContract, MemoryPlacement, Runtime,
+        RuntimeOptions,
+    };
+    let artifact = Compiler::shared(
+        None,
+        CompilerOptions {
+            sanitizer: SanitizerOptions {
+                checks: SanitizerChecks {
+                    access: true,
+                    race: true,
+                    ..Default::default()
+                },
+                reporting: SanitizerReporting::ReportOnly,
+            },
+            ..Default::default()
+        },
+    )?
+    .module(include_str!("kernels/workgroup_races.loom"))
+    .compile(&Specialization::new(
+        "tsan_workgroup_wide_upper_half_write_race",
+    ))?;
+    let manager = hrx::residency::ResidencyManager::new(64 << 20)?;
+    let budget = manager.budget();
+    {
+        let runtime = Runtime::with_options(RuntimeOptions {
+            compute_engine: ComputeEngine::Aql {
+                maximum_private_bytes: 0,
+            },
+            memory_budget: Some(budget.clone()),
+            ..Default::default()
+        })?;
+        let contract = KernelContract {
+            bindings: vec![BindingContract {
+                bytes: 8,
+                alignment: 4,
+                access: Access::Write,
+                layout: "2xi32".into(),
+            }],
+            constants: vec![],
+        };
+        let kernel =
+            unsafe { runtime.load_sanitized_gpu_artifact(&artifact, &[], contract, 1024) }?;
+        let output = runtime.allocate(8, MemoryPlacement::HostVisible)?;
+        let mut graph = runtime.graph();
+        graph.gpu(&kernel, &[output.view()])?;
+        let graph = graph.prepare()?;
+        let prepared = budget.reserved_bytes();
+        for _ in 0..16 {
+            graph.submit()?.wait()?;
+            let reports = kernel.sanitizer_reports()?;
+            assert_eq!(reports.reports.len(), 1);
+            assert_eq!(reports.reports[0].check, SanitizerCheck::DataRace);
+            assert_eq!(reports.dropped, 0);
+            assert_eq!(budget.reserved_bytes(), prepared);
+        }
+    }
+    assert_eq!(budget.reserved_bytes(), 0);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires current native compiler/bridge and gfx1151"]
+fn address_shadow_budget_failure_releases_partial_state_and_replay_reports_drops() -> hrx::Result<()>
+{
+    let device = Device::open(Engine::Gpu, 0)?;
+    let artifact = address_artifact(32)?;
+    let manager = hrx::residency::ResidencyManager::new(64 << 20)?;
+    let budget = manager.budget();
+    let output = device.fabric().allocate(5, std::slice::from_ref(&device))?;
+    for maximum in [1, 64 << 20] {
+        let queue = device.aql_queue(0)?;
+        let kernel = unsafe {
+            device.load_sanitized(
+                &artifact,
+                &SanitizerRuntimeOptions {
+                    capacity_bytes: 128,
+                    maximum_shadow_bytes: maximum,
+                    memory_budget: Some(budget.clone()),
+                },
+            )
+        }?;
+        let loaded = budget.reserved_bytes();
+        let command = unsafe {
+            queue.prepare(
+                &kernel,
+                [1; 3],
+                [1; 3],
+                &[
+                    Argument::Value(&4u64.to_le_bytes()),
+                    Argument::Buffer(&output, 0),
+                ],
+            )
+        };
+        if maximum == 1 {
+            assert!(command.is_err());
+            assert_eq!(budget.reserved_bytes(), loaded);
+        } else {
+            let command = command?;
+            let prepared = budget.reserved_bytes();
+            for _ in 0..16 {
+                let mut last = None;
+                for _ in 0..8 {
+                    last = Some(unsafe { command.dispatch() }?);
+                }
+                assert!(matches!(
+                    kernel.sanitizer_reports(),
+                    Err(hrx::Error::Busy(_))
+                ));
+                assert!(
+                    last.unwrap()
+                        .wait_timeout(std::time::Duration::from_secs(10))?
+                );
+                let reports = kernel.sanitizer_reports()?;
+                assert_eq!(reports.reports.len(), 1);
+                assert_eq!(reports.dropped, 7);
+                assert_eq!(reports.reports[0].check, SanitizerCheck::InvalidAccess);
+                assert_eq!(budget.reserved_bytes(), prepared);
+            }
+        }
+        drop(kernel);
+        drop(queue);
+        assert_eq!(budget.reserved_bytes(), 0);
+    }
     Ok(())
 }

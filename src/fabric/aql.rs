@@ -362,9 +362,11 @@ impl AqlQueue {
             grid,
             self.0.info.ring_address,
             self.0.info.ring_byte_length / 64 - 1,
+            arguments,
         )?;
         let clear = if let Some(state) = &specialized.0.race_state {
-            let (utility, clear_grid) = state.clear_kernel(self.device(), kernel.race_budget())?;
+            let (utility, clear_grid) =
+                state.clear_kernel(self.device(), kernel.shadow_budget())?;
             // Utility is uninstrumented, so preparation does not recurse again.
             Some(unsafe {
                 self.prepare(
@@ -562,5 +564,205 @@ impl PreparedAql {
             work: self.work.clone(),
             point,
         })
+    }
+}
+
+#[cfg(test)]
+mod sanitizer_tests {
+    use super::*;
+    use crate::loom::{
+        Compiler, CompilerOptions, SanitizerChecks, SanitizerOptions, SanitizerReporting,
+        Specialization,
+    };
+
+    #[test]
+    #[ignore = "requires current native compiler/bridge and gfx1151"]
+    fn address_shadow_guards_null_wrap_and_every_native_load_width() -> Result<()> {
+        let device = Device::open(Engine::Gpu, 0)?;
+        let queue = device.aql_queue(0)?;
+        let compiler = Compiler::shared(
+            None,
+            CompilerOptions {
+                sanitizer: SanitizerOptions {
+                    checks: SanitizerChecks {
+                        access: true,
+                        ..Default::default()
+                    },
+                    reporting: SanitizerReporting::ReportOnly,
+                },
+                ..Default::default()
+            },
+        )?;
+        for wave in [32, 64] {
+            for width in [1, 2, 4, 8, 16, 32, 64, 128] {
+                let source = format!(
+                    r#"
+amdgpu.target<gfx1151> @target {{subgroup_size = {wave}}}
+kernel.def target(@target) @check_range() {{
+  %one = index.constant 1 : index
+  kernel.launch.config workgroups(%one, %one, %one) workgroup_size(%one, %one, %one) : index
+}} launch(%input: buffer, %output: buffer) {{
+  %zero = index.constant 0 : offset
+  %index = index.constant 0 : index
+  %value = scalar.constant 9 : i32
+  %global = buffer.assume.memory_space<global> %input : buffer
+  %view = buffer.view %global[%zero] : buffer -> view<{width}xi8>
+  sanitizer.assert.access<read> %view[0] {{static_extents = [{width}]}} : view<{width}xi8>
+  %out = buffer.assume.memory_space<global> %output : buffer
+  %out_view = buffer.view %out[%zero] : buffer -> view<1xi32>
+  view.store %value, %out_view[%index] : i32, view<1xi32>
+  kernel.return
+}}
+"#
+                );
+                let artifact = compiler
+                    .module(&source)
+                    .compile(&Specialization::new("check_range"))?;
+                let kernel = unsafe {
+                    device.load_sanitized(&artifact, &SanitizerRuntimeOptions::default())
+                }?;
+                let input = device
+                    .fabric()
+                    .allocate(width + 1, std::slice::from_ref(&device))?;
+                let output = device.fabric().allocate(4, std::slice::from_ref(&device))?;
+                let prepared = unsafe {
+                    queue.prepare(
+                        &kernel,
+                        [1; 3],
+                        [1; 3],
+                        &[Argument::Buffer(&input, 0), Argument::Buffer(&output, 0)],
+                    )
+                }?;
+                let packet = prepared.packets.last().unwrap();
+                let kernarg_address = u64::from(packet[10]) | (u64::from(packet[11]) << 32);
+                let kernarg = prepared
+                    .work
+                    .buffers
+                    .iter()
+                    .find(|b| b.device_address(&device).ok() == Some(kernarg_address))
+                    .unwrap();
+                let base = input.device_address(&device)?;
+                for (pointer, valid) in [
+                    (base, true),
+                    (base + 1, true),
+                    (base + 2, false),
+                    (base - 1, false),
+                    (0, false),
+                    (1, false),
+                    (u64::MAX - 1, false),
+                    (u64::MAX - 7, false),
+                    (1 << 63, false),
+                ] {
+                    // Deliberately corrupt only a retired fixture's pointer. The
+                    // public API never accepts a naked pointer in a Buffer binding.
+                    // This kernel checks the range without dereferencing it.
+                    kernarg.write(0, &pointer.to_le_bytes())?;
+                    output.write(0, &17u32.to_le_bytes())?;
+                    let done = unsafe { prepared.dispatch() }?;
+                    assert!(
+                        done.wait_timeout(Duration::from_secs(10))?,
+                        "wave{wave} width{width} pointer{pointer:x}"
+                    );
+                    let reports = kernel.sanitizer_reports()?;
+                    assert_eq!(reports.dropped, 0);
+                    assert_eq!(
+                        reports.reports.len(),
+                        usize::from(!valid),
+                        "wave{wave} width{width} pointer{pointer:x}: {reports:?}"
+                    );
+                    if !valid {
+                        let address = reports.reports[0].address.as_ref().unwrap();
+                        assert_eq!(address.fault_address, pointer);
+                        assert_eq!(address.access_bytes, width as u64);
+                    }
+                    let mut actual = [0; 4];
+                    output.read(0, &mut actual)?;
+                    assert_eq!(u32::from_le_bytes(actual), if valid { 9 } else { 17 });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires current native compiler/bridge and gfx1151"]
+    fn address_checks_keep_valid_and_invalid_lanes_separate() -> Result<()> {
+        let device = Device::open(Engine::Gpu, 0)?;
+        let queue = device.aql_queue(0)?;
+        let compiler = Compiler::shared(
+            None,
+            CompilerOptions {
+                sanitizer: SanitizerOptions {
+                    checks: SanitizerChecks {
+                        access: true,
+                        ..Default::default()
+                    },
+                    reporting: SanitizerReporting::ReportOnly,
+                },
+                ..Default::default()
+            },
+        )?;
+        for wave in [32, 64] {
+            let source = format!(
+                r#"
+amdgpu.target<gfx1151> @target {{subgroup_size = {wave}}}
+kernel.def target(@target) @check_lanes() {{
+  %one = index.constant 1 : index
+  %threads = index.constant 64 : index
+  kernel.launch.config workgroups(%one, %one, %one) workgroup_size(%threads, %one, %one) : index
+}} launch(%input: buffer, %output: buffer) {{
+  %zero = index.constant 0 : offset
+  %lane = kernel.workitem.id<x> : index
+  %value = scalar.constant 9 : i32
+  %global = buffer.assume.memory_space<global> %input : buffer
+  %view = buffer.view %global[%zero] : buffer -> view<64xi8>
+  sanitizer.assert.access<read> %view[%lane] : view<64xi8>
+  %out = buffer.assume.memory_space<global> %output : buffer
+  %out_view = buffer.view %out[%zero] : buffer -> view<64xi32>
+  view.store %value, %out_view[%lane] : i32, view<64xi32>
+  kernel.return
+}}
+"#
+            );
+            let artifact = compiler
+                .module(&source)
+                .compile(&Specialization::new("check_lanes"))?;
+            let kernel =
+                unsafe { device.load_sanitized(&artifact, &SanitizerRuntimeOptions::default()) }?;
+            let input = device
+                .fabric()
+                .allocate(33, std::slice::from_ref(&device))?;
+            let output = device
+                .fabric()
+                .allocate(256, std::slice::from_ref(&device))?;
+            output.write(0, &[0; 256])?;
+            let prepared = unsafe {
+                queue.prepare(
+                    &kernel,
+                    [1; 3],
+                    [64, 1, 1],
+                    &[Argument::Buffer(&input, 0), Argument::Buffer(&output, 0)],
+                )
+            }?;
+            let done = unsafe { prepared.dispatch() }?;
+            assert!(done.wait_timeout(Duration::from_secs(10))?);
+            let reports = kernel.sanitizer_reports()?;
+            assert_eq!(reports.dropped, 0);
+            assert!(!reports.reports.is_empty());
+            let base = input.device_address(&device)?;
+            for report in reports.reports {
+                let address = report.address.unwrap();
+                assert!((base + 33..base + 64).contains(&address.fault_address));
+                assert!((33..64).contains(&report.workitem_x));
+            }
+            if wave == 32 {
+                let mut first_wave = [0; 128];
+                output.read(0, &mut first_wave)?;
+                for word in first_wave.chunks_exact(4) {
+                    assert_eq!(word, 9u32.to_le_bytes());
+                }
+            }
+        }
+        Ok(())
     }
 }

@@ -11,7 +11,8 @@
       "0013-retain-value-domain-arena.patch": "6e8eaffa6e4deaf2ddedd1c419c50cc687bf94d898ddc79859d12b407ef43b83",
       "0014-materialize-bounded-index-extrema.patch": "fcf6fd36169055c77a77ca8b3234558c960198f82cae3a5a777264437d8836ca",
       "0015-retain-partial-incoming-vmem-leases.patch": "a8104c18e8d9cdac7c1a5d50e1640142ad6050a3a2b50860a4eceb570ba20119",
-      "0016-honor-polled-feedback-and-active-masks.patch": "2ef83116685aa50cc668389bba346b0759ddcf786a62dd214e51b90e0f7d1877"
+      "0016-honor-polled-feedback-and-active-masks.patch": "2ef83116685aa50cc668389bba346b0759ddcf786a62dd214e51b90e0f7d1877",
+      "0017-bound-address-sanitizer-shadow-loads.patch": "f6409b9cce4d604d8246985bef6ee08149070dd9f57b6c3b899d7b11d46893ae"
     }
   },
   "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",

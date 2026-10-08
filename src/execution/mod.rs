@@ -478,12 +478,13 @@ impl Runtime {
         }
     }
 
-    /// Load a value/operation or workgroup-race artifact with bounded runtime storage.
+    /// Load a sanitized GPU artifact with bounded feedback and shadow storage.
     /// Requires the AQL compute engine. Storage is charged to this runtime's
     /// memory budget and retained through every prepared and pending invocation.
     /// Collect diagnostics with [`GpuKernel::sanitizer_reports`] after completion.
-    /// Address shadow instrumentation is rejected. Race shadow is limited to 64 MiB
-    /// per prepared dispatch and participates in the runtime memory budget.
+    /// Combined address/race shadow is limited to 64 MiB per prepared dispatch and
+    /// participates in the runtime memory budget. Address checks cover complete
+    /// bound allocations, including when the graph binds a slice.
     /// # Safety
     /// The kernel must obey `contract` for this workload and all accepted bindings.
     /// Use report-only instrumentation if execution must continue after failure.

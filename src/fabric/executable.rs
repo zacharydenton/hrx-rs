@@ -35,12 +35,14 @@ pub(super) struct KernelInner {
     image: Arc<GpuImage>,
     sanitizer: Option<Arc<super::sanitizer::Feedback>>,
     feedback_global: std::ops::Range<usize>,
-    race: Option<RaceTemplate>,
+    instrumentation: Option<ShadowTemplate>,
+    address_state: Option<super::sanitizer::AddressState>,
     pub(super) race_state: Option<super::sanitizer::RaceState>,
     pub(super) info: hrx_fabric_gpu_info,
 }
-struct RaceTemplate {
-    global: std::ops::Range<usize>,
+struct ShadowTemplate {
+    race_global: std::ops::Range<usize>,
+    address_global: std::ops::Range<usize>,
     options: super::SanitizerRuntimeOptions,
 }
 struct GpuImage {
@@ -118,6 +120,9 @@ impl Kernel {
         if let Some(feedback) = &self.0.sanitizer {
             resources.push(feedback.buffer().clone());
         }
+        if let Some(state) = &self.0.address_state {
+            resources.push(state.shadow.clone());
+        }
         if let Some(state) = &self.0.race_state {
             resources.extend([state.shadow.clone(), state.queue_state.clone()]);
         }
@@ -159,26 +164,53 @@ impl Kernel {
         }
         Ok((packed, resources))
     }
-    pub(super) fn for_aql(&self, grid: [u32; 3], ring: u64, mask: u64) -> Result<Self> {
-        let Some(race) = &self.0.race else {
+    pub(super) fn for_aql(
+        &self,
+        grid: [u32; 3],
+        ring: u64,
+        mask: u64,
+        arguments: &[Argument<'_>],
+    ) -> Result<Self> {
+        let Some(template) = &self.0.instrumentation else {
             return Ok(self.clone());
         };
-        let state = super::sanitizer::RaceState::new(
-            self.device(),
-            &race.options,
-            self.0.info.local_bytes,
-            grid,
-            ring,
-            mask,
-        )?;
         let code = self.device().fabric().allocate_owned(
             self.0.code.len(),
             self.device(),
             AMDF_MEMORY_ACCESS_READ | AMDF_MEMORY_ACCESS_WRITE | AMDF_MEMORY_ACCESS_EXECUTE,
             4096,
             false,
-            race.options.memory_budget.as_ref(),
+            template.options.memory_budget.as_ref(),
         )?;
+        let address_state = if template.address_global.is_empty() {
+            None
+        } else {
+            let mut ranges = vec![(code.device_address(self.device())?, code.len())];
+            for argument in arguments {
+                if let Argument::Buffer(buffer, _) = argument {
+                    ranges.push((buffer.device_address(self.device())?, buffer.len()));
+                }
+            }
+            Some(super::sanitizer::AddressState::new(
+                self.device(),
+                &template.options,
+                ranges,
+            )?)
+        };
+        let race_state = if template.race_global.is_empty() {
+            None
+        } else {
+            let mut options = template.options.clone();
+            options.maximum_shadow_bytes -= address_state.as_ref().map_or(0, |s| s.shadow.len());
+            Some(super::sanitizer::RaceState::new(
+                self.device(),
+                &options,
+                self.0.info.local_bytes,
+                grid,
+                ring,
+                mask,
+            )?)
+        };
         let mut contents = vec![0; code.len()];
         bridge_check(&self.0.image.api, unsafe {
             self.0.image.api.hrx_fabric_gpu_image_load(
@@ -191,9 +223,14 @@ impl Kernel {
         self.0
             .sanitizer
             .as_ref()
-            .ok_or_else(|| missing("race feedback"))?
+            .ok_or_else(|| missing("sanitizer feedback"))?
             .configure(&mut contents[self.0.feedback_global.clone()])?;
-        state.configure(&mut contents[race.global.clone()])?;
+        if let Some(state) = &address_state {
+            state.configure(&mut contents[template.address_global.clone()])?;
+        }
+        if let Some(state) = &race_state {
+            state.configure(&mut contents[template.race_global.clone()])?;
+        }
         code.write(0, &contents)?;
         Ok(Self(Arc::new(KernelInner {
             device: self.device().clone(),
@@ -201,14 +238,15 @@ impl Kernel {
             image: self.0.image.clone(),
             sanitizer: self.0.sanitizer.clone(),
             feedback_global: self.0.feedback_global.clone(),
-            race: None,
-            race_state: Some(state),
+            instrumentation: None,
+            race_state,
+            address_state,
             info: self.0.info,
         })))
     }
-    pub(super) fn race_budget(&self) -> Option<&crate::residency::MemoryBudget> {
+    pub(super) fn shadow_budget(&self) -> Option<&crate::residency::MemoryBudget> {
         self.0
-            .race
+            .instrumentation
             .as_ref()
             .and_then(|r| r.options.memory_budget.as_ref())
     }
@@ -269,11 +307,14 @@ impl Device {
         unsafe { self.load_bytes(artifact.bytes(), artifact.symbol()) }
     }
     /// Load an artifact with an owned, bounded sanitizer feedback channel.
-    /// Supports value/operation reports and workgroup-local race checking.
-    /// Address instrumentation requires a bounded shadow runtime and is rejected.
+    /// Supports address/value/operation reports and workgroup-local race checking.
+    /// Address shadow covers the complete bound allocations and executable storage.
+    /// Allocation starts must be 8-byte aligned; undeclared pointers stay poisoned.
+    /// Preparation rejects an address span whose shadow exceeds the configured limit.
     /// Dispatch through an AQL queue, which supplies the native dispatch pointer.
     /// # Safety
-    /// The artifact is trusted native code. Use report-only instrumentation when
+    /// The artifact must use the current compiler and its bounded shadow checks.
+    /// It remains trusted native code. Use report-only instrumentation when
     /// execution must complete after a diagnostic; trap mode can fault the queue.
     pub unsafe fn load_sanitized(
         &self,
@@ -343,9 +384,6 @@ impl Device {
             Ok(start..end)
         };
         let feedback_global = global(c"iree_feedback_config")?;
-        if !global(c"iree_asan_config")?.is_empty() {
-            return Err(Error::Unsupported("instrumented artifact requires bounded address shadow storage; this loader does not supply it".into()));
-        }
         match (feedback_global.is_empty(), sanitizer_options.is_some()) {
             (false, false) => {
                 return Err(Error::Unsupported(
@@ -360,19 +398,23 @@ impl Device {
             _ => (),
         }
         let race_global = global(c"iree_tsan_config")?;
-        if !race_global.is_empty() && race_global.len() != 96 {
-            return Err(Error::Unsupported(
-                "unexpected race configuration ABI".into(),
-            ));
+        let address_global = global(c"iree_asan_config")?;
+        for range in [&race_global, &address_global] {
+            if !range.is_empty() && range.len() != 96 {
+                return Err(Error::Unsupported(
+                    "unexpected sanitizer shadow configuration ABI".into(),
+                ));
+            }
         }
-        let race = if race_global.is_empty() {
+        let instrumentation = if race_global.is_empty() && address_global.is_empty() {
             None
         } else {
-            Some(RaceTemplate {
-                global: race_global,
+            Some(ShadowTemplate {
+                race_global,
+                address_global,
                 options: sanitizer_options
                     .ok_or_else(|| {
-                        Error::Unsupported("race instrumentation requires load_sanitized".into())
+                        Error::Unsupported("shadow instrumentation requires load_sanitized".into())
                     })?
                     .clone(),
             })
@@ -416,8 +458,9 @@ impl Device {
         Ok(Kernel(Arc::new(KernelInner {
             sanitizer,
             feedback_global,
-            race,
+            instrumentation,
             race_state: None,
+            address_state: None,
             device: self.clone(),
             code,
             image: Arc::new(image),

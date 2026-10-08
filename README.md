@@ -186,8 +186,9 @@ source-to-low expansion selections through `CompileReport::expansions`.
 `CompilerOptions::sanitizer` selects access, value, operation, and race checks,
 with native default, trap, or report-only behavior. CLI equivalents are
 `--sanitizer=access,value,operation,race` and `--sanitizer-reporting=trap`.
-Instrumentation has its own compiler and artifact identities. Value/operation
-reports and workgroup-local race checks are available through `Device::load_sanitized` on AQL, or through
+Instrumentation has its own compiler and artifact identities. Address/value/operation
+reports and workgroup-local race checks are available through
+`Device::load_sanitized` on AQL, or through
 `Runtime::load_sanitized_gpu_artifact` with the AQL compute engine. Use report-only
 instrumentation, wait for execution completion, then call `sanitizer_reports()`
 on the loaded kernel. Reports own their source/predicate metadata; collection
@@ -199,10 +200,16 @@ safe or prove outputs valid. Race reports include both access sites, access widt
 addresses, and workitem coordinates. Each prepared AQL dispatch owns bounded
 shadow storage for its actual grid and compiled LDS requirement; ordered GPU
 clears reset it before replay. `SanitizerRuntimeOptions::maximum_shadow_bytes`
-limits this storage, and the supplied budget also covers private instrumented
-code. Race checking covers workgroup-local memory, not global memory or races
-between queues. Access instrumentation still requires bounded address shadow
-memory and is rejected by the loader. Ordinary loading also rejects artifacts
+limits combined address/race shadow storage, and the supplied budget also
+covers private instrumented code. Race checking covers workgroup-local memory,
+not global memory or races
+between queues. Address checks cover complete bound allocations and executable
+storage, with partial allocation tails and gaps poisoned. Allocation starts must
+be 8-byte aligned; preparation rejects address spans whose shadow exceeds the
+configured limit. Slice boundaries inside an allocation are not separate address
+limits, and pointers to undeclared allocations remain poisoned. The current
+compiler masks out-of-window shadow loads, including wrapped and wide accesses.
+Ordinary loading also rejects artifacts
 requiring a feedback channel instead of leaving their configuration disabled.
 
 `fabric::Endpoint::queue_capabilities` exposes native queue families;

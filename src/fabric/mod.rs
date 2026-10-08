@@ -51,8 +51,8 @@ pub(crate) use queue::GraphArena;
 pub use queue::{Completion, PreparedGpu, Queue};
 mod sanitizer;
 pub use sanitizer::{
-    SanitizerAccess, SanitizerCheck, SanitizerRace, SanitizerReport, SanitizerReports,
-    SanitizerRuntimeOptions, SanitizerSite,
+    SanitizerAccess, SanitizerAddress, SanitizerCheck, SanitizerRace, SanitizerReport,
+    SanitizerReports, SanitizerRuntimeOptions, SanitizerSite,
 };
 mod executable;
 pub use executable::{Argument, Kernel};

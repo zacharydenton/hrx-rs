@@ -3,7 +3,7 @@
   "target": "x86_64-unknown-linux-gnu-gfx1151",
   "revision": "HRX 7e9c7bbd5e; current Loom artifact API; Ubuntu 26.04",
   "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20261008-7e9c7bbd5e/hrx-linux-x86_64-gfx1151.tar.gz",
-  "archive_sha256": "9cbc375dceb1bb93f45e141a5f2377293ee9596348c42488c1b23ba2e28298d3",
+  "archive_sha256": "cb4685fa3f30329cefd6cad7c3b00bc9a1d4a890aecb2d7d2555854204c059b9",
   "files": {
     "LICENSE-AMDGPU-ISA.txt": "4b58c86ef9b8f1be198079e5b62ea5c2bea0cc2f9187d21463a9c5e4ca75d69c",
     "LICENSE-CORE-MATH.txt": "4639ae96f455d387fd2b042ce11a2713ac3ee9bfc82591182683f4ee503be011",
@@ -16,11 +16,11 @@
     "LICENSE-linux-gpl2-license.txt": "8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa",
     "LICENSE-linux-syscall-note.txt": "8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f",
     "LICENSE-linux-uapi.txt": "92152ba337f60157525215efd807599fb813c97045eabf0594924db88d6bab79",
-    "NOTICE": "38f59409b2f54920e711bc038b8bd7d9e241e140553db933ff1f9e1eac3e15f2",
-    "THIRD-PARTY.json": "23b42e0818a7205bf64b6954ae2bd548ae710fc3aa223e49f463226c03292a37",
+    "NOTICE": "5d50ca8f535bfb07c8c207a517415cb70ddeadf680e1e810f6921605e20b8434",
+    "THIRD-PARTY.json": "060107774579eb4ef43a298f4afd87b479519bb95ab06405f5f720862489b8d0",
     "libamdf.so": "8a3b242b4a73c5755b2b62ae0cbb6ffc899926f1a2a779aeec67943246174bb5",
     "libhrx_fabric.so": "b09ff481c1ed454d07fdc58e877bd4be01d8bf344bf50a785474de6661583d40",
-    "libloomc.so": "8c7fa6ab9f7ecf0eaf53b7095e3d3eab458ee7868d2a442f5bb58d4049cd3ee7",
-    "provenance.json": "c7c68db6aa231644872370d1cff1947148aeaa5fa624716ee56bcf75d6802d16"
+    "libloomc.so": "1b9a6e19cdf1427bb79a7a059bcc78ce18b51f83a96e383a9cae7e4c3f77800c",
+    "provenance.json": "daad3995e59d72eae4c8164638c4e79b330f222709112c04332a68acadc9ed84"
   }
 }

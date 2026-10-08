@@ -9,12 +9,13 @@
 - Stream bounded native pass traces as text or JSONL, with pass filters, explicit
   cache bypass and callback panic containment. Expose native sanitizer pipeline
   configuration with distinct shared-compiler and artifact cache identities.
-  Add bounded, owned value/operation and workgroup race reports through AQL
+  Add bounded, owned address/value/operation and workgroup race reports through AQL
   and graph execution, with source metadata, overflow counts and residency
   charges. Prepare private race shadow and immutable code per dispatch, with
   ordered GPU clears before replay. Decode both race sites and access coordinates.
-  Fix native null-signal polling and wave32 feedback-capacity checks. Reject
-  address instrumentation until a bounded address-shadow runtime is supplied.
+  Add immutable allocation shadow with poisoned gaps and partial tails. Guard
+  native application and shadow extents before loads, including address wrap and
+  wide access chunks. Fix null-signal polling and wave32 feedback-capacity checks.
 - Expose native queue capabilities and concrete directional memory visibility.
   Add SDMA transfers, PM4/SDMA dependency packets, and copy-only graph selection.
   Add owned AQL v1 dispatch with fixed scratch and instruction-cache publication,

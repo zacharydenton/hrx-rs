@@ -3,16 +3,16 @@ use super::*;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
-/// Bounded runtime storage for sanitizer diagnostics and workgroup race state.
+/// Bounded runtime storage for sanitizer diagnostics, address shadow, and race state.
 #[derive(Clone, Debug)]
 pub struct SanitizerRuntimeOptions {
     /// Power-of-two packet capacity, 128 bytes through 16 MiB.
     /// Collection happens after retirement; excess reports increment a drop count.
     pub capacity_bytes: usize,
-    /// Maximum race-shadow bytes per prepared dispatch, excluding code and reports.
-    /// Geometry is derived from the actual grid and compiled LDS requirement.
+    /// Maximum combined address/race shadow bytes per prepared dispatch, excluding code and reports.
+    /// Address shadow covers bound allocations and code; race shadow covers the grid and LDS.
     pub maximum_shadow_bytes: usize,
-    /// Optional charge for reports, race shadow, and private instrumented code.
+    /// Optional charge for reports, shadow storage, and private instrumented code.
     /// Reservations remain with their allocations through native use.
     pub memory_budget: Option<crate::residency::MemoryBudget>,
 }
@@ -44,6 +44,8 @@ pub enum SanitizerCheck {
     Assertion,
     /// Conflicting unsynchronized accesses to workgroup memory.
     DataRace,
+    /// A memory access touched inaccessible allocation bytes.
+    InvalidAccess,
 }
 /// Owned compiler site metadata. Line and column numbers preserve native values.
 #[derive(Clone, Debug, Serialize)]
@@ -59,7 +61,7 @@ pub struct SanitizerSite {
     /// Compiler-owned encoded predicate payload.
     pub predicate_payload: Vec<u8>,
 }
-/// Native memory access classification for race diagnostics.
+/// Native memory access classification for sanitizer diagnostics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum SanitizerAccess {
     /// Non-atomic read.
@@ -123,6 +125,20 @@ pub struct SanitizerRace {
     pub prior_workitem_linear: bool,
 }
 
+/// Owned details of an address sanitizer failure.
+#[derive(Clone, Debug, Serialize)]
+pub struct SanitizerAddress {
+    /// Read, write, or atomic operation.
+    pub access: SanitizerAccess,
+    /// Original application address checked by the instrumentation.
+    pub fault_address: u64,
+    /// Access width in bytes.
+    pub access_bytes: u64,
+    /// Computed shadow address; out-of-window checks skip the load.
+    pub shadow_address: u64,
+    /// Shadow byte, or full poison when the lookup is out of bounds.
+    pub shadow_value: u64,
+}
 /// One fully owned diagnostic from a completed native invocation.
 #[derive(Clone, Debug, Serialize)]
 pub struct SanitizerReport {
@@ -142,6 +158,8 @@ pub struct SanitizerReport {
     pub site: Option<SanitizerSite>,
     /// Both sides of a workgroup race, when this is a race report.
     pub race: Option<SanitizerRace>,
+    /// Address details when this is an inaccessible memory report.
+    pub address: Option<SanitizerAddress>,
 }
 /// Reports since the last successful collection across all uses of one kernel.
 #[derive(Clone, Debug, Serialize)]
@@ -218,6 +236,99 @@ impl Feedback {
             bytes[64..].fill(0);
             Ok(result)
         })
+    }
+}
+
+pub(super) struct AddressState {
+    pub(super) shadow: Buffer,
+    config: [u8; 96],
+}
+fn address_shadow(mut ranges: Vec<(u64, usize)>, maximum: usize) -> Result<(u64, u64, Vec<u8>)> {
+    ranges.sort_unstable();
+    let mut merged: Vec<(u64, u64)> = Vec::new();
+    for (start, len) in ranges {
+        if start % 8 != 0 || len == 0 {
+            return Err(Error::Unsupported(
+                "address sanitizer allocations must start on an 8-byte boundary and be nonempty"
+                    .into(),
+            ));
+        }
+        let end = start
+            .checked_add(len as u64)
+            .ok_or_else(|| Error::Message("address sanitizer allocation overflow".into()))?;
+        if let Some(last) = merged.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+            continue;
+        }
+        merged.push((start, end));
+    }
+    let base = merged
+        .first()
+        .ok_or_else(|| Error::Message("empty address sanitizer window".into()))?
+        .0;
+    let end = merged
+        .last()
+        .unwrap()
+        .1
+        .checked_add(7)
+        .map(|n| n & !7)
+        .ok_or_else(|| Error::Message("address sanitizer window overflow".into()))?;
+    let size = usize::try_from((end - base) / 8)
+        .ok()
+        .filter(|n| *n <= maximum)
+        .ok_or_else(|| Error::Message("address shadow exceeds configured byte limit".into()))?;
+    let mut bytes = vec![0xff; size];
+    for (start, end) in merged {
+        let first = ((start - base) / 8) as usize;
+        let last = ((end - base) / 8) as usize;
+        bytes[first..last].fill(0);
+        if end % 8 != 0 {
+            bytes[last] = (end % 8) as u8;
+        }
+    }
+    Ok((base, end, bytes))
+}
+impl AddressState {
+    pub(super) fn new(
+        device: &Device,
+        options: &SanitizerRuntimeOptions,
+        ranges: Vec<(u64, usize)>,
+    ) -> Result<Self> {
+        let (base, end, bytes) = address_shadow(ranges, options.maximum_shadow_bytes)?;
+        let shadow = device.fabric().allocate_owned(
+            bytes.len(),
+            device,
+            AMDF_MEMORY_ACCESS_READ | AMDF_MEMORY_ACCESS_WRITE,
+            64,
+            false,
+            options.memory_budget.as_ref(),
+        )?;
+        shadow.write(0, &bytes)?;
+        let mut config = [0; 96];
+        put32(&mut config, 0, 96);
+        put32(&mut config, 8, 1);
+        put32(&mut config, 12, 3);
+        put64(
+            &mut config,
+            16,
+            shadow.device_address(device)?.wrapping_sub(base >> 3),
+        );
+        put64(&mut config, 24, base);
+        put64(&mut config, 32, end - base);
+        put64(&mut config, 40, bytes.len() as u64);
+        put64(&mut config, 48, bytes.len() as u64);
+        Ok(Self { shadow, config })
+    }
+    pub(super) fn configure(&self, output: &mut [u8]) -> Result<()> {
+        if output.len() != 96 {
+            return Err(Error::Unsupported(
+                "unexpected address configuration ABI".into(),
+            ));
+        }
+        output.copy_from_slice(&self.config);
+        Ok(())
     }
 }
 
@@ -478,7 +589,7 @@ fn decode(
         let length = u32_at(packet, 0)? as usize;
         let kind = u16_at(packet, 6)?;
         let expected = match kind {
-            5 => (128, 64),
+            1 | 5 => (128, 64),
             4 => (192, 120),
             _ => return Err(corrupt()),
         };
@@ -493,8 +604,10 @@ fn decode(
         {
             return Err(corrupt());
         }
-        let site_id = u64_at(packet, if kind == 4 { 96 } else { 80 })?;
-        let check = if kind == 4 {
+        let site_id = u64_at(packet, if kind == 5 { 80 } else { 96 })?;
+        let check = if kind == 1 {
+            SanitizerCheck::InvalidAccess
+        } else if kind == 4 {
             match u32_at(packet, 72)? {
                 1 => SanitizerCheck::DataRace,
                 other => SanitizerCheck::Unknown(other),
@@ -542,6 +655,22 @@ fn decode(
         } else {
             None
         };
+        let address = if kind == 1 {
+            Some(SanitizerAddress {
+                access: match u32_at(packet, 72)? {
+                    1 => SanitizerAccess::Read,
+                    2 => SanitizerAccess::Write,
+                    3 => SanitizerAccess::Atomic,
+                    other => SanitizerAccess::Unknown(other),
+                },
+                fault_address: u64_at(packet, 80)?,
+                access_bytes: u64_at(packet, 88)?,
+                shadow_address: u64_at(packet, 104)?,
+                shadow_value: u64_at(packet, 112)?,
+            })
+        } else {
+            None
+        };
         reports.push(SanitizerReport {
             check,
             site_id,
@@ -555,6 +684,7 @@ fn decode(
             workitem_x: u32_at(packet, 36)?,
             site: sites.get(&site_id).cloned(),
             race,
+            address,
         });
         offset += length;
     }
@@ -567,6 +697,45 @@ fn decode(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn address_shadow_merges_aliases_and_preserves_tails_and_gaps() {
+        let (base, end, bytes) =
+            address_shadow(vec![(0x1020, 5), (0x1000, 16), (0x1008, 12)], 5).unwrap();
+        assert_eq!((base, end), (0x1000, 0x1028));
+        assert_eq!(bytes, [0, 0, 4, 0xff, 5]);
+        assert!(address_shadow(vec![(0x1000, 1), (0x1020, 1)], 4).is_err());
+        assert!(address_shadow(vec![(u64::MAX - 7, 8)], 8).is_err());
+        assert!(address_shadow(vec![(u64::MAX - 7, 7)], 8).is_err());
+        assert!(address_shadow(vec![(3, 8)], 8).is_err());
+        assert!(address_shadow(vec![], 8).is_err());
+    }
+
+    #[test]
+    fn address_report_uses_its_own_access_kind_and_site_layout() {
+        let mut bytes = packet();
+        let record = &mut bytes[64..];
+        record[6..8].copy_from_slice(&1u16.to_le_bytes());
+        put32(record, 72, 3);
+        put64(record, 80, u64::MAX - 1);
+        put64(record, 88, 16);
+        put64(record, 96, 9);
+        put64(record, 104, 0x1234);
+        put64(record, 112, 0xff);
+        let report = decode(&bytes, 128, &BTreeMap::new())
+            .unwrap()
+            .reports
+            .remove(0);
+        assert_eq!(report.check, SanitizerCheck::InvalidAccess);
+        assert_eq!(report.site_id, 9);
+        assert!(report.race.is_none());
+        let address = report.address.unwrap();
+        assert_eq!(address.access, SanitizerAccess::Atomic);
+        assert_eq!(address.fault_address, u64::MAX - 1);
+        assert_eq!(address.access_bytes, 16);
+        assert_eq!(address.shadow_address, 0x1234);
+        assert_eq!(address.shadow_value, 0xff);
+    }
 
     #[test]
     fn shadow_geometry_rejects_overflow_and_respects_the_limit() {

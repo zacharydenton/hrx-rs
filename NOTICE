@@ -9,12 +9,12 @@ The hrx-rs bridge is MIT licensed.
 
 Modified source, patches and build recipes:
 https://github.com/zacharydenton/hrx-rs/releases/download/native-20261008-7e9c7bbd5e/hrx-native-sources.tar.gz
-SHA-256: ae0781050942634a5f3c998787bb9317db342af53da221e95466973aaadd0f07
+SHA-256: 8e6b81d2b8b6614fb6d8a7e9a43c2d6da2c132cc172adfe17b0f506d10e5aada
 
 Benchmark fixtures in native/qualification derive from krea2-hrx (MIT),
 and arcface-hrx and h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.
 
-Resident exchange and GPU file-I/O fixtures in tests/kernels and
+Resident exchange, workgroup race, and GPU file-I/O fixtures in tests/kernels and
 tests/support/resident_routes.rs derive from libamdf CTS at HRX 7e9c7bbd5e
 under Apache-2.0 WITH LLVM-exception; original notices are retained.
 The io_uring Rust layouts derive from the pinned Linux syscall headers;

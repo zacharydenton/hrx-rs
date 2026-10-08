@@ -51,10 +51,17 @@ processor-mode extension described below.
   high word can admit reservations past capacity and overwrite reports. Authored
   lowering cases cover wave32/wave64; GPU tests verify bounded drops and polling.
 
+- `0017-bound-address-sanitizer-shadow-loads.patch` checks both application and
+  shadow extents before each shadow lookup, including wide loads and wrapped
+  addresses. Excluded lanes issue no memory load and receive full poison after
+  restoring EXEC. Native lowering cases retain the bounds and lane-mask order;
+  GPU regressions cover partial allocation tails, null pointers, wraparound,
+  wide accesses, wave32/wave64, replay and combined address/race instrumentation.
+
 Earlier SMEM, GFX11 VMEM-source reuse, dependent-inline-type and allocation-layout
 patches are no longer in the active set. Patch 0011 is also retired: upstream now
 owns CFG unit-use indexing, storage leases and concat placement. The old
-per-segment liveness overlay is not carried into those analyses. Only the eight
+per-segment liveness overlay is not carried into those analyses. Only the nine
 files above are applied. Historical measurements do not establish performance
 of this compiler pin.
 
@@ -71,9 +78,3 @@ Use `scripts/fetch-native-inputs.py` and `scripts/rebuild-hrx.sh`, documented in
 applies the active compiler set. `scripts/build-amdf.sh SOURCE BUILD` then applies
 the native build, queue and cache-policy patches and builds all three libraries.
 The compiler patches must be applied in filename order.
-
-## Validation at this pin
-
-See the native refresh entry in [CHANGELOG.md](../../CHANGELOG.md) for completed
-checks. Local build and qualification logs are under
-`artifacts/native-refresh-20261008/`.
