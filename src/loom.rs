@@ -17,8 +17,8 @@ use crate::{
     bundle::{self, Lock},
 };
 pub use report::{
-    CompileReport, EntryChange, EntryResources, ReportGuidance, ReportSuggestion, WaitCounts,
-    WaitReason, WaitReasonChange,
+    CompileReport, EntryChange, EntryResources, Expansion, ReportGuidance, ReportSuggestion,
+    WaitCounts, WaitReason, WaitReasonChange,
 };
 use serde::{Deserialize, Serialize};
 pub use source::{CxxSource, CxxStandard, Source};
@@ -64,6 +64,10 @@ pub struct Diagnostic {
     pub code: String,
     /// Rendered diagnostic message.
     pub message: String,
+    /// Full compiler-rendered diagnostic, including source context when available.
+    pub formatted_text: String,
+    /// Named values in diagnostic-definition order.
+    pub parameters: Vec<DiagnosticParameter>,
     /// Diagnostic source identifier, when supplied by the compiler.
     #[serde(default)]
     pub source: String,
@@ -77,6 +81,15 @@ pub struct Diagnostic {
     /// Additional locations omitted by the compiler's diagnostic limit.
     #[serde(default)]
     pub related_location_omitted_count: usize,
+}
+
+/// One compiler-rendered diagnostic argument.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiagnosticParameter {
+    /// Stable name from the compiler diagnostic definition.
+    pub name: String,
+    /// Canonical rendered value.
+    pub value: String,
 }
 
 /// A source location related to a compiler diagnostic, owned by Rust.
@@ -95,7 +108,7 @@ pub struct RelatedLocation {
     /// One-based ending column, or zero when unavailable.
     pub end_column: u32,
 }
-/// AMDGPU workgroup scheduling domain. Explicit modes require compiler support.
+/// AMDGPU workgroup scheduling domain. Explicit modes require GFX11/GFX12.
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProcessorMode {
@@ -108,6 +121,47 @@ pub enum ProcessorMode {
     WorkgroupProcessor,
 }
 
+/// Assertion classes inserted at the target's semantic assertion boundary.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SanitizerChecks {
+    /// Memory access assertions (requires the target's access-shadow runtime).
+    pub access: bool,
+    /// SSA value assertions.
+    pub value: bool,
+    /// Operation assertions.
+    pub operation: bool,
+    /// Data-race observations (requires the target's race-shadow runtime).
+    pub race: bool,
+}
+impl SanitizerChecks {
+    pub(super) fn bits(self) -> u64 {
+        u64::from(self.access)
+            | (u64::from(self.value) << 1)
+            | (u64::from(self.operation) << 2)
+            | (u64::from(self.race) << 3)
+    }
+}
+/// Target behavior on a failed sanitizer assertion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SanitizerReporting {
+    /// Native target's structured report path.
+    #[default]
+    Default,
+    /// Direct fatal trap without structured reports.
+    Trap,
+    /// Structured report without a direct trap.
+    ReportOnly,
+}
+/// Native compiler instrumentation. Runtime-required globals are described by
+/// the artifact manifest; compiling does not supply a sanitizer runtime.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SanitizerOptions {
+    /// Independent classes of assertions.
+    pub checks: SanitizerChecks,
+    /// Behavior of failed assertions.
+    pub reporting: SanitizerReporting,
+}
+
 /// Compiler target and limits for concurrent workspaces and cached modules.
 #[derive(Clone, Debug)]
 pub struct CompilerOptions {
@@ -118,8 +172,10 @@ pub struct CompilerOptions {
     /// Maximum retained source modules; zero disables module caching.
     /// Eviction chooses an arbitrary entry, not the least recently used module.
     pub module_cache_capacity: usize,
-    /// Execution policy; older compiler libraries reject explicit modes.
+    /// Workgroup scheduling policy for the selected AMDGPU target.
     pub processor_mode: ProcessorMode,
+    /// Instrumentation included in pipeline, shared compiler, and artifact identities.
+    pub sanitizer: SanitizerOptions,
 }
 impl Default for CompilerOptions {
     fn default() -> Self {
@@ -127,6 +183,7 @@ impl Default for CompilerOptions {
             target: crate::Target::default(),
             module_cache_capacity: 64,
             processor_mode: ProcessorMode::Default,
+            sanitizer: SanitizerOptions::default(),
             workers: NonZeroUsize::new(
                 std::thread::available_parallelism()
                     .map_or(1, NonZeroUsize::get)
@@ -159,6 +216,7 @@ struct Inner {
     workers: NonZeroUsize,
     module_cache_capacity: usize,
     processor_mode: ProcessorMode,
+    sanitizer: SanitizerOptions,
     path: PathBuf,
     identity: String,
 }
@@ -170,6 +228,7 @@ struct SharedCompilerKey {
     workers: NonZeroUsize,
     module_cache_capacity: usize,
     processor_mode: ProcessorMode,
+    sanitizer: SanitizerOptions,
 }
 /// A pinned compiler library and reusable native state, shared by cheap clones.
 #[derive(Clone)]
@@ -214,6 +273,7 @@ impl Compiler {
             workers: options.workers,
             module_cache_capacity: options.module_cache_capacity,
             processor_mode: options.processor_mode,
+            sanitizer: options.sanitizer,
         };
         let mut cache = RESOLVED
             .lock()
@@ -249,6 +309,7 @@ impl Compiler {
             options.workers.get(),
             &options.target,
             options.processor_mode,
+            options.sanitizer,
         )?;
         if bundle::file_digest(&path)? != identity {
             return Err(Error::Message(
@@ -262,6 +323,7 @@ impl Compiler {
             workers: options.workers,
             module_cache_capacity: options.module_cache_capacity,
             processor_mode: options.processor_mode,
+            sanitizer: options.sanitizer,
             path,
             identity,
         })))
@@ -460,6 +522,8 @@ mod diagnostic_tests {
             severity: Severity::from(severity),
             code: String::new(),
             message: message.into(),
+            formatted_text: message.into(),
+            parameters: Vec::new(),
             source: String::new(),
             line,
             column: 1,
@@ -512,6 +576,39 @@ pub enum ReportMode {
     Summary,
     /// Include detailed provenance, scheduling, and resource evidence.
     Details,
+}
+
+/// Compiler-formatted pass trace representation.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum TraceFormat {
+    /// Human-readable metadata followed by source.
+    Text,
+    /// One JSON object per pass event.
+    #[default]
+    JsonLines,
+}
+/// Bounded streaming diagnostics for a fresh compile invocation.
+#[derive(Clone, Debug)]
+pub struct TraceOptions {
+    /// Serialization chosen by the compiler.
+    pub format: TraceFormat,
+    /// Maximum bytes forwarded to the writer; exceeding this aborts compilation.
+    pub max_bytes: usize,
+    /// Pass keys or compiler stage names to capture before execution.
+    pub before: Vec<String>,
+    /// Pass keys or compiler stage names to capture after execution.
+    /// Both filter lists empty selects every after boundary.
+    pub after: Vec<String>,
+}
+impl Default for TraceOptions {
+    fn default() -> Self {
+        Self {
+            format: TraceFormat::JsonLines,
+            max_bytes: 16 * 1024 * 1024,
+            before: Vec::new(),
+            after: Vec::new(),
+        }
+    }
 }
 
 /// One export and its exact configuration within a module.
@@ -604,11 +701,15 @@ struct Record {
     sha256: String,
     diagnostics: Vec<Diagnostic>,
     report: Option<CompileReport>,
+    manifest: Option<serde_json::Value>,
+    launch_sha256: Option<String>,
 }
 /// Owned native executable bytes and their verified compilation metadata.
 #[derive(Clone, Debug)]
 pub struct Artifact {
     bytes: Arc<[u8]>,
+    launch_bytes: Option<Arc<[u8]>>,
+    launch_loader: native::LaunchLoader,
     path: PathBuf,
     record: Record,
 }
@@ -616,6 +717,24 @@ impl Artifact {
     /// Native executable bytes, independent of compiler/result lifetimes.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+    /// Compiler-owned description of exports, arguments, globals, and target facts.
+    pub fn manifest(&self) -> Option<&serde_json::Value> {
+        self.record.manifest.as_ref()
+    }
+    /// Serialized host launch program produced alongside these executable bytes.
+    pub fn launch_bytes(&self) -> Option<&[u8]> {
+        self.launch_bytes.as_deref()
+    }
+    /// Bind an exact executable export to an independent launch evaluator.
+    /// The matching native evaluator library stays owned by the artifact.
+    pub fn launch_program(&self, export: &str) -> Result<LaunchProgram> {
+        self.launch_loader.load(
+            self.launch_bytes.as_deref().ok_or_else(|| {
+                Error::Unsupported("this target has no host launch program".into())
+            })?,
+            export,
+        )
     }
     /// Durable verified cache artifact path.
     pub fn path(&self) -> &Path {
@@ -646,10 +765,38 @@ impl Artifact {
         self.record.report.as_ref()
     }
 }
+/// Concrete launch properties evaluated from compiler-authored workload arguments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchConfig {
+    /// Workgroup count along each axis.
+    pub workgroup_count: [u32; 3],
+    /// Invocations per workgroup along each axis.
+    pub workgroup_size: [u32; 3],
+    /// Cooperative cluster dimensions; [1, 1, 1] for an ordinary launch.
+    pub workgroup_cluster_size: [u32; 3],
+    /// Hardware subgroup width, or zero when the target does not fix it.
+    pub subgroup_size: u32,
+    /// Total workgroup-local storage, including statically allocated storage.
+    pub workgroup_storage_bytes: u64,
+}
+
+/// One bound launch function with exclusively owned invocation scratch.
+/// Create one per independently prepared execution slot.
+pub struct LaunchProgram(native::LaunchProgram);
+impl LaunchProgram {
+    /// Evaluate positional raw scalar bits without compiling source or looking up names.
+    /// Evaluation may grow scratch; perform it while preparing a dispatch.
+    pub fn evaluate(&mut self, workload_argument_bits: &[u64]) -> Result<LaunchConfig> {
+        self.0.evaluate(workload_argument_bits)
+    }
+}
+
 struct Compiled {
     bytes: Arc<[u8]>,
     diagnostics: Vec<Diagnostic>,
     report: Option<serde_json::Value>,
+    manifest: Option<serde_json::Value>,
+    launch_bytes: Option<Arc<[u8]>>,
 }
 impl Module {
     /// Identity of the exact source bytes.
@@ -660,7 +807,8 @@ impl Module {
     pub fn key(&self, spec: &Specialization) -> Result<String> {
         spec.validate()?;
         let base = bundle::digest(&serde_json::to_vec(&(
-            "loomc-v2",
+            "loomc-v5-sanitizers",
+            self.compiler.0.sanitizer,
             self.compiler.identity(),
             self.identity(),
             &spec.symbol,
@@ -683,15 +831,37 @@ impl Module {
     /// Compile in process or return verified cached bytes. Publication is atomic
     /// and serialized per key across threads and processes; failures are retryable.
     pub fn compile(&self, spec: &Specialization) -> Result<Artifact> {
+        self.compile_impl(spec, None)
+    }
+    /// Recompile and stream compiler-owned pass traces, even on a cache hit.
+    /// A writer error, panic, or exhausted byte limit aborts compilation and
+    /// leaves any existing cached artifact intact. The writer is not retained.
+    pub fn compile_traced(
+        &self,
+        spec: &Specialization,
+        options: &TraceOptions,
+        writer: &mut dyn std::io::Write,
+    ) -> Result<Artifact> {
+        self.compile_impl(spec, Some((options, writer)))
+    }
+    fn compile_impl(
+        &self,
+        spec: &Specialization,
+        trace: Option<(&TraceOptions, &mut dyn std::io::Write)>,
+    ) -> Result<Artifact> {
         let key = self.key(spec)?;
         let cache = &bundle::kernel_cache()?;
         let dir = cache.join(&key);
-        if let Some(a) = cached(&dir, &key) {
+        if trace.is_none()
+            && let Some(a) = cached(&dir, &key, &self.compiler.0.native)
+        {
             return Ok(a);
         }
         bundle::create_cache_dir(cache)?;
         let _lock = Lock::acquire(&cache.join(format!("{key}.lock")))?;
-        if let Some(a) = cached(&dir, &key) {
+        if trace.is_none()
+            && let Some(a) = cached(&dir, &key, &self.compiler.0.native)
+        {
             return Ok(a);
         }
         let (index, mut diagnostics) = {
@@ -702,13 +872,18 @@ impl Module {
             }
             slot.as_ref().unwrap().clone()
         };
-        let compiled = self.compiler.0.native.compile(&index, spec).map_err(|e| {
-            e.context(format!(
-                "compiling {} with {}",
-                spec.symbol,
-                self.compiler.library_path().display()
-            ))
-        })?;
+        let compiled = self
+            .compiler
+            .0
+            .native
+            .compile(&index, spec, trace)
+            .map_err(|e| {
+                e.context(format!(
+                    "compiling {} with {}",
+                    spec.symbol,
+                    self.compiler.library_path().display()
+                ))
+            })?;
         diagnostics.extend(compiled.diagnostics);
         let record = Record {
             key,
@@ -717,6 +892,8 @@ impl Module {
             processor_mode: self.compiler.0.processor_mode,
             symbol: spec.symbol.clone(),
             sha256: bundle::digest(&compiled.bytes),
+            launch_sha256: compiled.launch_bytes.as_deref().map(bundle::digest),
+            manifest: compiled.manifest,
             diagnostics,
             report: compiled
                 .report
@@ -734,6 +911,10 @@ impl Module {
         let filename = self.compiler.target().artifact_filename();
         let output = staging.path().join(filename);
         fs::write(&output, &compiled.bytes)?;
+        if let Some(bytes) = &compiled.launch_bytes {
+            fs::write(staging.path().join("launch.loombc"), bytes)?;
+            fs::File::open(staging.path().join("launch.loombc"))?.sync_all()?;
+        }
         let metadata = serde_json::to_vec(&record)?;
         fs::write(staging.path().join("artifact.json"), &metadata)?;
         fs::write(
@@ -751,12 +932,14 @@ impl Module {
         fs::File::open(cache)?.sync_all()?;
         Ok(Artifact {
             bytes: compiled.bytes,
+            launch_bytes: compiled.launch_bytes,
+            launch_loader: self.compiler.0.native.launch_loader(),
             path: dir.join(filename),
             record,
         })
     }
 }
-fn cached(dir: &Path, key: &str) -> Option<Artifact> {
+fn cached(dir: &Path, key: &str, native: &native::Prepared) -> Option<Artifact> {
     let metadata = fs::read(dir.join("artifact.json")).ok()?;
     if fs::read_to_string(dir.join("artifact.sha256")).ok()? != bundle::digest(&metadata) {
         return None;
@@ -778,8 +961,19 @@ fn cached(dir: &Path, key: &str) -> Option<Artifact> {
     if bytes.is_empty() || bundle::digest(&bytes) != record.sha256 {
         return None;
     }
+    let launch_bytes = if let Some(hash) = &record.launch_sha256 {
+        let bytes = fs::read(dir.join("launch.loombc")).ok()?;
+        if bytes.is_empty() || &bundle::digest(&bytes) != hash {
+            return None;
+        }
+        Some(Arc::from(bytes))
+    } else {
+        None
+    };
     Some(Artifact {
         bytes: bytes.into(),
+        launch_bytes,
+        launch_loader: native.launch_loader(),
         path,
         record,
     })
@@ -824,30 +1018,13 @@ mod tests {
 
     #[test]
     #[ignore = "requires libloomc.so, no GPU"]
-    fn processor_modes_are_isolated_or_explicitly_rejected() -> Result<()> {
+    fn processor_modes_have_distinct_compilers_and_artifacts() -> Result<()> {
         let default = Compiler::shared(None, CompilerOptions::default())?;
         let options = CompilerOptions {
             processor_mode: ProcessorMode::ComputeUnit,
             ..Default::default()
         };
-        let cu = match Compiler::shared(None, options.clone()) {
-            Ok(compiler) => compiler,
-            Err(error)
-                if std::env::var_os("HRX_LOOM_LIBRARY").is_some()
-                    || std::env::var_os("HRX_RUNTIME_DIR").is_some() =>
-            {
-                // An overridden compiler may predate the extension. Require
-                // explicit rejection instead of silently producing WGP code.
-                assert!(
-                    error
-                        .to_string()
-                        .contains("AMDGPU profile option extensions are not supported"),
-                    "{error}"
-                );
-                return Ok(());
-            }
-            Err(error) => return Err(error),
-        };
+        let cu = Compiler::shared(None, options.clone())?;
         let same = Compiler::shared(None, options)?;
         assert!(Arc::ptr_eq(&cu.0, &same.0));
         assert!(!Arc::ptr_eq(&default.0, &cu.0));

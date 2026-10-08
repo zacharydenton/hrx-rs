@@ -1,0 +1,28 @@
+kernel.def @bounded_extrema(%count: index) {
+  %one = index.constant 1 : index
+  %width = index.constant 64 : index
+  %extra = index.constant 63 : index
+  %rounded = index.add %count, %extra : index
+  %groups = index.div %rounded, %width : index
+  kernel.launch.config workgroups(%one, %groups, %one) workgroup_size(%one, %one, %one) : index
+} launch(%count: index, %output: buffer) {
+  %bounded = index.assume %count [range(%count, 1, 16777216)] : index
+  %offset = index.constant 0 : offset
+  %width = index.constant 64 : index
+  %group = kernel.workgroup.id<y> : index
+  %base = index.mul %group, %width : index
+  %end = index.add %base, %width : index
+  %minimum = index.min %end, %bounded : index
+  %maximum = index.max %end, %bounded : index
+  %result = index.cast %minimum : index to i32
+  %upper = index.cast %maximum : index to i32
+  %global = buffer.assume.memory_space<global> %output : buffer
+  %view = buffer.view %global[%offset] : buffer -> view<[%count]x2xi32>
+  %writes = index.cmp ult, %base, %count : index
+  scf.if %writes {
+    %position = index.assume %base [lt(%base, %count)] : index
+    view.store %result, %view[%position, 0] : i32, view<[%count]x2xi32>
+    view.store %upper, %view[%position, 1] : i32, view<[%count]x2xi32>
+  }
+  kernel.return
+}

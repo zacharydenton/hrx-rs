@@ -49,6 +49,23 @@ fn dispatch(args: &[String]) -> Result<()> {
                                 endpoint.name(),
                                 endpoint.target().as_str()
                             );
+                            match endpoint.queue_capabilities() {
+                                Ok(families) => {
+                                    for family in families {
+                                        println!(
+                                            "  queue {}: {:?} v{} user={} kernel={} system-release={} system-acquire={}",
+                                            family.ordinal,
+                                            family.command,
+                                            family.format_version,
+                                            family.user_publication,
+                                            family.kernel_publication,
+                                            family.system_release,
+                                            family.system_acquire
+                                        );
+                                    }
+                                }
+                                Err(error) => println!("  queue capabilities: {error}"),
+                            }
                         }
                     }
                     Err(error) => println!("native device discovery: {error}"),
@@ -129,6 +146,9 @@ fn dispatch(args: &[String]) -> Result<()> {
                 directory.display(),
                 device.target().as_str()
             );
+        }
+        Some("compile") if args.get(1).is_some_and(|arg| arg == "--help") => {
+            println!("{}", compile::HELP);
         }
         Some("compile") if args.len() >= 3 => compile::compile(&args[1..])?,
         Some("report") => compile::report(&args[1..])?,

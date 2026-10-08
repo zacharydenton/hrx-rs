@@ -15,6 +15,37 @@ pub struct CompileReport {
     document: Value,
 }
 
+/// Maximum expansion of one source operation for a compiler selection.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Expansion {
+    /// Function containing the source operation.
+    pub function: Option<String>,
+    /// Source operation name.
+    pub source_op: Option<String>,
+    /// Compiler selection mechanism.
+    pub selection: Option<String>,
+    /// Selected lowering plan, when present.
+    pub plan_key: Option<String>,
+    /// Target descriptor, when present.
+    pub descriptor_key: Option<String>,
+    /// Semantic category of the selected target descriptor.
+    pub descriptor_semantic_tag: Option<String>,
+    /// Number of selected source operations in this group.
+    pub selected_op_count: Option<u64>,
+    /// Total emitted low operations for this group.
+    pub emitted_low_op_count: Option<u64>,
+    /// Largest single-operation expansion; not an average or measured latency.
+    pub maximum_emitted_low_op_count: Option<u64>,
+    /// Source operations with an exact dynamic count, when reported.
+    pub exact_dynamic_op_count: Option<u64>,
+    /// Source operations with unknown dynamic count, when reported.
+    pub unknown_dynamic_op_count: Option<u64>,
+    /// Weighted selected count when it differs from the static count.
+    pub dynamic_selected_op_count: Option<u64>,
+    /// Weighted emitted count when it differs from the static count.
+    pub dynamic_emitted_low_op_count: Option<u64>,
+}
+
 /// Resource facts for one compiled entry. These are not throughput estimates.
 #[derive(Clone, Debug, Serialize)]
 pub struct EntryResources {
@@ -180,6 +211,16 @@ impl CompileReport {
     /// Original versioned JSON, including evidence not represented by accessors.
     pub fn json(&self) -> &Value {
         &self.document
+    }
+
+    /// Per-selection lowering expansion, available in summary and detailed reports.
+    /// Missing collection is distinct from an empty collection.
+    pub fn expansions(&self) -> Result<Option<Vec<Expansion>>> {
+        self.validate()?;
+        self.document
+            .pointer("/source_low/selection_summaries/rows")
+            .map(|rows| serde_json::from_value(rows.clone()).map_err(Error::from))
+            .transpose()
     }
 
     /// Resource summaries, preserving unknown values rather than reporting zero.

@@ -32,8 +32,16 @@ pub struct Kernel(pub(super) Arc<KernelInner>);
 pub(super) struct KernelInner {
     pub(super) device: Device,
     pub(super) code: Buffer,
-    image: GpuImage,
+    image: Arc<GpuImage>,
+    sanitizer: Option<Arc<super::sanitizer::Feedback>>,
+    feedback_global: std::ops::Range<usize>,
+    race: Option<RaceTemplate>,
+    pub(super) race_state: Option<super::sanitizer::RaceState>,
     pub(super) info: hrx_fabric_gpu_info,
+}
+struct RaceTemplate {
+    global: std::ops::Range<usize>,
+    options: super::SanitizerRuntimeOptions,
 }
 struct GpuImage {
     api: Arc<Bridge>,
@@ -57,6 +65,16 @@ pub enum Argument<'a> {
     Value(&'a [u8]),
 }
 impl Kernel {
+    /// Drain owned value/operation and workgroup race reports after all invocations retire.
+    /// Returns Busy while any submitted invocation retains the feedback storage.
+    /// A full channel reports dropped packets explicitly; it never stalls a kernel.
+    pub fn sanitizer_reports(&self) -> Result<super::SanitizerReports> {
+        self.0
+            .sanitizer
+            .as_ref()
+            .ok_or_else(|| Error::Unsupported("kernel has no sanitizer runtime".into()))?
+            .drain()
+    }
     pub(crate) fn same_entry(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
@@ -79,6 +97,14 @@ impl Kernel {
     pub fn workgroup_size(&self) -> [u32; 3] {
         self.0.info.workgroup_size
     }
+    /// Hardware subgroup width recorded in the loaded executable.
+    pub fn subgroup_size(&self) -> u32 {
+        self.0.info.wave_size
+    }
+    /// Static workgroup-local storage required by the loaded executable.
+    pub fn workgroup_storage_bytes(&self) -> u64 {
+        u64::from(self.0.info.local_bytes)
+    }
     /// Device that owns the loaded executable allocation.
     pub fn device(&self) -> &Device {
         &self.0.device
@@ -89,6 +115,12 @@ impl Kernel {
         }
         let mut packed = vec![0; self.0.info.kernarg_bytes as usize];
         let mut resources = vec![self.0.code.clone()];
+        if let Some(feedback) = &self.0.sanitizer {
+            resources.push(feedback.buffer().clone());
+        }
+        if let Some(state) = &self.0.race_state {
+            resources.extend([state.shadow.clone(), state.queue_state.clone()]);
+        }
         for (index, argument) in arguments.iter().enumerate() {
             let mut info = hrx_fabric_gpu_argument::default();
             bridge_check(&self.0.image.api, unsafe {
@@ -127,6 +159,59 @@ impl Kernel {
         }
         Ok((packed, resources))
     }
+    pub(super) fn for_aql(&self, grid: [u32; 3], ring: u64, mask: u64) -> Result<Self> {
+        let Some(race) = &self.0.race else {
+            return Ok(self.clone());
+        };
+        let state = super::sanitizer::RaceState::new(
+            self.device(),
+            &race.options,
+            self.0.info.local_bytes,
+            grid,
+            ring,
+            mask,
+        )?;
+        let code = self.device().fabric().allocate_owned(
+            self.0.code.len(),
+            self.device(),
+            AMDF_MEMORY_ACCESS_READ | AMDF_MEMORY_ACCESS_WRITE | AMDF_MEMORY_ACCESS_EXECUTE,
+            4096,
+            false,
+            race.options.memory_budget.as_ref(),
+        )?;
+        let mut contents = vec![0; code.len()];
+        bridge_check(&self.0.image.api, unsafe {
+            self.0.image.api.hrx_fabric_gpu_image_load(
+                self.0.image.raw,
+                contents.as_mut_ptr(),
+                contents.len(),
+                code.device_address(self.device())?,
+            )
+        })?;
+        self.0
+            .sanitizer
+            .as_ref()
+            .ok_or_else(|| missing("race feedback"))?
+            .configure(&mut contents[self.0.feedback_global.clone()])?;
+        state.configure(&mut contents[race.global.clone()])?;
+        code.write(0, &contents)?;
+        Ok(Self(Arc::new(KernelInner {
+            device: self.device().clone(),
+            code,
+            image: self.0.image.clone(),
+            sanitizer: self.0.sanitizer.clone(),
+            feedback_global: self.0.feedback_global.clone(),
+            race: None,
+            race_state: Some(state),
+            info: self.0.info,
+        })))
+    }
+    pub(super) fn race_budget(&self) -> Option<&crate::residency::MemoryBudget> {
+        self.0
+            .race
+            .as_ref()
+            .and_then(|r| r.options.memory_budget.as_ref())
+    }
     pub(super) fn dispatch_words(
         &self,
         grid: [u32; 3],
@@ -135,6 +220,11 @@ impl Kernel {
         address: u64,
         scratch: Option<(&Buffer, u32, u32)>,
     ) -> Result<Vec<u32>> {
+        if self.0.sanitizer.is_some() {
+            return Err(Error::Unsupported(
+                "sanitizer instrumentation requires AQL dispatch".into(),
+            ));
+        }
         let mut words = vec![0; 128];
         let mut count = 0;
         bridge_check(&self.0.image.api, unsafe {
@@ -178,11 +268,37 @@ impl Device {
         }
         unsafe { self.load_bytes(artifact.bytes(), artifact.symbol()) }
     }
+    /// Load an artifact with an owned, bounded sanitizer feedback channel.
+    /// Supports value/operation reports and workgroup-local race checking.
+    /// Address instrumentation requires a bounded shadow runtime and is rejected.
+    /// Dispatch through an AQL queue, which supplies the native dispatch pointer.
+    /// # Safety
+    /// The artifact is trusted native code. Use report-only instrumentation when
+    /// execution must complete after a diagnostic; trap mode can fault the queue.
+    pub unsafe fn load_sanitized(
+        &self,
+        artifact: &crate::loom::Artifact,
+        options: &super::SanitizerRuntimeOptions,
+    ) -> Result<Kernel> {
+        if artifact.target() != self.target().as_str() {
+            return Err(Error::Unsupported("artifact and GPU target differ".into()));
+        }
+        unsafe { self.load_image(artifact.bytes(), artifact.symbol(), Some(options), None) }
+    }
     /// Load a native gfx1151 code object and select its named entry.
     ///
     /// # Safety
     /// The native code must be trusted and obey its declared memory contract.
     pub unsafe fn load_bytes(&self, bytes: &[u8], symbol: &str) -> Result<Kernel> {
+        unsafe { self.load_image(bytes, symbol, None, None) }
+    }
+    pub(super) unsafe fn load_image(
+        &self,
+        bytes: &[u8],
+        symbol: &str,
+        sanitizer_options: Option<&super::SanitizerRuntimeOptions>,
+        code_budget: Option<&crate::residency::MemoryBudget>,
+    ) -> Result<Kernel> {
         if self.endpoint().engine() != Engine::Gpu {
             return Err(Error::Unsupported("GPU code requires a GPU device".into()));
         }
@@ -205,14 +321,73 @@ impl Device {
             return Err(missing("GPU image"));
         }
         let image = GpuImage { api: bridge, raw };
+        let global = |name: &std::ffi::CStr| -> Result<std::ops::Range<usize>> {
+            let mut offset = 0;
+            let mut length = 0;
+            bridge_check(&image.api, unsafe {
+                image.api.hrx_fabric_gpu_global_info(
+                    image.raw,
+                    name.as_ptr(),
+                    &mut offset,
+                    &mut length,
+                )
+            })?;
+            let start = usize::try_from(offset)
+                .map_err(|_| Error::Message("global offset overflow".into()))?;
+            let length = usize::try_from(length)
+                .map_err(|_| Error::Message("global size overflow".into()))?;
+            let end = start
+                .checked_add(length)
+                .filter(|end| *end as u64 <= info.storage_bytes)
+                .ok_or_else(|| Error::Message("global extent outside image".into()))?;
+            Ok(start..end)
+        };
+        let feedback_global = global(c"iree_feedback_config")?;
+        if !global(c"iree_asan_config")?.is_empty() {
+            return Err(Error::Unsupported("instrumented artifact requires bounded address shadow storage; this loader does not supply it".into()));
+        }
+        match (feedback_global.is_empty(), sanitizer_options.is_some()) {
+            (false, false) => {
+                return Err(Error::Unsupported(
+                    "artifact requires sanitizer feedback; use load_sanitized".into(),
+                ));
+            }
+            (true, true) => {
+                return Err(Error::Unsupported(
+                    "artifact has no structured sanitizer feedback global".into(),
+                ));
+            }
+            _ => (),
+        }
+        let race_global = global(c"iree_tsan_config")?;
+        if !race_global.is_empty() && race_global.len() != 96 {
+            return Err(Error::Unsupported(
+                "unexpected race configuration ABI".into(),
+            ));
+        }
+        let race = if race_global.is_empty() {
+            None
+        } else {
+            Some(RaceTemplate {
+                global: race_global,
+                options: sanitizer_options
+                    .ok_or_else(|| {
+                        Error::Unsupported("race instrumentation requires load_sanitized".into())
+                    })?
+                    .clone(),
+            })
+        };
+        let sites_global = global(c"loom_sanitizer_sites")?;
         let size = usize::try_from(info.storage_bytes)
             .map_err(|_| Error::Message("GPU image exceeds address space".into()))?;
         let fabric = Fabric(self.0.endpoint.0.instance.clone());
-        let code = fabric.allocate_access(
+        let code = fabric.allocate_owned(
             size,
-            std::slice::from_ref(self),
+            self,
             AMDF_MEMORY_ACCESS_READ | AMDF_MEMORY_ACCESS_WRITE | AMDF_MEMORY_ACCESS_EXECUTE,
             4096,
+            false,
+            code_budget,
         )?;
         let mut contents = vec![0; size];
         bridge_check(&image.api, unsafe {
@@ -223,11 +398,29 @@ impl Device {
                 code.device_address(self)?,
             )
         })?;
+        let sanitizer = sanitizer_options
+            .map(|options| {
+                let feedback =
+                    super::sanitizer::Feedback::new(self, options, &contents[sites_global])?;
+                let config = contents
+                    .get_mut(feedback_global.clone())
+                    .filter(|bytes| bytes.len() == 64)
+                    .ok_or_else(|| {
+                        Error::Unsupported("unexpected feedback configuration ABI".into())
+                    })?;
+                feedback.configure(config)?;
+                Ok::<_, Error>(Arc::new(feedback))
+            })
+            .transpose()?;
         code.write(0, &contents)?;
         Ok(Kernel(Arc::new(KernelInner {
+            sanitizer,
+            feedback_global,
+            race,
+            race_state: None,
             device: self.clone(),
             code,
-            image,
+            image: Arc::new(image),
             info,
         })))
     }

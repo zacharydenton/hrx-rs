@@ -1,7 +1,7 @@
 # Native components and source provenance
 
-The unified 0.8 native distribution contains three libraries built from
-HRX/IREE revision `fbbf3003121cce0322c771345505979809c84165`:
+The unified native distribution contains three libraries built from
+HRX/IREE revision `7e9c7bbd5e93d20c1e1a64c60bb4644499404f9b`:
 
 | Library | Purpose | Principal license |
 | --- | --- | --- |
@@ -33,3 +33,10 @@ SPDX header is retained, and the license text is `src/artifacts/LICENSE-ONNX.txt
 The compiler regression fixture `tests/kernels/hrxdb_select_family.loom` comes
 from hrxdb revision `e06d1aa67ae49e52b8ac472e52fba358b54c5ce3` (MIT). Its
 license is retained in `tests/kernels/LICENSE-hrxdb.txt`.
+
+Resident exchange, completed-clock and file-exchange fixtures in `tests/kernels`,
+and the native route composer in `tests/support/resident_routes.rs`, derive from
+libamdf CTS at the pinned HRX revision (Apache-2.0 WITH LLVM-exception). The
+io_uring layouts in `src/fabric/storage_ffi.rs` derive from the pinned Linux UAPI;
+full headers and their syscall exception are in `native/licenses`. Regenerate
+with `scripts/generate-storage-bindings.py` using verified release inputs.

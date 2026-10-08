@@ -1,0 +1,95 @@
+diff --git a/loom/py/loom/target/arch/amdgpu/contracts/integer.py b/loom/py/loom/target/arch/amdgpu/contracts/integer.py
+--- a/loom/py/loom/target/arch/amdgpu/contracts/integer.py
++++ b/loom/py/loom/target/arch/amdgpu/contracts/integer.py
+@@ -7,6 +7,8 @@
+ """AMDGPU integer arithmetic and predicate mask source-to-low contracts."""
+ 
+ from __future__ import annotations
++
++from dataclasses import replace
+ 
+ from loom.dialect.index import ALL_INDEX_OPS
+ from loom.dialect.index import defs as index
+@@ -1194,26 +1196,40 @@
+     sgpr_descriptor_key: str,
+     vgpr_descriptor_key: str,
+ ) -> tuple[DescriptorRule, ...]:
+-    sgpr_descriptor = _descriptor(sgpr_descriptor_key)
+-    vgpr_descriptor = _descriptor(vgpr_descriptor_key)
+-    return (
+-        _sgpr_binary_rule(
++    # Assumptions can narrow the semantic value while its ABI carrier stays
++    # wide. Materialize the proven signed-i32 operands instead of using that
++    # carrier directly. A narrow result alone cannot justify truncating either
++    # input to a comparison.
++    rules = (
++        _narrow_address_sgpr_binary_rule(
+             source_op,
+             _INDEX,
+-            sgpr_descriptor,
++            _descriptor(sgpr_descriptor_key),
+             signed_bit_count=32,
+             signed_diagnostic=_ADDRESS_I32_DIAGNOSTIC,
+-            register_unit_count=1,
+-        ),
+-        _vgpr_binary_rule(
++        ),
++        _narrow_address_vgpr_binary_rule(
+             source_op,
+             _INDEX,
+-            vgpr_descriptor,
+-            ADDRESS_VGPR_MATERIALIZER,
++            _descriptor(vgpr_descriptor_key),
+             signed_bit_count=32,
+             signed_diagnostic=_ADDRESS_I32_DIAGNOSTIC,
+-            register_unit_count=1,
+-        ),
++        ),
++    )
++    return tuple(
++        replace(
++            rule,
++            guards=(
++                *rule.guards,
++                Guard.value_signed_bit_count(
++                    "lhs", 32, diagnostic=_ADDRESS_I32_DIAGNOSTIC
++                ),
++                Guard.value_signed_bit_count(
++                    "rhs", 32, diagnostic=_ADDRESS_I32_DIAGNOSTIC
++                ),
++            ),
++        )
++        for rule in rules
+     )
+ 
+ 
+diff --git a/loom/py/loom/target/arch/amdgpu/contracts/arithmetic_test.py b/loom/py/loom/target/arch/amdgpu/contracts/arithmetic_test.py
+--- a/loom/py/loom/target/arch/amdgpu/contracts/arithmetic_test.py
++++ b/loom/py/loom/target/arch/amdgpu/contracts/arithmetic_test.py
+@@ -816,3 +816,26 @@
+                 if guard.kind == GuardKind.VALUE_PACKED_INTEGER_LANES_FROM_PAYLOAD
+             )
+         assert sorted(maximum_lane_counts) == [32, 64]
++
++
++def test_index_extrema_materialize_proven_narrow_operands() -> None:
++    compiled = _compiled_integer_rules()
++    for source_op in (index.index_min, index.index_max):
++        rules = _rules_for_source_op(compiled, source_op)
++        assert len(rules) == 2  # Scalar and varying operands.
++        for rule in rules:
++            emit = compiled.emits[rule.emit_start]
++            operands = compiled.value_refs[
++                emit.operand_ref_start : emit.operand_ref_start + emit.operand_ref_count
++            ]
++            assert len(operands) == 2
++            assert all(operand.materializer_index != 0 for operand in operands)
++            guards = compiled.guards[rule.guard_start : rule.guard_start + rule.guard_count]
++            signed_inputs = {
++                compiled.value_refs[guard.value_ref_index].index
++                for guard in guards
++                if guard.kind == GuardKind.VALUE_SIGNED_BIT_COUNT
++                and guard.u64 == 32
++                and compiled.value_refs[guard.value_ref_index].kind == SourceValueKind.OPERAND
++            }
++            assert signed_inputs == {0, 1}

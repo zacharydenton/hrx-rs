@@ -8,35 +8,14 @@ use std::{
     sync::{Arc, Condvar, Mutex, OnceLock},
 };
 
-struct Api {
-    ffi: Loomc,
-    extended_diagnostics: bool,
-}
-impl std::ops::Deref for Api {
-    type Target = Loomc;
-    fn deref(&self) -> &Loomc {
-        &self.ffi
-    }
-}
-
-// Original public layout, shared by released bundles and the latest compiler.
-// Never form a reference to the extended layout before checking its ABI probe.
-#[repr(C)]
-struct DiagnosticPrefix {
-    severity: loomc_diagnostic_severity_t,
-    code: loomc_string_view_t,
-    message: loomc_string_view_t,
-    range: loomc_source_range_t,
-}
-
 // Keep native code mapped for the process lifetime. In particular, dlopen may
 // retain C++ libraries after dlclose, so a weak registry cannot safely associate
 // a replacement file with the old loader mapping. Compiler contexts and scratch
 // remain session-owned and are released normally.
-fn library(path: &Path, identity: &str) -> Result<Arc<Api>> {
+fn library(path: &Path, identity: &str) -> Result<Arc<Loomc>> {
     struct Loaded {
         identity: Option<String>,
-        api: Arc<Api>,
+        api: Arc<Loomc>,
     }
     static LIBRARIES: OnceLock<Mutex<HashMap<PathBuf, Loaded>>> = OnceLock::new();
     let mut libraries = LIBRARIES
@@ -53,16 +32,7 @@ fn library(path: &Path, identity: &str) -> Result<Arc<Api>> {
         return Ok(loaded.api.clone());
     }
     // Loading a compiler library trusts the selected native bundle/override.
-    let api = Arc::new(unsafe {
-        let library = libloading::Library::new(path)?;
-        let extended_diagnostics = library
-            .get::<unsafe extern "C" fn() -> usize>(b"loomc_hrx_diagnostic_size\0")
-            .is_ok_and(|size| size() == size_of::<loomc_diagnostic_t>());
-        Api {
-            ffi: Loomc::from_library(library)?,
-            extended_diagnostics,
-        }
-    });
+    let api = Arc::new(unsafe { Loomc::new(path)? });
     // Register even if the post-load check fails: the loader may keep this
     // mapping resident, and a subsequent attempt must not silently reuse it.
     let verified = crate::bundle::file_digest(path).is_ok_and(|actual| actual == identity);
@@ -112,7 +82,7 @@ fn status(api: &Loomc, value: loomc_status_t) -> Result<()> {
 }
 struct Handle<T> {
     raw: *mut T,
-    api: Arc<Api>,
+    api: Arc<Loomc>,
     release: unsafe extern "C" fn(*mut T),
 }
 impl<T> Drop for Handle<T> {
@@ -123,7 +93,7 @@ impl<T> Drop for Handle<T> {
     }
 }
 fn output<T>(
-    api: &Arc<Api>,
+    api: &Arc<Loomc>,
     release: unsafe extern "C" fn(*mut T),
     call: impl FnOnce(*mut *mut T) -> loomc_status_t,
 ) -> Result<Handle<T>> {
@@ -139,7 +109,7 @@ fn output<T>(
     Ok(h)
 }
 fn result_call<T>(
-    api: &Arc<Api>,
+    api: &Arc<Loomc>,
     release: unsafe extern "C" fn(*mut T),
     call: impl FnOnce(*mut *mut T, *mut *mut loomc_result_t) -> loomc_status_t,
 ) -> Result<(Handle<T>, Vec<Diagnostic>)> {
@@ -162,42 +132,45 @@ fn result_call<T>(
     }
     Ok((value, diagnostics))
 }
-// The caller retains the result and confirms the extended layout before opting in.
+// The caller retains the native result until every borrowed field is copied.
 unsafe fn copy_diagnostic(
     raw: *const loomc_diagnostic_t,
-    extended_diagnostics: bool,
     source_identifier: impl Fn(*const loomc_source_t) -> String,
 ) -> Diagnostic {
     unsafe {
-        let d = &*raw.cast::<DiagnosticPrefix>();
-        let (related_locations, related_location_omitted_count) = if extended_diagnostics {
-            let extended = &*raw;
-            let locations = (0..extended.related_location_count)
-                .map(|j| {
-                    let location = &*extended.related_locations.add(j);
-                    let range = &location.range;
-                    super::RelatedLocation {
-                        label: string(location.label),
-                        source: if range.source.is_null() {
-                            String::new()
-                        } else {
-                            source_identifier(range.source)
-                        },
-                        line: range.start_line,
-                        column: range.start_column,
-                        end_line: range.end_line,
-                        end_column: range.end_column,
-                    }
-                })
-                .collect();
-            (locations, extended.related_location_omitted_count)
-        } else {
-            (Vec::new(), 0)
-        };
+        let d = &*raw;
+        let related_locations = (0..d.related_location_count)
+            .map(|j| {
+                let location = &*d.related_locations.add(j);
+                let range = &location.range;
+                super::RelatedLocation {
+                    label: string(location.label),
+                    source: if range.source.is_null() {
+                        String::new()
+                    } else {
+                        source_identifier(range.source)
+                    },
+                    line: range.start_line,
+                    column: range.start_column,
+                    end_line: range.end_line,
+                    end_column: range.end_column,
+                }
+            })
+            .collect();
         Diagnostic {
             severity: d.severity.into(),
             code: string(d.code),
             message: string(d.message),
+            formatted_text: string(d.formatted_text),
+            parameters: (0..d.parameter_count)
+                .map(|i| {
+                    let parameter = &*d.parameters.add(i);
+                    super::DiagnosticParameter {
+                        name: string(parameter.name),
+                        value: string(parameter.value),
+                    }
+                })
+                .collect(),
             source: if d.range.source.is_null() {
                 String::new()
             } else {
@@ -206,7 +179,7 @@ unsafe fn copy_diagnostic(
             line: d.range.start_line,
             column: d.range.start_column,
             related_locations,
-            related_location_omitted_count,
+            related_location_omitted_count: d.related_location_omitted_count,
         }
     }
 }
@@ -220,7 +193,7 @@ impl Handle<loomc_result_t> {
             let diagnostics: Vec<_> = (0..self.api.loomc_result_diagnostic_count(self.raw))
                 .map(|i| {
                     let raw = self.api.loomc_result_diagnostic_at(self.raw, i);
-                    copy_diagnostic(raw, self.api.extended_diagnostics, |source| {
+                    copy_diagnostic(raw, |source| {
                         string(self.api.loomc_source_identifier(source))
                     })
                 })
@@ -229,6 +202,7 @@ impl Handle<loomc_result_t> {
                 return Err(Error::Compile {
                     message: super::summarize(&diagnostics),
                     diagnostics,
+                    report: None,
                 });
             }
             Ok(diagnostics)
@@ -242,8 +216,7 @@ pub(super) struct Prepared {
     linker: Handle<loomc_linker_t>,
     profile: Handle<loomc_target_profile_t>,
     context: Handle<loomc_context_t>,
-    environment: Handle<loomc_target_environment_t>,
-    api: Arc<Api>,
+    api: Arc<Loomc>,
     pool: Pool,
     artifact_format: &'static str,
 }
@@ -295,6 +268,7 @@ impl Prepared {
         workers: usize,
         architecture: &crate::Target,
         processor_mode: super::ProcessorMode,
+        sanitizer: super::SanitizerOptions,
     ) -> Result<Self> {
         if architecture.is_xdna() && processor_mode != super::ProcessorMode::Default {
             return Err(Error::Message("CU/WGP mode applies only to AMDGPU".into()));
@@ -319,6 +293,7 @@ impl Prepared {
                 type_: LOOMC_STRUCTURE_TYPE_CONTEXT_OPTIONS,
                 structure_size: size_of::<loomc_context_options_t>(),
                 next: (&target as *const loomc_context_target_options_t).cast(),
+                source_retention: LOOMC_SOURCE_RETENTION_METADATA_ONLY,
             };
             let context = output(&api, api.loomc_context_release, |out| {
                 api.loomc_context_create(&options, alloc, out)
@@ -370,7 +345,21 @@ impl Prepared {
             let compiler = output(&api, api.loomc_compiler_release, |out| {
                 api.loomc_compiler_create(context.raw, ptr::null(), alloc, out)
             })?;
+            let sanitizer_options = loomc_sanitizer_options_t {
+                type_: LOOMC_STRUCTURE_TYPE_SANITIZER_OPTIONS,
+                structure_size: size_of::<loomc_sanitizer_options_t>(),
+                checks: sanitizer.checks.bits(),
+                reporting_mode: match sanitizer.reporting {
+                    super::SanitizerReporting::Default => LOOMC_SANITIZER_REPORTING_MODE_DEFAULT,
+                    super::SanitizerReporting::Trap => LOOMC_SANITIZER_REPORTING_MODE_TRAP,
+                    super::SanitizerReporting::ReportOnly => {
+                        LOOMC_SANITIZER_REPORTING_MODE_REPORT_ONLY
+                    }
+                },
+                ..Default::default()
+            };
             let pipeline_options = loomc_target_pipeline_options_t {
+                next: (&sanitizer_options as *const loomc_sanitizer_options_t).cast(),
                 type_: LOOMC_STRUCTURE_TYPE_TARGET_PIPELINE_OPTIONS,
                 structure_size: size_of::<loomc_target_pipeline_options_t>(),
                 kind: LOOMC_TARGET_PIPELINE_KIND_PREPARED_LOW,
@@ -394,7 +383,6 @@ impl Prepared {
                 linker,
                 profile,
                 context,
-                environment,
                 api,
                 artifact_format: architecture.artifact_format(),
                 pool: Pool {
@@ -580,7 +568,12 @@ impl Prepared {
             Ok((Index(index), diagnostics))
         }
     }
-    pub(super) fn compile(&self, index: &Index, spec: &Specialization) -> Result<super::Compiled> {
+    pub(super) fn compile(
+        &self,
+        index: &Index,
+        spec: &Specialization,
+        trace: Option<(&super::TraceOptions, &mut dyn std::io::Write)>,
+    ) -> Result<super::Compiled> {
         let lease = self.workspace()?;
         let api = &self.api;
         unsafe {
@@ -616,26 +609,97 @@ impl Prepared {
                     api.loomc_link_module(self.linker.raw, lease.raw(), &options, out, result)
                 })
                 .map_err(|e| e.context("linking export"))?;
-            let specialization = loomc_target_specialization_t {
-                function_symbol: root,
-                target_profile: self.profile.raw,
-            };
-            let targets = loomc_target_specialization_options_t {
-                type_: LOOMC_STRUCTURE_TYPE_TARGET_SPECIALIZATION_OPTIONS,
-                structure_size: size_of::<loomc_target_specialization_options_t>(),
-                specializations: &specialization,
-                specialization_count: 1,
+            let manifest_options = loomc_artifact_manifest_options_t {
+                type_: LOOMC_STRUCTURE_TYPE_ARTIFACT_MANIFEST_OPTIONS,
+                structure_size: size_of::<loomc_artifact_manifest_options_t>(),
+                mode: if self.artifact_format == "amdgpu-hsaco" {
+                    LOOMC_ARTIFACT_MANIFEST_MODE_DETAILS
+                } else {
+                    LOOMC_ARTIFACT_MANIFEST_MODE_NONE
+                },
                 ..Default::default()
             };
-            let options = loomc_compile_options_t {
-                type_: LOOMC_STRUCTURE_TYPE_COMPILE_OPTIONS,
-                structure_size: size_of::<loomc_compile_options_t>(),
-                next: (&targets as *const loomc_target_specialization_options_t).cast(),
-                module_name: view("kernel"),
+            let report_options = loomc_compile_report_options_t {
+                type_: LOOMC_STRUCTURE_TYPE_COMPILE_REPORT_OPTIONS,
+                structure_size: size_of::<loomc_compile_report_options_t>(),
+                next: (&manifest_options as *const loomc_artifact_manifest_options_t).cast(),
+                mode: match spec.report {
+                    super::ReportMode::None => LOOMC_COMPILE_REPORT_MODE_NONE,
+                    super::ReportMode::Summary => LOOMC_COMPILE_REPORT_MODE_SUMMARY,
+                    super::ReportMode::Details => LOOMC_COMPILE_REPORT_MODE_DETAILS,
+                },
+                ..Default::default()
+            };
+            let emit_options = loomc_emit_options_t {
+                type_: LOOMC_STRUCTURE_TYPE_EMIT_OPTIONS,
+                structure_size: size_of::<loomc_emit_options_t>(),
+                next: (&report_options as *const loomc_compile_report_options_t).cast(),
+                artifact_format: view(self.artifact_format),
+                artifact_flags: LOOMC_EMIT_ARTIFACT_FLAG_PRIMARY,
+                ..Default::default()
+            };
+            let mut trace_state = trace.map(|(options, writer)| TraceSink {
+                api,
+                options,
+                writer,
+                written: 0,
+                error: None,
+            });
+            let before: Vec<_> = trace_state
+                .as_ref()
+                .map(|state| state.options.before.iter().map(|s| view(s)).collect())
+                .unwrap_or_default();
+            let after: Vec<_> = trace_state
+                .as_ref()
+                .map(|state| state.options.after.iter().map(|s| view(s)).collect())
+                .unwrap_or_default();
+            let trace_options = loomc_pass_trace_options_t {
+                type_: LOOMC_STRUCTURE_TYPE_PASS_TRACE_OPTIONS,
+                structure_size: size_of::<loomc_pass_trace_options_t>(),
+                format: match trace_state.as_ref().map(|state| state.options.format) {
+                    Some(super::TraceFormat::Text) => LOOMC_PASS_TRACE_FORMAT_TEXT,
+                    _ => LOOMC_PASS_TRACE_FORMAT_JSONL,
+                },
+                flags: if before.is_empty() && after.is_empty() {
+                    LOOMC_PASS_TRACE_FLAG_AFTER_ALL
+                } else {
+                    0
+                },
+                tool_name: view("hrx-rs"),
+                input_identifier: root,
+                before_filters: before.as_ptr(),
+                before_filter_count: before.len(),
+                after_filters: after.as_ptr(),
+                after_filter_count: after.len(),
+                sink: loomc_pass_trace_sink_t {
+                    write: Some(write_trace),
+                    user_data: trace_state.as_mut().map_or(ptr::null_mut(), |state| {
+                        (state as *mut TraceSink<'_>).cast()
+                    }),
+                },
+                ..Default::default()
+            };
+            let options = loomc_compile_artifact_options_t {
+                type_: LOOMC_STRUCTURE_TYPE_COMPILE_ARTIFACT_OPTIONS,
+                structure_size: size_of::<loomc_compile_artifact_options_t>(),
+                next: if trace_state.is_some() {
+                    (&trace_options as *const loomc_pass_trace_options_t).cast()
+                } else {
+                    ptr::null()
+                },
+                roots: &root,
+                root_count: 1,
+                target_profile: self.profile.raw,
+                emit_options: &emit_options,
+                artifact_flags: if self.artifact_format == "amdgpu-hsaco" {
+                    LOOMC_COMPILE_ARTIFACT_FLAG_LAUNCH_CONFIG
+                } else {
+                    0
+                },
                 ..Default::default()
             };
             let result = output(api, api.loomc_result_release, |out| {
-                api.loomc_compile_module(
+                api.loomc_compile_artifact(
                     self.compiler.raw,
                     lease.raw(),
                     self.pipeline.raw,
@@ -644,44 +708,16 @@ impl Prepared {
                     alloc,
                     out,
                 )
-            })?;
-            diagnostics.extend(result.check().map_err(|e| e.context("lowering export"))?);
-            drop(result);
-            let report_options = loomc_compile_report_options_t {
-                type_: LOOMC_STRUCTURE_TYPE_COMPILE_REPORT_OPTIONS,
-                structure_size: size_of::<loomc_compile_report_options_t>(),
-                mode: match spec.report {
-                    super::ReportMode::None => LOOMC_COMPILE_REPORT_MODE_NONE,
-                    super::ReportMode::Summary => LOOMC_COMPILE_REPORT_MODE_SUMMARY,
-                    super::ReportMode::Details => LOOMC_COMPILE_REPORT_MODE_DETAILS,
-                },
-                ..Default::default()
-            };
-            let options = loomc_emit_options_t {
-                type_: LOOMC_STRUCTURE_TYPE_EMIT_OPTIONS,
-                structure_size: size_of::<loomc_emit_options_t>(),
-                next: if spec.report != super::ReportMode::None {
-                    (&report_options as *const loomc_compile_report_options_t).cast()
-                } else {
-                    ptr::null()
-                },
-                artifact_format: view(self.artifact_format),
-                artifact_flags: LOOMC_EMIT_ARTIFACT_FLAG_PRIMARY,
-                ..Default::default()
-            };
-            let result = output(api, api.loomc_result_release, |out| {
-                api.loomc_emit_module(
-                    self.environment.raw,
-                    lease.raw(),
-                    module.raw,
-                    &options,
-                    alloc,
-                    out,
-                )
-            })?;
-            diagnostics.extend(result.check()?);
+            });
+            if let Some(error) = trace_state.and_then(|state| state.error) {
+                return Err(error.context("writing compiler pass trace"));
+            }
+            let result = result?;
+            let checked = result.check();
             let mut bytes = None;
             let mut report = None;
+            let mut manifest = None;
+            let mut launch_bytes = None;
             for i in 0..api.loomc_result_artifact_count(result.raw) {
                 let artifact = &*api.loomc_result_artifact_at(result.raw, i);
                 let mut span = loomc_byte_span_t::default();
@@ -695,11 +731,38 @@ impl Prepared {
                     Arc::<[u8]>::from(std::slice::from_raw_parts(span.data, span.data_length))
                 };
                 api.loomc_allocator_free(alloc, span.data.cast_mut().cast());
-                if string(artifact.format) == self.artifact_format {
+                if artifact.kind == LOOMC_ARTIFACT_KIND_LAUNCH_CONFIG {
+                    launch_bytes = Some(data);
+                } else if string(artifact.format) == "loom-artifact-manifest-json" {
+                    manifest = Some(serde_json::from_slice(&data)?);
+                } else if string(artifact.format) == self.artifact_format {
                     bytes = Some(data);
                 } else if string(artifact.format) == "loom-compile-report-json" {
                     report = Some(serde_json::from_slice(&data)?);
                 }
+            }
+            match checked {
+                Ok(found) => diagnostics.extend(found),
+                Err(Error::Compile {
+                    message,
+                    diagnostics: failed,
+                    ..
+                }) => {
+                    diagnostics.extend(failed);
+                    return Err(Error::Compile {
+                        message,
+                        diagnostics,
+                        report: report.map(Box::new),
+                    });
+                }
+                Err(error) => return Err(error),
+            }
+            if manifest_options.mode != LOOMC_ARTIFACT_MANIFEST_MODE_NONE && manifest.is_none() {
+                return Err(Error::Message("Loom emitted no artifact manifest".into()));
+            }
+            let launch_bytes = launch_bytes.filter(|v| !v.is_empty());
+            if options.artifact_flags != 0 && launch_bytes.is_none() {
+                return Err(Error::Message("Loom emitted no launch program".into()));
             }
             let bytes = bytes.filter(|v| !v.is_empty()).ok_or_else(|| {
                 Error::Message(format!("Loom emitted no {} artifact", self.artifact_format))
@@ -708,6 +771,8 @@ impl Prepared {
                 bytes,
                 diagnostics,
                 report,
+                manifest,
+                launch_bytes,
             })
         }
     }
@@ -752,37 +817,142 @@ unsafe extern "C" fn include_source(
     }
 }
 
+// Unlike compiler handles, invocation scratch is exclusive to this owner.
+pub(super) struct LaunchProgram {
+    program: Handle<loomc_launch_config_program_t>,
+    function: loomc_launch_config_function_t,
+}
+unsafe impl Send for LaunchProgram {}
+#[derive(Clone)]
+pub(super) struct LaunchLoader(Arc<Loomc>);
+impl std::fmt::Debug for LaunchLoader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LaunchLoader")
+    }
+}
+impl Prepared {
+    pub(super) fn launch_loader(&self) -> LaunchLoader {
+        LaunchLoader(self.api.clone())
+    }
+}
+impl LaunchLoader {
+    pub(super) fn load(&self, bytes: &[u8], export: &str) -> Result<super::LaunchProgram> {
+        let api = &self.0;
+        unsafe {
+            let alloc = api.loomc_allocator_system();
+            let sequence = output(api, api.loomc_byte_sequence_release, |out| {
+                api.loomc_byte_sequence_create_copy(
+                    loomc_byte_span_t {
+                        data: bytes.as_ptr(),
+                        data_length: bytes.len(),
+                    },
+                    alloc,
+                    out,
+                )
+            })?;
+            let artifact = loomc_artifact_t {
+                kind: LOOMC_ARTIFACT_KIND_LAUNCH_CONFIG,
+                format: view("loombc"),
+                contents: sequence.raw,
+                ..Default::default()
+            };
+            let program = output(api, api.loomc_launch_config_program_release, |out| {
+                api.loomc_launch_config_program_load(&artifact, alloc, out)
+            })?;
+            let mut function = loomc_launch_config_function_t::default();
+            status(
+                api,
+                api.loomc_launch_config_program_lookup_function(
+                    program.raw,
+                    view(export),
+                    &mut function,
+                ),
+            )?;
+            Ok(super::LaunchProgram(LaunchProgram { program, function }))
+        }
+    }
+}
+impl LaunchProgram {
+    pub(super) fn evaluate(&mut self, arguments: &[u64]) -> Result<super::LaunchConfig> {
+        let mut config = loomc_launch_config_t {
+            type_: LOOMC_STRUCTURE_TYPE_LAUNCH_CONFIG,
+            structure_size: size_of::<loomc_launch_config_t>(),
+            ..Default::default()
+        };
+        unsafe {
+            status(
+                &self.program.api,
+                self.program.api.loomc_launch_config_program_invoke(
+                    self.program.raw,
+                    self.function,
+                    arguments.as_ptr(),
+                    arguments.len(),
+                    &mut config,
+                ),
+            )?;
+        }
+        let dimensions = |d: loomc_dimension3_t| [d.x, d.y, d.z];
+        Ok(super::LaunchConfig {
+            workgroup_count: dimensions(config.workgroup_count),
+            workgroup_size: dimensions(config.workgroup_size),
+            workgroup_cluster_size: dimensions(config.workgroup_cluster_size),
+            subgroup_size: config.subgroup_size,
+            workgroup_storage_bytes: config.workgroup_storage_bytes,
+        })
+    }
+}
+
+struct TraceSink<'a> {
+    api: &'a Loomc,
+    options: &'a super::TraceOptions,
+    writer: &'a mut dyn std::io::Write,
+    written: usize,
+    error: Option<Error>,
+}
+unsafe extern "C" fn write_trace(
+    user_data: *mut std::ffi::c_void,
+    fragment: loomc_string_view_t,
+) -> loomc_status_t {
+    let state = unsafe { &mut *user_data.cast::<TraceSink<'_>>() };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+        let total = state
+            .written
+            .checked_add(fragment.size)
+            .filter(|n| *n <= state.options.max_bytes)
+            .ok_or_else(|| Error::Message("compiler trace byte limit exceeded".into()))?;
+        if fragment.size != 0 {
+            let bytes =
+                unsafe { std::slice::from_raw_parts(fragment.data.cast::<u8>(), fragment.size) };
+            state.writer.write_all(bytes)?;
+        }
+        state.written = total;
+        Ok(())
+    }));
+    match outcome {
+        Ok(Ok(())) => ptr::null_mut(),
+        failure => {
+            state.error = Some(match failure {
+                Ok(Err(error)) => error,
+                _ => Error::Message("compiler trace writer panicked".into()),
+            });
+            unsafe {
+                state.api.loomc_status_allocate(
+                    LOOMC_STATUS_ABORTED,
+                    c"hrx-rs".as_ptr(),
+                    0,
+                    view("compiler trace sink failed"),
+                )
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod diagnostic_abi_tests {
     use super::*;
 
     #[test]
-    fn legacy_result_reads_only_its_prefix() {
-        let old = Box::new(DiagnosticPrefix {
-            severity: 2,
-            code: view("old-code"),
-            message: view("old message"),
-            range: loomc_source_range_t {
-                start_line: 7,
-                ..Default::default()
-            },
-        });
-        let copied = unsafe {
-            copy_diagnostic(
-                (&*old as *const DiagnosticPrefix).cast(),
-                false,
-                |_| unreachable!(),
-            )
-        };
-        drop(old);
-        assert_eq!(copied.line, 7);
-        assert_eq!(copied.message, "old message");
-        assert!(copied.related_locations.is_empty());
-        assert_eq!(copied.related_location_omitted_count, 0);
-    }
-
-    #[test]
-    fn extended_locations_outlive_native_result_storage() {
+    fn diagnostic_locations_outlive_native_result_storage() {
         let copied = {
             let label = String::from("previous declaration");
             let locations = [loomc_diagnostic_related_location_t {
@@ -796,17 +966,42 @@ mod diagnostic_abi_tests {
                     ..Default::default()
                 },
             }];
+            let parameter_value = String::from("64");
+            let parameters = [loomc_diagnostic_parameter_t {
+                name: view("width"),
+                value: view(&parameter_value),
+            }];
             let diagnostic = loomc_diagnostic_t {
                 severity: 2,
+                parameters: parameters.as_ptr(),
+                parameter_count: parameters.len(),
                 code: view("duplicate"),
                 message: view("duplicate symbol"),
+                formatted_text: view("header.loom:7:3: duplicate symbol\n"),
+                range: loomc_source_range_t {
+                    source: std::ptr::dangling(),
+                    start_line: 7,
+                    start_column: 3,
+                    ..Default::default()
+                },
                 related_locations: locations.as_ptr(),
                 related_location_count: 1,
                 related_location_omitted_count: 3,
-                ..Default::default()
             };
-            unsafe { copy_diagnostic(&diagnostic, true, |_| String::from("header.loom")) }
+            unsafe { copy_diagnostic(&diagnostic, |_| String::from("header.loom")) }
         };
+        assert_eq!(copied.formatted_text, "header.loom:7:3: duplicate symbol\n");
+        assert_eq!(
+            copied.parameters,
+            vec![super::super::DiagnosticParameter {
+                name: "width".into(),
+                value: "64".into()
+            }]
+        );
+        assert_eq!(copied.source, "header.loom");
+        assert_eq!(copied.line, 7);
+        assert_eq!(copied.column, 3);
+        assert_eq!(copied.message, "duplicate symbol");
         assert_eq!(copied.related_locations[0].label, "previous declaration");
         assert_eq!(copied.related_locations[0].source, "header.loom");
         assert_eq!(copied.related_locations[0].end_column, 9);

@@ -36,6 +36,12 @@ macro_rules! entry {
     };
 }
 
+#[cfg(target_os = "linux")]
+mod storage;
+#[cfg(target_os = "linux")]
+pub use storage::{StorageExecution, StorageLayout, StorageOptions, StorageRing};
+mod resident;
+pub use resident::{ResidentGpu, ResidentSession, ResidentStartup};
 mod xdna;
 pub use xdna::{XdnaBinding, XdnaCompletion, XdnaProgram};
 pub(crate) mod profile;
@@ -43,10 +49,24 @@ pub use profile::{DeviceInterval, DeviceProfile, ProfiledGpu};
 mod queue;
 pub(crate) use queue::GraphArena;
 pub use queue::{Completion, PreparedGpu, Queue};
+mod sanitizer;
+pub use sanitizer::{
+    SanitizerAccess, SanitizerCheck, SanitizerRace, SanitizerReport, SanitizerReports,
+    SanitizerRuntimeOptions, SanitizerSite,
+};
 mod executable;
 pub use executable::{Argument, Kernel};
+mod aql;
+pub use aql::{AqlCompletion, AqlQueue, PreparedAql};
+mod capabilities;
+pub use capabilities::{QueueCapabilities, QueueCommand};
+mod visibility;
+pub use visibility::{
+    AtomicScope, CacheExecutor, CacheOperation, CacheTransition, MemorySite, MemoryVisibility,
+    PreparedHostVisibility, TransitionKind, VisibilityFacts,
+};
 mod memory;
-pub use memory::Buffer;
+pub use memory::{AllocationProfile, Buffer, ProspectiveVisibility};
 
 struct Api {
     core: &'static amdf_api_t,
@@ -163,6 +183,16 @@ fn validate_bridge_api(core: &amdf_api_t, xdna: &amdf_xdna_api_t) -> Result<()> 
     Ok(())
 }
 
+/// Native driver ownership policy selected before discovery.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NativeLifetime {
+    /// Driver resources are scoped to the explicit fabric instance.
+    #[default]
+    Instance,
+    /// Use the provider's process-lifetime native domain, enabling its
+    /// process-scoped services such as KFD host registration.
+    Process,
+}
 /// One provider instance and its passive memory/discovery domain.
 #[derive(Clone)]
 pub struct Fabric(Arc<Instance>);
@@ -307,12 +337,22 @@ impl Device {
 impl Fabric {
     /// Load a selected native provider and create an instance without discovery.
     pub fn load(path: &Path) -> Result<Self> {
+        Self::load_with_lifetime(path, NativeLifetime::Instance)
+    }
+    /// Load a provider with an explicit native lifetime policy.
+    /// Process-lifetime KFD state can survive provider destruction and prevent
+    /// reacquisition. Use `resolve_with_lifetime(Process)` to share a retained
+    /// process provider, or keep this explicit provider alive until process exit.
+    pub fn load_with_lifetime(path: &Path, lifetime: NativeLifetime) -> Result<Self> {
         let api = Arc::new(unsafe { Api::load(path)? });
         let _ = entry!(api.core, instance_destroy);
         let options = amdf_instance_create_info_t {
             type_: AMDF_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             structure_size: size_of::<amdf_instance_create_info_t>() as u32,
-            native_lifetime: AMDF_NATIVE_LIFETIME_INSTANCE,
+            native_lifetime: match lifetime {
+                NativeLifetime::Instance => AMDF_NATIVE_LIFETIME_INSTANCE,
+                NativeLifetime::Process => AMDF_NATIVE_LIFETIME_PROCESS,
+            },
             ..Default::default()
         };
         let mut raw = ptr::null_mut();
@@ -433,20 +473,40 @@ impl Fabric {
 impl Fabric {
     /// Resolve the verified native bundle, or an explicit developer library.
     pub fn resolve() -> Result<Self> {
-        static INSTANCE: std::sync::Mutex<std::sync::Weak<Instance>> =
-            std::sync::Mutex::new(std::sync::Weak::new());
-        let mut slot = INSTANCE
+        Self::resolve_with_lifetime(NativeLifetime::Instance)
+    }
+    /// Resolve a provider in the requested native lifetime domain. Instance
+    /// providers are weakly cached; the process provider remains alive until
+    /// process exit because KFD's primary VM can outlive explicit destruction.
+    /// Selection never changes after admission within that lifetime domain.
+    pub fn resolve_with_lifetime(lifetime: NativeLifetime) -> Result<Self> {
+        struct Instances {
+            instance: std::sync::Weak<Instance>,
+            process: Option<Arc<Instance>>,
+        }
+        static INSTANCES: std::sync::Mutex<Instances> = std::sync::Mutex::new(Instances {
+            instance: std::sync::Weak::new(),
+            process: None,
+        });
+        let mut slots = INSTANCES
             .lock()
             .map_err(|_| Error::Message("fabric registry poisoned".into()))?;
-        if let Some(instance) = slot.upgrade() {
+        let existing = match lifetime {
+            NativeLifetime::Instance => slots.instance.upgrade(),
+            NativeLifetime::Process => slots.process.clone(),
+        };
+        if let Some(instance) = existing {
             return Ok(Self(instance));
         }
         let path = match std::env::var_os("HRX_AMDF_LIBRARY") {
             Some(path) => std::path::PathBuf::from(path),
             None => crate::bundle::resolve()?.join("libamdf.so"),
         };
-        let fabric = Self::load(&path)?;
-        *slot = Arc::downgrade(&fabric.0);
+        let fabric = Self::load_with_lifetime(&path, lifetime)?;
+        match lifetime {
+            NativeLifetime::Instance => slots.instance = Arc::downgrade(&fabric.0),
+            NativeLifetime::Process => slots.process = Some(fabric.0.clone()),
+        }
         Ok(fabric)
     }
 }

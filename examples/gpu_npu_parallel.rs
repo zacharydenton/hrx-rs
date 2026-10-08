@@ -139,7 +139,8 @@ fn main() -> Result<()> {
         gpu.target().as_str(),
         npu.target().as_str()
     );
-    let gpu_artifact = Compiler::for_target(None, gpu.target())?
+    let gpu_compiler = Compiler::for_target(None, gpu.target())?;
+    let gpu_artifact = gpu_compiler
         .import_cxx(CxxSource::new(
             "affine.cpp",
             format!(
@@ -158,11 +159,9 @@ void affine(const int* input, int* output) {{
     // SAFETY: the fixed launch covers exactly elements i32 values in each
     // nonaliasing binding; bounded input values cannot overflow the arithmetic.
     let gpu_kernel = unsafe {
-        runtime.load_gpu_kernel(
-            gpu_artifact.path(),
-            "affine",
-            [(elements / 256) as u32, 1, 1],
-            [256, 1, 1],
+        runtime.load_gpu_artifact(
+            &gpu_artifact,
+            &[],
             contract(&[(elements * 4, Access::Read), (elements * 4, Access::Write)]),
         )
     }?;

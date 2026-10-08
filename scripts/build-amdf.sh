@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the 0.8 native boundary from a pinned, patched hrx-system source tree.
+# Build the native boundary from a pinned, patched hrx-system source tree.
 # Use this inside the pinned Ubuntu image for distributable release artifacts.
 set -euo pipefail
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,12 +14,13 @@ for native_patch in "$repo_dir/native/amdf/build.patch" "$repo_dir/native/amdf/q
   fi
 done
 
+# Loom's shared task ABI layouts require the task driver header targets.
 cmake -S "$source_dir" -B "$build_dir" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PROJECT_INCLUDE="$repo_dir/native/amdf/bridge.cmake" \
   -DLIBHRX_BUILD=OFF -DAMDF_BUILD=ON -DAMDF_FAMILY_CDNA=OFF \
   -DAMDF_FAMILY_RDNA=ON -DAMDF_FAMILY_XDNA=ON \
-  -DIREE_HAL_DRIVER_AMDGPU=OFF -DIREE_HAL_DRIVER_TASK=OFF \
+  -DIREE_HAL_DRIVER_AMDGPU=OFF -DIREE_HAL_DRIVER_TASK=ON \
   -DIREE_ENABLE_LIBBACKTRACE=OFF -DIREE_BUILD_TESTS=OFF \
   -DIREE_BUILD_BENCHMARKS=OFF -DHRX_INSTALL_TESTS=OFF \
   -DLOOM_TARGET_DEFAULTS=OFF -DLOOM_TARGET_AMDGPU=ON \

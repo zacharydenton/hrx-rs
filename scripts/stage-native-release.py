@@ -85,8 +85,7 @@ def main():
     # Preserve the complete source headers, including every embedded notice.
     license_file('LICENSE-linux-uapi.txt', text='\n'.join(
         f'Source: {p.relative_to(work)}\n{p.read_text()}' for p in headers +
-        [p for name in inputs['downloads'] if name.startswith('linux_')
-         for p in (deps / f'{name}-src/file').rglob('*.h')]),
+        [path for name, path in downloaded.items() if name.startswith('linux_')]),
         origin='pinned libdrm and Linux/amdxdna syscall headers; GPL-2.0 WITH Linux-syscall-note and permissive per-file notices')
     for name in ['linux-gpl2-license', 'linux-syscall-note']:
         license_file(f'LICENSE-{name}.txt', path=downloaded[name])
@@ -112,9 +111,10 @@ def main():
         for path in sorted((REPO/directory).rglob('*')):
             if path.is_file() and (directory != 'native/licenses' or path.name in evidence):
                 members[str(path.relative_to(REPO))] = path
-    for name in ['native/loomc_abi.c','native/release-inputs.json','native/RELEASE.md','scripts/stage-native-release.py',
+    for name in ['native/release-inputs.json','native/RELEASE.md','scripts/stage-native-release.py',
                  'scripts/rebuild-hrx.sh','scripts/build-amdf.sh','scripts/build-gpu-runtime-container.sh',
-                 'scripts/fetch-native-inputs.py','scripts/seed-native-file-cache.py']:
+                 'scripts/fetch-native-inputs.py','scripts/seed-native-file-cache.py',
+                 'scripts/generate-storage-bindings.py']:
         members[name] = REPO/name
     members['build-packages.txt'] = build/'build-packages.txt'
     archive = work/'hrx-native-sources.tar.gz'
@@ -130,14 +130,13 @@ def main():
     write_json(REPO/'THIRD-PARTY.json',inventory)
     shutil.copyfile(REPO/'THIRD-PARTY.json',stage/'THIRD-PARTY.json')
     bridge_inputs={str(p.relative_to(REPO)):digest(p) for p in sorted((REPO/'native/amdf').glob('*')) if p.is_file()}
-    bridge_inputs['native/loomc_abi.c'] = digest(REPO/'native/loomc_abi.c')
     write_json(stage/'provenance.json',{'schema':1,'inputs':inputs,'bridge_inputs':bridge_inputs,
         'build_recipe':'scripts/rebuild-hrx.sh','corresponding_source':source_record,
         'compiler':(build/'compiler-version.txt').read_text().strip(),
         'cmake_cache_sha256':digest(build/'CMakeCache.txt'),
         'binary_sha256':{n:e['sha256'] for n,e in components.items()}})
-    notice='HRX 0.8 native distribution\n\nlibamdf and Loom derive from HRX/IREE under Apache-2.0 WITH LLVM-exception.\nThe C++ importer includes Roberto Raggi\'s MIT-licensed cplusplus parser.\nCORE-MATH and AMD ISA tables retain their MIT notices; HSA headers retain NCSA.\nLinux syscall headers retain their original notices and syscall exception.\nAll component license texts and header notices accompany the libraries.\nThe hrx-rs bridge is MIT licensed.\n\nModified source, patches and build recipes:\n'+source_record['url']+'\nSHA-256: '+source_record['sha256']+'\n'
+    notice='HRX native distribution\n\nlibamdf and Loom derive from HRX/IREE under Apache-2.0 WITH LLVM-exception.\nThe C++ importer includes Roberto Raggi\'s MIT-licensed cplusplus parser.\nCORE-MATH and AMD ISA tables retain their MIT notices; HSA headers retain NCSA.\nLinux syscall headers retain their original notices and syscall exception.\nAll component license texts and header notices accompany the libraries.\nThe hrx-rs bridge is MIT licensed.\n\nModified source, patches and build recipes:\n'+source_record['url']+'\nSHA-256: '+source_record['sha256']+'\n'
     (stage/'NOTICE').write_text(notice)
-    (REPO/'NOTICE').write_text(notice+'\nBenchmark fixtures in native/qualification derive from krea2-hrx (MIT),\nand arcface-hrx and h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.\n')
+    (REPO/'NOTICE').write_text(notice+'\nBenchmark fixtures in native/qualification derive from krea2-hrx (MIT),\nand arcface-hrx and h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.\n\nResident exchange and GPU file-I/O fixtures in tests/kernels and\ntests/support/resident_routes.rs derive from libamdf CTS at HRX 7e9c7bbd5e\nunder Apache-2.0 WITH LLVM-exception; original notices are retained.\nThe io_uring Rust layouts derive from the pinned Linux syscall headers;\nregenerate them with scripts/generate-storage-bindings.py.\n')
     print(stage)
 if __name__=='__main__':main()

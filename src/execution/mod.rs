@@ -40,6 +40,8 @@ pub(super) struct RuntimeOwner {
     gpu_index: i32,
     copy_streams: [Mutex<Option<Arc<Mutex<graph::CopyStream>>>>; 3],
     allocation_stream: Mutex<Option<crate::gpu::Stream>>,
+    aql_queues: [Mutex<Option<crate::fabric::AqlQueue>>; 3],
+    sdma_queues: [Mutex<Option<crate::fabric::Queue>>; 3],
 }
 impl Drop for RuntimeOwner {
     fn drop(&mut self) {
@@ -61,6 +63,28 @@ impl Drop for RuntimeOwner {
         }
     }
 }
+/// Engine used for graph regions containing only copies.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CopyEngine {
+    /// Compiled copy kernels on the existing compute queue.
+    #[default]
+    Compute,
+    /// Native SDMA packets. Preparation requires SDMA-qualified memory backing.
+    Sdma,
+}
+/// Queue protocol for explicit GPU kernel nodes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ComputeEngine {
+    /// Native PM4 command graphs.
+    #[default]
+    Pm4,
+    /// AQL v1 dispatch with a fixed per-workitem scratch limit.
+    /// Cross-region dependencies use checked execution completion on the host.
+    Aql {
+        /// Maximum private bytes accepted by every kernel on this runtime.
+        maximum_private_bytes: u32,
+    },
+}
 /// Runtime limits fixed before workers or prepared run slots are created.
 #[derive(Clone, Debug)]
 pub struct RuntimeOptions {
@@ -75,6 +99,10 @@ pub struct RuntimeOptions {
     pub max_submissions: usize,
     /// Preallocated completion slots per prepared graph.
     pub graph_slots: usize,
+    /// Native engine for copy-only regions; selected before graph preparation.
+    pub copy_engine: CopyEngine,
+    /// Queue protocol selected before preparing explicit GPU kernel nodes.
+    pub compute_engine: ComputeEngine,
 }
 impl Default for RuntimeOptions {
     fn default() -> Self {
@@ -83,6 +111,8 @@ impl Default for RuntimeOptions {
             gpu_index: 0,
             max_submissions: 64,
             graph_slots: 2,
+            copy_engine: CopyEngine::Compute,
+            compute_engine: ComputeEngine::Pm4,
         }
     }
 }
@@ -199,6 +229,8 @@ impl Runtime {
             gpu_index: options.gpu_index,
             copy_streams: std::array::from_fn(|_| Mutex::new(None)),
             allocation_stream: Mutex::new(None),
+            aql_queues: std::array::from_fn(|_| Mutex::new(None)),
+            sdma_queues: std::array::from_fn(|_| Mutex::new(None)),
         });
         for name in ["hrx-upload", "hrx-compute", "hrx-download", "hrx-npu"] {
             let core = core.clone();
@@ -424,6 +456,66 @@ impl Runtime {
         let raw = unsafe { stream.load(path.as_ref(), symbol) }?;
         drop(allocation);
         unsafe { self.adopt_gpu_kernel(raw, grid, block, contract) }
+    }
+
+    /// Load a GPU artifact using its compiler-authored launch configuration.
+    /// Memory access declarations remain the caller's explicit contract.
+    /// # Safety
+    /// The kernel must obey `contract` for this workload and all accepted bindings.
+    pub unsafe fn load_gpu_artifact(
+        &self,
+        artifact: &crate::loom::Artifact,
+        workload_argument_bits: &[u64],
+        contract: KernelContract,
+    ) -> Result<GpuKernel> {
+        let mut allocation = self.allocation_stream()?;
+        let stream = allocation.as_mut().unwrap();
+        let (raw, launch) =
+            unsafe { stream.load_artifact_for_workload(artifact, workload_argument_bits) }?;
+        drop(allocation);
+        unsafe {
+            self.adopt_gpu_kernel(raw, launch.workgroup_count, launch.workgroup_size, contract)
+        }
+    }
+
+    /// Load a value/operation or workgroup-race artifact with bounded runtime storage.
+    /// Requires the AQL compute engine. Storage is charged to this runtime's
+    /// memory budget and retained through every prepared and pending invocation.
+    /// Collect diagnostics with [`GpuKernel::sanitizer_reports`] after completion.
+    /// Address shadow instrumentation is rejected. Race shadow is limited to 64 MiB
+    /// per prepared dispatch and participates in the runtime memory budget.
+    /// # Safety
+    /// The kernel must obey `contract` for this workload and all accepted bindings.
+    /// Use report-only instrumentation if execution must continue after failure.
+    pub unsafe fn load_sanitized_gpu_artifact(
+        &self,
+        artifact: &crate::loom::Artifact,
+        workload_argument_bits: &[u64],
+        contract: KernelContract,
+        report_capacity_bytes: usize,
+    ) -> Result<GpuKernel> {
+        if !matches!(self.options.compute_engine, ComputeEngine::Aql { .. }) {
+            return Err(Error::Unsupported(
+                "sanitizer reports require the AQL compute engine".into(),
+            ));
+        }
+        let mut allocation = self.allocation_stream()?;
+        let stream = allocation.as_mut().unwrap();
+        let raw = unsafe {
+            stream.load_sanitized_artifact(
+                artifact,
+                &crate::fabric::SanitizerRuntimeOptions {
+                    capacity_bytes: report_capacity_bytes,
+                    memory_budget: self.options.memory_budget.clone(),
+                    ..Default::default()
+                },
+            )
+        }?;
+        let launch = raw.launch_config(workload_argument_bits)?;
+        drop(allocation);
+        unsafe {
+            self.adopt_gpu_kernel(raw, launch.workgroup_count, launch.workgroup_size, contract)
+        }
     }
 
     /// Retain a loaded executable without loading or copying its code again.

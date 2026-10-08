@@ -1,7 +1,7 @@
 # Loom compiler patches
 
 These patches apply to public `ROCm/hrx-system` commit
-`fbbf3003121cce0322c771345505979809c84165`; `base-revision` is the machine-readable
+`7e9c7bbd5e93d20c1e1a64c60bb4644499404f9b`; `base-revision` is the machine-readable
 pin. `native/release-inputs.json` records the source archive and each active
 patch's SHA-256. The public upstream ABI remains the boundary, with the typed
 processor-mode extension described below.
@@ -18,14 +18,8 @@ processor-mode extension described below.
   occupancy domain, and emits consistent native and assembly descriptors.
   Explicit modes require GFX11/GFX12. The rebase uses upstream's new kernel
   emission path and metadata-owned descriptor interface. Its unsupported-mode
-  diagnostic is now AMDGPU_052, preserving upstream's new AMDGPU_051 diagnostic.
-- `0011-loop-carried-accumulator-reuse.patch` retains whole-tuple back edges,
-  records per-unit last uses within semantic segments, and prefers a concat's
-  eventual edge destination when reserving registers. The rebase uses upstream's
-  retained storage-component query and indexed loop-edge conflict search;
-  it does not restore the removed recursive coalescing walk or fixed-storage
-  scans. Storage extending beyond semantic segments remains conservative.
-  The patch includes liveness, tuple-decomposition, and assembly regressions.
+  diagnostic is AMDGPU_052. The public extension uses structure ID 44;
+  upstream now owns IDs 42 and 43 for artifact compilation and pass tracing.
 - `0012-retain-rdna35-lds-overlap.patch` retains the previously qualified gfx1151
   LDS overlap policy. Completion latency and source hazards remain active while
   independent loads can remain in flight. Width-specific classes required by
@@ -38,12 +32,36 @@ processor-mode extension described below.
   Internal registration no longer accepts a caller-selected arena. A native
   regression destroys the query arena before reading and releasing the domain;
   `tests/compiler_sources.rs` also compiles the failing hrxdb kernel without a GPU.
+- `0014-materialize-bounded-index-extrema.patch` materializes signed 32-bit
+  `index.min`/`index.max` operands whose kernel ABI carriers remain 64-bit.
+  Both inputs must independently fit signed 32 bits; a narrow result is not
+  sufficient. Contract tests check that proof, and the bounded-extrema GPU
+  regression checks tile boundaries and untouched output guards. This fixes
+  H3 video-encoder convolutions without changing their source or fixtures.
+
+- `0015-retain-partial-incoming-vmem-leases.patch` retains the uncovered units
+  of an incoming wide VMEM result when a younger narrow VMEM load reuses only
+  part of its registers. Later ALU writes must still wait for the original load.
+  A fixed-register compiler regression checks the partial wait, and H3 decoder
+  differentials verify the existing goldens without fixture changes.
+
+- `0016-honor-polled-feedback-and-active-masks.patch` honors the native feedback
+  ABI's null notification signal and intersects vector comparison masks with
+  active EXEC before scalar tests. Without the latter, an undefined wave32
+  high word can admit reservations past capacity and overwrite reports. Authored
+  lowering cases cover wave32/wave64; GPU tests verify bounded drops and polling.
 
 Earlier SMEM, GFX11 VMEM-source reuse, dependent-inline-type and allocation-layout
-patches are no longer in the active set. Only the six files above are applied.
-Historical performance measurements do not establish performance of a new pin.
-The matching runtime is published as `native-20260929-fbbf300312-fix1` and selected
-by `bundle.json`. Use `HRX_RUNTIME_DIR` to select a local rebuild.
+patches are no longer in the active set. Patch 0011 is also retired: upstream now
+owns CFG unit-use indexing, storage leases and concat placement. The old
+per-segment liveness overlay is not carried into those analyses. Only the eight
+files above are applied. Historical measurements do not establish performance
+of this compiler pin.
+
+The matching native archive is staged as `native-20261008-7e9c7bbd5e`.
+Rust bindings require this compiler's current C API, including
+`loomc_compile_artifact` and its diagnostic layout. Older compiler bundles are
+not supported. No private diagnostic-layout probe is added to Loom.
 
 ## Rebuild
 
@@ -56,42 +74,6 @@ The compiler patches must be applied in filename order.
 
 ## Validation at this pin
 
-The 2026-09-29 integration built all three native libraries with Clang 21 on
-Ubuntu 26.04. Regenerating the Rust bindings produced no semantic changes.
-All eight compiler/native patches applied to the pinned archive with zero fuzz;
-the resulting patched files exactly matched the build source.
-
-- `cargo test --all-targets`: 109 passed; hardware-dependent tests stayed ignored.
-- `compiler_sources` with `--ignored --test-threads=1` against the new compiler:
-  all seven passed, including C/C++ import and offline XDNA compilation.
-- Descriptor timing, VOPD tables and occupancy Python suites: 35 passed.
-- Native live-range, unit-liveness, target-constraint, occupancy and AMDGPU C API
-  test executables: all five passed.
-- The six patched `.loom-test` fixtures: all 85 cases passed.
-
-Native regression tests used additional AMDGPU targets and `loom-check-test`
-to include test descriptors. Release libraries use the original gfx1151/XDNA
-configuration.
-
-Release qualification also passed all 93 ignored hardware/compiler cases with
-NPU enabled, including the shared queue pool, large graph batching, argument
-arena and GPU/NPU execution checks. The fabric suite used an explicit
-`HRX_AMDF_LIBRARY` path; its Busy assertion now runs before completion polling
-can retire the new dispatch. A timing-only DAG assertion narrowly missed its
-threshold on the first run and passed on rerun.
-
-The paired compiler corpus passed numerical checks for all nine attention,
-GEMM and convolution cases (30 alternating pairs per case) against the previous
-published compiler. Timing confidence intervals were wide on this shared host;
-no statistically clear regression was detected, and these results do not
-establish general throughput or latency improvements. Release CPU checks,
-clippy, documentation and the feature matrix also passed. Builds and test
-processes used bounded memory with one Cargo job.
-
-### 0.8.15 lifetime regression
-
-The same Rust executable with hrxdb `e06d1aa6` succeeds on all four reported
-shapes with the 0.8.13 compiler, segfaults with the 0.8.14 compiler, and succeeds
-with patch 0013. The new Rust compile-only regression also segfaults against the
-released 0.8.14 library and passes with the fixed library. The preceding 0.8.14
-qualification did not include this merge-selection path.
+See the native refresh entry in [CHANGELOG.md](../../CHANGELOG.md) for completed
+checks. Local build and qualification logs are under
+`artifacts/native-refresh-20261008/`.

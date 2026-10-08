@@ -1,4 +1,4 @@
-HRX 0.8 native distribution
+HRX native distribution
 
 libamdf and Loom derive from HRX/IREE under Apache-2.0 WITH LLVM-exception.
 The C++ importer includes Roberto Raggi's MIT-licensed cplusplus parser.
@@ -8,8 +8,14 @@ All component license texts and header notices accompany the libraries.
 The hrx-rs bridge is MIT licensed.
 
 Modified source, patches and build recipes:
-https://github.com/zacharydenton/hrx-rs/releases/download/native-20260929-fbbf300312-fix1/hrx-native-sources.tar.gz
-SHA-256: b05fb0ff7ff731bdc6e36b52767512929d99495a0525f2b45fc3c5f1f7c0e738
+https://github.com/zacharydenton/hrx-rs/releases/download/native-20261008-7e9c7bbd5e/hrx-native-sources.tar.gz
+SHA-256: ae0781050942634a5f3c998787bb9317db342af53da221e95466973aaadd0f07
 
 Benchmark fixtures in native/qualification derive from krea2-hrx (MIT),
 and arcface-hrx and h3-hrx (Apache-2.0); exact revisions and license texts accompany those files.
+
+Resident exchange and GPU file-I/O fixtures in tests/kernels and
+tests/support/resident_routes.rs derive from libamdf CTS at HRX 7e9c7bbd5e
+under Apache-2.0 WITH LLVM-exception; original notices are retained.
+The io_uring Rust layouts derive from the pinned Linux syscall headers;
+regenerate them with scripts/generate-storage-bindings.py.

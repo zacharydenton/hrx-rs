@@ -428,8 +428,47 @@ pub struct Kernel {
     info: ExportInfo,
     layout: Arc<[(u32, usize)]>,
     symbol: Arc<str>,
+    artifact: Option<Arc<crate::loom::Artifact>>,
 }
 impl Kernel {
+    /// Collect owned sanitizer reports after all native uses have retired.
+    /// Returns `Busy` while work is pending and `Unsupported` for ordinary kernels.
+    pub fn sanitizer_reports(&self) -> Result<fabric::SanitizerReports> {
+        self.native.sanitizer_reports()
+    }
+    pub(crate) unsafe fn prepare_aql(
+        &self,
+        queue: &fabric::AqlQueue,
+        grid: [u32; 3],
+        block: [u32; 3],
+        constants: &Constants,
+        bindings: &[View<'_>],
+    ) -> Result<fabric::PreparedAql> {
+        validate_export_launch(&self.info, grid, block)?;
+        if constants.len != self.info.constant_byte_length as usize
+            || bindings.len() != self.info.binding_count as usize
+        {
+            return Err(Error::Message(
+                "kernel binding or constant byte count mismatch".into(),
+            ));
+        }
+        let mut args = Vec::with_capacity(self.layout.len());
+        let mut scalar = 0;
+        let mut binding = 0;
+        for &(kind, size) in self.layout.iter() {
+            if kind == 1 {
+                args.push(fabric::Argument::Value(
+                    &constants.bytes[scalar..scalar + size],
+                ));
+                scalar += size;
+            } else {
+                let view = bindings[binding];
+                args.push(fabric::Argument::Buffer(&view.owner.native, view.offset));
+                binding += 1;
+            }
+        }
+        unsafe { queue.prepare(&self.native, grid, block.map(|v| v as u16), &args) }
+    }
     pub(crate) fn device_id(&self) -> usize {
         self.native.device().id()
     }
@@ -440,6 +479,40 @@ impl Kernel {
     /// Selected native entry name.
     pub fn symbol(&self) -> &str {
         &self.symbol
+    }
+    /// Create an independent evaluator of this artifact's exact export.
+    pub fn launch_program(&self) -> Result<crate::loom::LaunchProgram> {
+        self.artifact
+            .as_ref()
+            .ok_or_else(|| {
+                Error::Unsupported("raw code objects have no compiler launch companion".into())
+            })?
+            .launch_program(self.symbol())
+    }
+    /// Evaluate and validate compiler launch geometry during preparation.
+    pub fn launch_config(
+        &self,
+        workload_argument_bits: &[u64],
+    ) -> Result<crate::loom::LaunchConfig> {
+        let config = self.launch_program()?.evaluate(workload_argument_bits)?;
+        self.validate_launch_config(&config)?;
+        Ok(config)
+    }
+    fn validate_launch_config(&self, config: &crate::loom::LaunchConfig) -> Result<()> {
+        validate_export_launch(&self.info, config.workgroup_count, config.workgroup_size)?;
+        if config.workgroup_cluster_size != [1; 3] {
+            return Err(Error::Unsupported(
+                "clustered launches are not admitted by the PM4 runtime".into(),
+            ));
+        }
+        if config.subgroup_size != self.native.subgroup_size()
+            || config.workgroup_storage_bytes != self.native.workgroup_storage_bytes()
+        {
+            return Err(Error::Unsupported(
+                "launch program requirements differ from the loaded executable".into(),
+            ));
+        }
+        Ok(())
     }
     fn from_native(native: fabric::Kernel, symbol: &str) -> Result<Self> {
         let layout = native.argument_layout()?;
@@ -469,6 +542,7 @@ impl Kernel {
             info,
             layout: layout.into(),
             symbol: symbol.into(),
+            artifact: None,
         })
     }
 }
@@ -819,10 +893,37 @@ impl Stream {
     /// # Safety
     /// Native code must obey its declared memory and argument contract.
     pub unsafe fn load_artifact(&self, artifact: &crate::loom::Artifact) -> Result<Kernel> {
-        Kernel::from_native(
+        let mut kernel = Kernel::from_native(
             unsafe { self.inner.device.load(artifact) }?,
             artifact.symbol(),
-        )
+        )?;
+        kernel.artifact = Some(Arc::new(artifact.clone()));
+        Ok(kernel)
+    }
+    pub(crate) unsafe fn load_sanitized_artifact(
+        &self,
+        artifact: &crate::loom::Artifact,
+        options: &fabric::SanitizerRuntimeOptions,
+    ) -> Result<Kernel> {
+        let mut kernel = Kernel::from_native(
+            unsafe { self.inner.device.load_sanitized(artifact, options) }?,
+            artifact.symbol(),
+        )?;
+        kernel.artifact = Some(Arc::new(artifact.clone()));
+        Ok(kernel)
+    }
+    /// Load an artifact and evaluate its compiler-authored launch configuration.
+    /// All evaluation and allocation happens before dispatch preparation.
+    /// # Safety
+    /// Native code must obey the caller's buffer-access contract for this workload.
+    pub unsafe fn load_artifact_for_workload(
+        &self,
+        artifact: &crate::loom::Artifact,
+        workload_argument_bits: &[u64],
+    ) -> Result<(Kernel, crate::loom::LaunchConfig)> {
+        let kernel = unsafe { self.load_artifact(artifact) }?;
+        let config = kernel.launch_config(workload_argument_bits)?;
+        Ok((kernel, config))
     }
     unsafe fn prepare_dispatch(
         &self,
@@ -972,7 +1073,7 @@ impl Event {
     pub fn is_complete(&self) -> Result<bool> {
         self.done
             .as_ref()
-            .map_or(Ok(true), fabric::Completion::is_complete)
+            .map_or(Ok(true), fabric::Completion::refresh)
     }
     /// Wait on the host for preceding work.
     pub fn synchronize(&self) -> Result<()> {
@@ -993,7 +1094,7 @@ impl Submission<'_> {
             .timeline
             .snapshot()?
             .as_ref()
-            .map_or(Ok(true), fabric::Completion::is_complete)?;
+            .map_or(Ok(true), fabric::Completion::refresh)?;
         if done {
             self.stream.reclaim_staging();
             self.stream.budget_uses.get_mut().clear();

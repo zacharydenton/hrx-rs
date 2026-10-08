@@ -1,6 +1,13 @@
 //! Tests of the new native ownership boundary without the legacy runtime.
 use hrx::fabric::{Engine, Fabric};
 
+fn native_library() -> hrx::Result<std::path::PathBuf> {
+    match std::env::var_os("HRX_AMDF_LIBRARY") {
+        Some(path) => Ok(path.into()),
+        None => Ok(hrx::bundle::resolve()?.join("libamdf.so")),
+    }
+}
+
 #[test]
 #[ignore = "requires native compiler, bridge, libamdf and gfx1151 hardware"]
 fn gpu_arithmetic_uses_native_code_loading_and_completion_fences() -> hrx::Result<()> {
@@ -8,8 +15,8 @@ fn gpu_arithmetic_uses_native_code_loading_and_completion_fences() -> hrx::Resul
         fabric::Argument,
         loom::{Compiler, CxxSource, Specialization},
     };
-    let path = std::env::var_os("HRX_AMDF_LIBRARY").expect("set HRX_AMDF_LIBRARY");
-    let fabric = Fabric::load(std::path::Path::new(&path))?;
+    let path = native_library()?;
+    let fabric = Fabric::load(&path)?;
     let gpu = fabric
         .endpoints()?
         .into_iter()
@@ -86,10 +93,10 @@ void fill(const unsigned* input, unsigned* output) {
 
 #[test]
 #[cfg(feature = "npu")]
-#[ignore = "requires HRX_AMDF_LIBRARY and gfx1151/NPU5 hardware"]
+#[ignore = "requires native bundle and gfx1151/NPU5 hardware"]
 fn native_devices_retain_instance_and_endpoint_owners() -> hrx::Result<()> {
-    let path = std::env::var_os("HRX_AMDF_LIBRARY").expect("set HRX_AMDF_LIBRARY");
-    let fabric = Fabric::load(std::path::Path::new(&path))?;
+    let path = native_library()?;
+    let fabric = Fabric::load(&path)?;
     let endpoints = fabric.endpoints()?;
     assert!(
         endpoints
@@ -126,7 +133,7 @@ fn native_devices_retain_instance_and_endpoint_owners() -> hrx::Result<()> {
     assert_eq!(result, [3, 5, 7, 11]);
     drop(buffer);
     // Instance lifetime must support ordered teardown and subsequent recreation.
-    let fabric = Fabric::load(std::path::Path::new(&path))?;
+    let fabric = Fabric::load(&path)?;
     for endpoint in fabric.endpoints()? {
         drop(endpoint.open()?);
     }
@@ -141,8 +148,8 @@ fn xdna_reuses_establishing_commands_on_shared_gpu_backing() -> hrx::Result<()> 
         fabric::{Argument, XdnaBinding},
         loom::{Compiler, CxxSource, Specialization},
     };
-    let path = std::env::var_os("HRX_AMDF_LIBRARY").expect("set HRX_AMDF_LIBRARY");
-    let fabric = Fabric::load(std::path::Path::new(&path))?;
+    let path = native_library()?;
+    let fabric = Fabric::load(&path)?;
     let endpoints = fabric.endpoints()?;
     let gpu = endpoints
         .iter()
@@ -260,8 +267,8 @@ fn private_segment_scratch_is_backed_and_retained() -> hrx::Result<()> {
         fabric::Argument,
         loom::{Compiler, ReportMode, Specialization},
     };
-    let path = std::env::var_os("HRX_AMDF_LIBRARY").expect("set HRX_AMDF_LIBRARY");
-    let fabric = Fabric::load(std::path::Path::new(&path))?;
+    let path = native_library()?;
+    let fabric = Fabric::load(&path)?;
     let gpu = fabric
         .endpoints()?
         .into_iter()

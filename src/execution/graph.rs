@@ -30,6 +30,12 @@ pub struct GpuKernel {
     pub(super) runtime: Arc<RuntimeOwner>,
 }
 impl GpuKernel {
+    /// Collect value/operation sanitizer reports after submitted work completes.
+    /// Reports are shared by all graph uses of this kernel and drained once.
+    /// Returns `Busy` while native work is pending.
+    pub fn sanitizer_reports(&self) -> Result<crate::fabric::SanitizerReports> {
+        self.raw.sanitizer_reports()
+    }
     /// Fixed invocation contract.
     pub fn contract(&self) -> &KernelContract {
         &self.contract
@@ -345,10 +351,53 @@ impl Graph {
                 index += 1;
                 continue;
             }
+            if let (
+                super::ComputeEngine::Aql {
+                    maximum_private_bytes,
+                },
+                Description::Gpu(kernel, bindings),
+            ) = (
+                self.runtime.options.compute_engine,
+                &self.entries[index].operation,
+            ) {
+                let lane = self.entries[index].lane;
+                let queue =
+                    crate::cached_init(&self.runtime.inner.aql_queues[lane as usize], || {
+                        crate::gpu::Device::open(self.runtime.inner.gpu_index)?
+                            .native()
+                            .aql_queue_budgeted(maximum_private_bytes, self.runtime.memory_budget())
+                    })?;
+                let views = bindings
+                    .iter()
+                    .map(BufferView::gpu)
+                    .collect::<Result<Vec<_>>>()?;
+                let constants = crate::gpu::Constants::from_bytes(&kernel.contract.constants)?;
+                let command = unsafe {
+                    kernel
+                        .raw
+                        .prepare_aql(&queue, kernel.grid, kernel.block, &constants, &views)
+                }?;
+                operations.push(Operation {
+                    lane,
+                    copy_bytes: 0,
+                    backend: Backend::Aql(command),
+                    uses: self.entries[index].uses.clone(),
+                    dependencies: Vec::new(),
+                });
+                index += 1;
+                continue;
+            }
             let start = index;
             let lane = self.entries[start].lane;
             while index < self.entries.len() {
                 if matches!(self.entries[index].operation, Description::Scoped(..)) {
+                    break;
+                }
+                if matches!(
+                    self.runtime.options.compute_engine,
+                    super::ComputeEngine::Aql { .. }
+                ) && matches!(self.entries[index].operation, Description::Gpu(..))
+                {
                     break;
                 }
                 if self.entries[index].lane != lane {
@@ -366,6 +415,54 @@ impl Graph {
                 .iter()
                 .all(|e| matches!(e.operation, Description::Copy(..)))
             {
+                if self.runtime.options.copy_engine == super::CopyEngine::Sdma {
+                    let queue =
+                        crate::cached_init(&self.runtime.inner.sdma_queues[lane as usize], || {
+                            crate::gpu::Device::open(self.runtime.inner.gpu_index)?
+                                .native()
+                                .sdma_queue()
+                        })?;
+                    let commands = self.entries[start..index]
+                        .iter()
+                        .map(|entry| {
+                            let Description::Copy(dst, src) = &entry.operation else {
+                                unreachable!()
+                            };
+                            let dst = dst.gpu()?;
+                            let src = src.gpu()?;
+                            let reservation = self
+                                .runtime
+                                .memory_budget()
+                                .map(|budget| budget.reserve(64).map(Arc::new))
+                                .transpose()?;
+                            queue.prepare_copy_reserved(
+                                &dst.owner().native,
+                                dst.offset(),
+                                &src.owner().native,
+                                src.offset(),
+                                dst.len(),
+                                reservation,
+                            )
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    operations.push(Operation {
+                        lane,
+                        copy_bytes: self.entries[start..index]
+                            .iter()
+                            .map(|entry| match &entry.operation {
+                                Description::Copy(dst, _) => dst.len(),
+                                _ => unreachable!(),
+                            })
+                            .sum(),
+                        backend: Backend::Sdma { commands },
+                        uses: self.entries[start..index]
+                            .iter()
+                            .flat_map(|entry| entry.uses.iter().cloned())
+                            .collect(),
+                        dependencies: Vec::new(),
+                    });
+                    continue;
+                }
                 let stream =
                     crate::cached_init(&self.runtime.inner.copy_streams[lane as usize], || {
                         let stream =
@@ -504,6 +601,10 @@ pub(super) struct CopyStream {
     healthy: bool,
 }
 pub(super) enum Backend {
+    Aql(crate::fabric::PreparedAql),
+    Sdma {
+        commands: Vec<crate::fabric::PreparedGpu>,
+    },
     Copies(Arc<Mutex<CopyStream>>, Vec<(BufferView, BufferView)>),
     Gpu(Box<Mutex<(crate::gpu::Stream, crate::gpu::GraphExec)>>),
     Scoped(Arc<Mutex<ScopedGpu>>, Vec<BufferView>),
@@ -529,7 +630,11 @@ impl Operation {
     }
     pub fn engine(&self) -> Engine {
         match &self.backend {
-            Backend::Gpu(_) | Backend::Scoped(..) | Backend::Copies(..) => Engine::Gpu,
+            Backend::Aql(_)
+            | Backend::Gpu(_)
+            | Backend::Scoped(..)
+            | Backend::Copies(..)
+            | Backend::Sdma { .. } => Engine::Gpu,
             #[cfg(feature = "npu")]
             Backend::Npu(..) => Engine::Npu,
             #[cfg(test)]
@@ -552,6 +657,23 @@ impl Operation {
             access.view.buffer.storage.make_visible(self.engine())?;
         }
         match &self.backend {
+            Backend::Aql(command) => {
+                unsafe { command.dispatch() }?.wait()?;
+            }
+            Backend::Sdma { commands, .. } => {
+                let mut last = None;
+                let submitted: Result<()> = (|| {
+                    for command in commands {
+                        last = Some(unsafe { command.dispatch_wait() }?);
+                    }
+                    Ok(())
+                })();
+                // Drain any accepted prefix even if a later submission fails.
+                if let Some(done) = last {
+                    done.wait()?;
+                }
+                submitted?;
+            }
             Backend::Copies(stream, copies) => {
                 let mut stream = stream.lock().unwrap_or_else(|e| e.into_inner());
                 if !stream.healthy {

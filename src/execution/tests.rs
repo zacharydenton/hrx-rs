@@ -373,6 +373,8 @@ pub(super) fn runtime_without_workers() -> Runtime {
             gpu_index: options.gpu_index,
             copy_streams: std::array::from_fn(|_| Mutex::new(None)),
             allocation_stream: Mutex::new(None),
+            aql_queues: std::array::from_fn(|_| Mutex::new(None)),
+            sdma_queues: std::array::from_fn(|_| Mutex::new(None)),
         }),
         options,
     }

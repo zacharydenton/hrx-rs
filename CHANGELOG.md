@@ -1,6 +1,51 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — Unreleased
+
+- Cache native manifests and verified launch-program companions with AMDGPU
+  artifacts. Expose owned export evaluators, loaded-kernel/model launch geometry,
+  formatted diagnostics, named parameters, failed-compile reports, and typed
+  expansion records.
+- Stream bounded native pass traces as text or JSONL, with pass filters, explicit
+  cache bypass and callback panic containment. Expose native sanitizer pipeline
+  configuration with distinct shared-compiler and artifact cache identities.
+  Add bounded, owned value/operation and workgroup race reports through AQL
+  and graph execution, with source metadata, overflow counts and residency
+  charges. Prepare private race shadow and immutable code per dispatch, with
+  ordered GPU clears before replay. Decode both race sites and access coordinates.
+  Fix native null-signal polling and wave32 feedback-capacity checks. Reject
+  address instrumentation until a bounded address-shadow runtime is supplied.
+- Expose native queue capabilities and concrete directional memory visibility.
+  Add SDMA transfers, PM4/SDMA dependency packets, and copy-only graph selection.
+  Add owned AQL v1 dispatch with fixed scratch and instruction-cache publication,
+  budgeted graph integration, prospective allocation-profile visibility and
+  coalesced prepared host transitions.
+- Admit 128 pending immutable XDNA invocations. Separate cached fabric completion
+  inspection from explicit native progress/retirement.
+- Add owned resident GPU–NPU sessions with one-time startup, either submission
+  order, pre-start rollback and checked joins. Compose trusted XDNA transaction
+  records around the compiler-owned invocation while retaining all DMA backing.
+  Support PM4/AQL participants and allocated/registered coherent backing.
+- Add Linux GPU-driven io_uring with fixed files, registered owned pages, explicit
+  process-lifetime admission and provider retention, SQPOLL idle wakes and
+  combined GPU/I/O retirement.
+  Ring and payload allocations retain residency charges through execution or
+  quarantine.
+- Refresh the native bundle to HRX `7e9c7bbd5e` and regenerate the Loom/libamdf
+  bindings from the current headers. Compilation uses `loomc_compile_artifact`
+  for one target compilation and emission transaction, with structured
+  diagnostics and metadata-only source retention.
+- Require the new compiler ABI. Remove the legacy diagnostic prefix reader
+  and private native layout probe; older compiler bundles are unsupported.
+- Rebase the encoding configuration, CU/WGP profile and queue-capacity patches.
+  Move the profile extension to structure ID 44, leaving upstream's artifact
+  and pass-trace IDs intact. Retire the old accumulator liveness overlay in
+  favor of upstream's current allocation machinery.
+- Refresh the pinned C++ importer and Linux headers and enable the task ABI
+  declarations needed by the current compiler build.
+- Fix two refresh regressions in the compiler: materialize bounded index extrema
+  into their proven operand width, and retain uncovered units of incoming VMEM
+  storage leases after partial register reuse.
 
 ## 0.8.16 — BF16 decode projections and owned GPU graph recording
 

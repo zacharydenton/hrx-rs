@@ -191,6 +191,39 @@ int hrx_fabric_gpu_argument_info(const hrx_fabric_gpu_image* image, uint32_t ind
       .offset = arg->offset, .size = arg->size };
   return 0;
 }
+int hrx_fabric_gpu_global_info(const hrx_fabric_gpu_image* image,
+    const char* name, uint64_t* offset, uint64_t* length) {
+  if (!image || !name || !offset || !length) return fail("invalid global query");
+  *offset = *length = 0;
+  size_t name_length = strlen(name);
+  for (uint32_t i = 0; i < image->elf.e_shnum; ++i) {
+    Elf64_Shdr table, strings;
+    if (section(image, i, &table)) return 1;
+    if (table.sh_type != SHT_DYNSYM && table.sh_type != SHT_SYMTAB) continue;
+    if (table.sh_entsize != sizeof(Elf64_Sym) || table.sh_size % sizeof(Elf64_Sym))
+      return fail("invalid ELF symbol table");
+    if (section(image, table.sh_link, &strings) || strings.sh_type != SHT_STRTAB)
+      return fail("invalid ELF symbol string table");
+    for (uint64_t n = 0; n < table.sh_size / sizeof(Elf64_Sym); ++n) {
+      Elf64_Sym symbol;
+      if (n > UINT32_MAX || symbol_at(image, &table, (uint32_t)n, &symbol)) return 1;
+      if (symbol.st_name >= strings.sh_size) return fail("invalid ELF symbol name");
+      const char* text = (const char*)image->data + strings.sh_offset + symbol.st_name;
+      if (name_length >= strings.sh_size - symbol.st_name ||
+          memcmp(text, name, name_length) || text[name_length]) continue;
+      Elf64_Shdr owner;
+      if (ELF64_ST_TYPE(symbol.st_info) != STT_OBJECT ||
+          section(image, symbol.st_shndx, &owner) || !(owner.sh_flags & SHF_ALLOC) ||
+          symbol.st_value < image->low || !symbol.st_size ||
+          !range(symbol.st_value - image->low, symbol.st_size, image->high - image->low))
+        return fail("global does not name allocated object storage");
+      *offset = symbol.st_value - image->low;
+      *length = symbol.st_size;
+      return 0;
+    }
+  }
+  return 0;
+}
 int hrx_fabric_gpu_image_load(const hrx_fabric_gpu_image* image, uint8_t* storage,
                              size_t size, uint64_t address) {
   if (!image || !storage || size < image->high - image->low ||

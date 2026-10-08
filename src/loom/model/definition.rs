@@ -84,6 +84,23 @@ impl ModelDefinition {
         &self.context
     }
 
+    /// Evaluate a loaded kernel's compiler launch program during graph preparation.
+    pub fn launch_config(
+        &self,
+        id: KernelId,
+        workload_bits: &[u64],
+    ) -> Result<crate::loom::LaunchConfig> {
+        if id.session != self.id {
+            return Err(Error::Message(
+                "model kernel belongs to another definition".into(),
+            ));
+        }
+        self.kernels
+            .get(id.index)
+            .ok_or_else(|| Error::Message("invalid model kernel".into()))?
+            .launch_config(workload_bits)
+    }
+
     /// Physical immutable weight bytes, counted once regardless of plan or slot count.
     pub fn weight_bytes(&self) -> usize {
         self.allocations

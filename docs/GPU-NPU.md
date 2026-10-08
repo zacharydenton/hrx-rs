@@ -1,6 +1,6 @@
 # Native GPU and NPU execution
 
-Version 0.8 uses libamdf for both engines. Enable `npu` for the tracked XDNA
+The current development version uses libamdf for both engines. Enable `npu` for the tracked XDNA
 execution API; Loom compilation for both targets is always available. The
 qualified hardware is gfx1151 and Strix Halo NPU5 (`17f0`, revision `11`) on
 Linux x86_64. Other profiles fail explicitly at device admission.
@@ -74,6 +74,39 @@ Private workspace requirements must be included in a model reservation.
 Compiled code is trusted native code: loading and defining contracts are unsafe.
 Bounds checks validate image structure and binding ranges, not arbitrary program
 behavior. Do not load untrusted GPU/NPU programs.
+
+## Resident GPU–NPU exchange and GPU file I/O
+
+`fabric::ResidentSession` accepts an owned `ResidentStartup`, a prepared PM4/AQL
+GPU participant, and an immutable `XdnaProgram`. Construct both programs for the
+same WAIT/RUN/ABORT protocol, submit them in either order, and call `start()` only
+after both are accepted. The running programs exchange payloads without host
+round trips. `abort()` is available before RUN. A timeout preserves all owners;
+failed teardown quarantines them. The session does not promise cancellation.
+
+Select coherent GPU attachments with `Fabric::allocation_profiles(devices, true)`
+and qualify each directional memory relation. Host-visible backing alone does
+not establish the cache contract for a resident exchange. The fixture uses
+system-scope GPU release/acquire operations and chained NPU DMA completion.
+`XdnaProgram::wrap_transaction` owns extra addressed buffers and command storage,
+preserving the compiler's bound invocation inside trusted prefix/suffix records.
+Those records must use disjoint native resources and drain custom DMA traffic.
+
+Linux `fabric::StorageRing` uses native caller-owned io_uring pages and fixed
+files/buffers. Select `NativeLifetime::Process` explicitly for KFD registration,
+which retains one provider until process exit; then allocate payload using `Fabric::allocate_registered`; optional memory
+budgets cover the page-rounded payload and ring allocations. Construct trusted
+GPU arguments from the native `StorageLayout`. CPU payload VA is used in SQEs;
+GPU VA is used for shader accesses. `StorageExecution` retains all resources
+through GPU completion and kernel I/O drain, servicing only SQPOLL idle wakes.
+Unsupported kernel features fail admission. No alternate transport is selected.
+
+Run the hardware tests serially:
+
+```sh
+cargo test --all-features --test resident_sessions -- --ignored --test-threads=1
+cargo test --all-features --test gpu_storage -- --ignored --test-threads=1
+```
 
 ## Runnable validation
 

@@ -1,0 +1,23 @@
+// Copyright 2026 The IREE Authors
+//
+// Licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+// GFX11 clock provider from the pinned CTS.
+template.decl @completed_tick() -> (i32)
+amdgpu.target<gfx11-generic> @clock_gfx11
+
+low.func.def target<amdgpu.gfx11.generic.core> @clock_rdna3() -> (reg<amdgpu.sgpr>) asm {
+  s_waitcnt {vmcnt = 0}
+  s_waitcnt_vscnt {vscnt = 0}
+  %tick = s_sendmsg_rtn_b32 {message = 131}
+  s_waitcnt {lgkmcnt = 0}
+  return %tick
+}
+
+template.def<@completed_tick> target(@clock_gfx11) @tick_gfx11() -> (i32) {
+  %tick = low.invoke @clock_rdna3() : () -> (i32)
+  template.return %tick : i32
+}
+

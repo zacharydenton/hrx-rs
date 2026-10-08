@@ -166,6 +166,95 @@ workspaces and returns results in request order; `Module::compile` is blocking,
 so a single-threaded caller never reaches that bound on its own. Compiler setup
 and source pins are in [patches/loom](patches/loom/README.md).
 
+AMDGPU artifacts include an executable manifest and a serialized host launch
+program. `artifact.launch_program(artifact.symbol())?` binds an exact export;
+`evaluate(&workload_bits)` returns compiler-authored grid, workgroup, subgroup,
+cluster, and storage requirements. Workload arguments follow the kernel
+definition's signature and can differ from device scalar arguments.
+`Kernel::launch_config`, `ModelSession::launch_config`, and
+`ModelDefinition::launch_config` evaluate and validate these requirements during
+preparation. Each evaluator owns exclusive scratch and retains its native library.
+
+`hrx compile` accepts `--manifest-output=FILE`, `--launch-output=FILE`, and
+`--trace-output=FILE --trace-format=jsonl`. Trace filters use repeated
+`--trace-before=PATTERN` / `--trace-after=PATTERN`; `--trace-max-bytes=N`
+bounds output. Tracing runs compilation even on a cache hit. Diagnostics own
+formatted source context and named parameters; failed compilations retain any
+native report via `Error::compiler_report`. Detailed reports expose structured
+source-to-low expansion selections through `CompileReport::expansions`.
+
+`CompilerOptions::sanitizer` selects access, value, operation, and race checks,
+with native default, trap, or report-only behavior. CLI equivalents are
+`--sanitizer=access,value,operation,race` and `--sanitizer-reporting=trap`.
+Instrumentation has its own compiler and artifact identities. Value/operation
+reports and workgroup-local race checks are available through `Device::load_sanitized` on AQL, or through
+`Runtime::load_sanitized_gpu_artifact` with the AQL compute engine. Use report-only
+instrumentation, wait for execution completion, then call `sanitizer_reports()`
+on the loaded kernel. Reports own their source/predicate metadata; collection
+drains the channel, and reports beyond its fixed capacity increment `dropped`.
+The channel remains alive through prepared and pending work and is charged to
+the supplied memory budget. Collection returns `Busy` while native work remains
+pending. A report marks a failed native check; it does not make arbitrary code
+safe or prove outputs valid. Race reports include both access sites, access widths,
+addresses, and workitem coordinates. Each prepared AQL dispatch owns bounded
+shadow storage for its actual grid and compiled LDS requirement; ordered GPU
+clears reset it before replay. `SanitizerRuntimeOptions::maximum_shadow_bytes`
+limits this storage, and the supplied budget also covers private instrumented
+code. Race checking covers workgroup-local memory, not global memory or races
+between queues. Access instrumentation still requires bounded address shadow
+memory and is rejected by the loader. Ordinary loading also rejects artifacts
+requiring a feedback channel instead of leaving their configuration disabled.
+
+`fabric::Endpoint::queue_capabilities` exposes native queue families;
+`hrx doctor` prints them. `Device::sdma_queue` prepares native transfers,
+including unaligned copy/fill tails and cross-queue PM4/SDMA waits.
+`execution::RuntimeOptions::copy_engine = CopyEngine::Sdma` selects SDMA for
+copy-only graph regions. Memory must qualify for that queue; coherent backing
+from `Fabric::allocate_shared` is supported on the tested provider.
+
+`Device::aql_queue(maximum_private_bytes)` creates a directly published AQL v1
+queue with fixed scratch allocated at creation. Prepared dispatches retain code,
+kernargs, scratch and payloads through execution completion. Set
+`RuntimeOptions::compute_engine = ComputeEngine::Aql { maximum_private_bytes: 0 }`
+to prepare explicit GPU graph nodes on AQL. Mixed PM4/AQL/SDMA regions use checked
+host completion for dependency edges. Scratch, arguments, publication storage,
+and signals retain their runtime budget charges through retirement or quarantine.
+Native XDNA programs admit up to 128 pending invocations with the same immutable
+bindings. Fabric completion `is_complete` reads cached retirement;
+`refresh` observes device progress and retires leases, and `wait` drives progress.
+The higher-level stream event APIs continue to poll when queried.
+
+`fabric::ResidentSession` owns one prepared GPU invocation and one immutable
+XDNA invocation. Submit both in either order, publish RUN once, and join both
+native completions. `ResidentStartup` supplies a separate coherent startup
+allocation; pre-start ABORT lets an accepted participant retire without its peer.
+`XdnaProgram::wrap_transaction` retains additional DMA backing while composing
+trusted native records around the original compiler command. Payload allocations
+and program release/acquire operations must meet the native directional memory
+contracts. Timeouts retain ownership; they do not cancel running device work.
+
+On Linux, `fabric::StorageRing` registers fixed regular files and an owned payload
+from `Fabric::allocate_registered`. Open the fabric with
+`Fabric::resolve_with_lifetime(NativeLifetime::Process)` for KFD host registration;
+this retains and reuses the native process provider until exit.
+The ring uses caller-owned SQ/CQ pages, SQPOLL and fixed-file restrictions.
+Its returned layout distinguishes CPU payload addresses used by Linux from GPU
+addresses used by the program. `StorageExecution` owns the dispatch, files,
+registered pages and budget charges until both GPU and kernel I/O retire. Waits
+wake idle SQPOLL; the GPU authors requests and consumes completions. Trusted
+programs must handle ring capacity, partial/error completions and final drain.
+Application paging and cache policy remain with the caller.
+
+`Buffer::visibility(producer, consumer)` describes directional reach,
+release/acquire actions, and width-specific atomic scopes for concrete native
+sites. The returned object retains backing and can execute qualified host
+transitions. `Fabric::allocation_profiles` queries the complete device set before
+allocation; each profile provides prospective visibility and constructs backing
+with that exact profile. These plans cover allocation, not registration or
+external imports. `prepare_release_host` and `prepare_acquire_host` merge ranges
+once and retain executable host cache work. Execution ordering remains separate. `Fabric::load_with_lifetime`
+selects the native instance/process lifetime before device activation.
+
 Resident inference libraries can use `hrx::model::ModelSession` instead
 of rebuilding the same buffer arena and graph cache. It compiles a trusted batch
 of embedded kernels, owns device-local or coherent allocations, infers graph

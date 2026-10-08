@@ -2,22 +2,24 @@
   "schema": 1,
   "hrx": {
     "repository": "https://github.com/ROCm/hrx-system",
-    "revision": "fbbf3003121cce0322c771345505979809c84165",
+    "revision": "7e9c7bbd5e93d20c1e1a64c60bb4644499404f9b",
     "patches": {
       "0001-vopd-source-cache-banks.patch": "7b8784f70a92200c1e2fdc60562cafe9bcdf82a537568ee9f2dfba5de6ce609d",
-      "0005-materialize-encoding-config.patch": "91d2be463c6046e2571eb6bba86902da6d1e9d5b3cf2b91e70682c5131f310e0",
-      "0009-amdgpu-profile-processor-mode.patch": "0b9de2b276bfd35638fd330923bda34a6e6170d0236cf188ddc03f517cbf9f06",
-      "0011-loop-carried-accumulator-reuse.patch": "0cc5abe94c89407e3c994cd1e8effbeed65b058dcd56fc2c7b91caa1ec432690",
+      "0005-materialize-encoding-config.patch": "273fa933f21eb59cdf8299e7c75e72621cdc13d153c323cd7cc9abd4895e4090",
+      "0009-amdgpu-profile-processor-mode.patch": "18b3d41d74ee8f4954767b3522958c19faa94d7c08bf216ac54b3fb63a7195b5",
       "0012-retain-rdna35-lds-overlap.patch": "996bd9356c74a294f65b564676f8731ee8dd00aee5b9da9030fe07d6def66509",
-      "0013-retain-value-domain-arena.patch": "6e8eaffa6e4deaf2ddedd1c419c50cc687bf94d898ddc79859d12b407ef43b83"
+      "0013-retain-value-domain-arena.patch": "6e8eaffa6e4deaf2ddedd1c419c50cc687bf94d898ddc79859d12b407ef43b83",
+      "0014-materialize-bounded-index-extrema.patch": "fcf6fd36169055c77a77ca8b3234558c960198f82cae3a5a777264437d8836ca",
+      "0015-retain-partial-incoming-vmem-leases.patch": "a8104c18e8d9cdac7c1a5d50e1640142ad6050a3a2b50860a4eceb570ba20119",
+      "0016-honor-polled-feedback-and-active-masks.patch": "2ef83116685aa50cc668389bba346b0759ddcf786a62dd214e51b90e0f7d1877"
     }
   },
   "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",
   "downloads": {
     "hrx-system": {
-      "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/fbbf3003121cce0322c771345505979809c84165",
-      "archive": "hrx-system-fbbf3003121cce0322c771345505979809c84165.tar.gz",
-      "sha256": "776be236345a501859dd469ed78feb00aa93d71a59d105adcac2c3b6992a0267"
+      "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/7e9c7bbd5e93d20c1e1a64c60bb4644499404f9b",
+      "archive": "hrx-system-7e9c7bbd5e93d20c1e1a64c60bb4644499404f9b.tar.gz",
+      "sha256": "fb0d33afa747cfb7b6a37a8d1c32e4c15c0d2866e7098833cf393b47c1aeee17"
     },
     "spirv_headers": {
       "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
@@ -40,8 +42,8 @@
       "sha256": "1f17587abc9d0d355cf6f65bdba7496838b4e8313922769199689615c434965c"
     },
     "cxx": {
-      "url": "https://github.com/robertoraggi/cplusplus/archive/bccf4d1e2d266b3d5d770c49e9eac59a2eab34b9.tar.gz",
-      "sha256": "39e18971b03f3b5ae2afc8cb9313bcccaf6a51176a94eb57cb8fa4e683ef290b",
+      "url": "https://github.com/benvanik/cplusplus/archive/87ac2f8c90dafe0fc95a72bdb90643a207e08f42.tar.gz",
+      "sha256": "6432087170c2a22547b801620e0b800cbf2fd933c6972e8df9275c3638d42c89",
       "archive": "cxx.tar.gz"
     },
     "libdrm_headers": {
@@ -50,22 +52,22 @@
       "archive": "libdrm_headers.tar.xz"
     },
     "linux_kfd_ioctl_header": {
-      "url": "https://raw.githubusercontent.com/torvalds/linux/f6e7b42bf05b2427fb8a7a1d1c387a86638bb413/include/uapi/linux/kfd_ioctl.h",
+      "url": "https://raw.githubusercontent.com/torvalds/linux/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/include/uapi/linux/kfd_ioctl.h",
       "sha256": "db48398039c14702df2b51b2461d80d36f7160479d45700b7e826051b1d2a997",
       "archive": "linux_kfd_ioctl_header.h"
     },
     "linux_kfd_sysfs_header": {
-      "url": "https://raw.githubusercontent.com/torvalds/linux/f6e7b42bf05b2427fb8a7a1d1c387a86638bb413/include/uapi/linux/kfd_sysfs.h",
+      "url": "https://raw.githubusercontent.com/torvalds/linux/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/include/uapi/linux/kfd_sysfs.h",
       "sha256": "1f26e1ea4a679b80605a4da221bc55e9f570f94f8eeccc53fb826dd0a7dedb00",
       "archive": "linux_kfd_sysfs_header.h"
     },
     "linux_const_header": {
-      "url": "https://raw.githubusercontent.com/torvalds/linux/f6e7b42bf05b2427fb8a7a1d1c387a86638bb413/include/uapi/linux/const.h",
+      "url": "https://raw.githubusercontent.com/torvalds/linux/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/include/uapi/linux/const.h",
       "sha256": "806c87c44e0a1a267b996c669ef36faeec94fee46bc4513f0d332d2169718855",
       "archive": "linux_const_header.h"
     },
     "linux_stddef_header": {
-      "url": "https://raw.githubusercontent.com/torvalds/linux/f6e7b42bf05b2427fb8a7a1d1c387a86638bb413/include/uapi/linux/stddef.h",
+      "url": "https://raw.githubusercontent.com/torvalds/linux/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/include/uapi/linux/stddef.h",
       "sha256": "3703ea363b0f4d3b75a3a1f59b7daaa0b81f2e18cc459fedd6b1df331e8662b8",
       "archive": "linux_stddef_header.h"
     },
@@ -88,11 +90,21 @@
       "url": "https://raw.githubusercontent.com/torvalds/linux/f6e7b42bf05b2427fb8a7a1d1c387a86638bb413/LICENSES/exceptions/Linux-syscall-note",
       "archive": "linux-syscall-note.txt",
       "sha256": "8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f"
+    },
+    "linux_io_uring_header": {
+      "url": "https://raw.githubusercontent.com/torvalds/linux/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/include/uapi/linux/io_uring.h",
+      "archive": "linux_io_uring_header.h",
+      "sha256": "8488b223988fe798a9c1c81d13a550a27cac1f096bdd016ef9eb5e51adaf46a7"
+    },
+    "linux_io_uring_zcrx_header": {
+      "url": "https://raw.githubusercontent.com/torvalds/linux/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/include/uapi/linux/io_uring/zcrx.h",
+      "archive": "linux_io_uring_zcrx_header.h",
+      "sha256": "820d8642160740bff5ba1d8d12d5d0464d0e3a765a7e454b901d134bf4b94ec0"
     }
   },
   "native_patches": {
     "native/amdf/build.patch": "de8581450efd4dbedcb3bf689285a09994cd339e4d6853f50875246546b20b47",
-    "native/amdf/queue-ring.patch": "f5c019f397d9ecb549ef62c4b978ce1844ff0eafd7c15d3ad0e1cacae8bad068",
-    "native/amdf/cache-policy.patch": "448157b45aaeda06dbe9d33510757246dd1b8b5d90d9183912443be789565ba4"
+    "native/amdf/cache-policy.patch": "448157b45aaeda06dbe9d33510757246dd1b8b5d90d9183912443be789565ba4",
+    "native/amdf/queue-ring.patch": "3eef6f129af088ce146a9200145756b38bcd6aa23a6b924130e3ed9b08a96a0b"
   }
 }

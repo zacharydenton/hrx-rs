@@ -1,6 +1,6 @@
 # Unified native release
 
-The 0.8 archive contains `libamdf.so`, `libhrx_fabric.so`, and `libloomc.so`.
+The native archive contains `libamdf.so`, `libhrx_fabric.so`, and `libloomc.so`.
 All three are built from the pinned HRX source on Ubuntu 26.04. GPU execution
 uses KFD directly; NPU execution uses the amdxdna driver directly. Loom compiles
 Loom and explicitly supplied C23/C++26 translation units in process.
@@ -29,17 +29,21 @@ python3 scripts/fetch-native-inputs.py --work artifacts/native-release
 CONTAINER_ENGINE=podman HRX_BUILD_JOBS=2 HRX_BUILD_MEMORY=8g \
   bash scripts/rebuild-hrx.sh artifacts/native-release
 python3 scripts/stage-native-release.py --work artifacts/native-release \
-  --release-tag native-20260929-fbbf300312-fix1
+  --release-tag native-20261008-7e9c7bbd5e
 cargo run --release --bin hrx -- pack artifacts/native-release/stage-amdf \
   artifacts/native-release/output \
-  https://github.com/zacharydenton/hrx-rs/releases/download/native-20260929-fbbf300312-fix1/hrx-linux-x86_64-gfx1151.tar.gz \
-  'HRX fbbf300312; native libamdf; rebased compiler policies; Ubuntu 26.04' gfx1151
+  https://github.com/zacharydenton/hrx-rs/releases/download/native-20261008-7e9c7bbd5e/hrx-linux-x86_64-gfx1151.tar.gz \
+  'HRX 7e9c7bbd5e; current Loom artifact API; Ubuntu 26.04' gfx1151
 ```
 
 The container build defaults to two jobs and an 8 GiB memory limit, with no
 additional swap allowance. `HRX_BUILD_JOBS` and `HRX_BUILD_MEMORY` override these
 limits. The job count is passed into the container. Direct `build-amdf.sh` builds
 also default to two jobs; apply an external memory limit when building on the host.
+
+The build enables the task driver declarations required by upstream's shared
+compiler ABI-layout libraries, while the distributed bridge continues to use
+native libamdf GPU and XDNA execution.
 
 The source archive contains upstream inputs, local patches, the native bridge,
 license texts, and rebuild scripts. To rebuild from the archive, extract it,

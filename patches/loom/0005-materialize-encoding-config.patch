@@ -1,5 +1,5 @@
 diff --git a/loom/py/loom/dialect/config/defs.py b/loom/py/loom/dialect/config/defs.py
-index 30c91a338..07f78db56 100644
+index 30c91a338b..07f78db56f 100644
 --- a/loom/py/loom/dialect/config/defs.py
 +++ b/loom/py/loom/dialect/config/defs.py
 @@ -173,6 +173,7 @@ config_get = Op(
@@ -11,7 +11,7 @@ index 30c91a338..07f78db56 100644
      format=[
          SymbolRef("config"),
 diff --git a/loom/src/loom/ops/config/BUILD.bazel b/loom/src/loom/ops/config/BUILD.bazel
-index 25d933a09..8e7d090b4 100644
+index 25d933a099..8e7d090b44 100644
 --- a/loom/src/loom/ops/config/BUILD.bazel
 +++ b/loom/src/loom/ops/config/BUILD.bazel
 @@ -15,6 +15,7 @@ package(
@@ -32,7 +32,7 @@ index 25d933a09..8e7d090b4 100644
      ],
  )
 diff --git a/loom/src/loom/ops/config/CMakeLists.txt b/loom/src/loom/ops/config/CMakeLists.txt
-index 9ed74dffd..799f80609 100644
+index 9ed74dffd7..799f806098 100644
 --- a/loom/src/loom/ops/config/CMakeLists.txt
 +++ b/loom/src/loom/ops/config/CMakeLists.txt
 @@ -15,6 +15,7 @@ loom_generated_cc_library(
@@ -54,7 +54,7 @@ index 9ed74dffd..799f80609 100644
  ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###
 diff --git a/loom/src/loom/ops/config/canonicalize.c b/loom/src/loom/ops/config/canonicalize.c
 new file mode 100644
-index 000000000..8a4693bc0
+index 0000000000..8a4693bc02
 --- /dev/null
 +++ b/loom/src/loom/ops/config/canonicalize.c
 @@ -0,0 +1,40 @@
@@ -99,7 +99,7 @@ index 000000000..8a4693bc0
 +                                                  1);
 +}
 diff --git a/loom/src/loom/ops/config/ops.h b/loom/src/loom/ops/config/ops.h
-index 023109af9..ece61a31a 100644
+index 023109af93..ece61a31a3 100644
 --- a/loom/src/loom/ops/config/ops.h
 +++ b/loom/src/loom/ops/config/ops.h
 @@ -77,6 +77,8 @@ iree_status_t loom_config_def_verify(
@@ -112,7 +112,7 @@ index 023109af9..ece61a31a 100644
      loom_builder_t* builder,
      loom_symbol_ref_t config,
 diff --git a/loom/src/loom/ops/config/test/canonicalize.loom-test b/loom/src/loom/ops/config/test/canonicalize.loom-test
-index 941b00750..121a01f8a 100644
+index 941b007507..121a01f8ad 100644
 --- a/loom/src/loom/ops/config/test/canonicalize.loom-test
 +++ b/loom/src/loom/ops/config/test/canonicalize.loom-test
 @@ -150,3 +150,54 @@ func.def @read_decl_config_facts() -> (i64, i64, i64) {
@@ -171,11 +171,11 @@ index 941b00750..121a01f8a 100644
 +  func.return %value : encoding<schema>
 +}
 diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma_fragment_epilogue.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma_fragment_epilogue.loom-test
-index dfb72f849..7e3af78ce 100644
+index 5629bdffa6..01e12a5bef 100644
 --- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma_fragment_epilogue.loom-test
 +++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_mma_fragment_epilogue.loom-test
-@@ -1340,3 +1340,83 @@ low.kernel.def target<amdgpu.rdna3.core>(@target) abi_layout({constant_count = 9
-   global_store_short_saddr %23, %63, %output_view {offset = 448}
+@@ -1542,3 +1542,83 @@ low.kernel.def target<amdgpu.rdna3.core>(@target) abi_layout({constant_count = 9
+   global_store_short_saddr %23, %87, %output_view {offset = 448}
    return
  }
 +

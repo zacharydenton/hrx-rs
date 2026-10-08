@@ -758,6 +758,18 @@ impl ModelSession {
             .collect()
     }
 
+    /// Evaluate compiler launch geometry while preparing a model graph.
+    /// Workload bits follow the kernel definition's workload signature, which
+    /// can differ from the scalar arguments supplied to the device entry.
+    pub fn launch_config(
+        &self,
+        id: KernelId,
+        workload_bits: &[u64],
+    ) -> Result<crate::loom::LaunchConfig> {
+        self.usable()?;
+        self.kernel(id)?.launch_config(workload_bits)
+    }
+
     fn kernel(&self, id: KernelId) -> Result<&Kernel> {
         if id.session != self.id {
             return Err(Error::Message(

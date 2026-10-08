@@ -31,6 +31,10 @@ int hrx_fabric_gpu_image_open(const uint8_t* data, size_t size,
 void hrx_fabric_gpu_image_close(hrx_fabric_gpu_image* image);
 int hrx_fabric_gpu_argument_info(const hrx_fabric_gpu_image* image, uint32_t index,
                                 hrx_fabric_gpu_argument* out);
+// Query an allocated ELF object. An absent name returns zero length.
+// Offsets refer to the loaded image's logical byte zero, never host pointers.
+int hrx_fabric_gpu_global_info(const hrx_fabric_gpu_image* image,
+    const char* name, uint64_t* offset, uint64_t* length);
 int hrx_fabric_gpu_image_load(const hrx_fabric_gpu_image* image,
                              uint8_t* storage, size_t size, uint64_t address);
 int hrx_fabric_gpu_dispatch(const hrx_fabric_gpu_image* image,
@@ -57,6 +61,12 @@ int hrx_fabric_xdna_open(const void* api, const void* xdna_api, void* instance,
     const char* symbol, uint16_t columns, uint32_t binding_count,
     const hrx_fabric_xdna_binding* bindings, hrx_fabric_xdna_program** out);
 int hrx_fabric_xdna_close(hrx_fabric_xdna_program* program);
+// Cold, exclusive access only, before any submission. Replacement storage is
+// owned by the program even if publication fails; the caller then closes it.
+int hrx_fabric_xdna_command_copy(hrx_fabric_xdna_program* program,
+    uint8_t* bytes, size_t capacity, size_t* length);
+int hrx_fabric_xdna_command_replace(hrx_fabric_xdna_program* program,
+    const uint8_t* bytes, size_t length);
 uint64_t hrx_fabric_xdna_submit(hrx_fabric_xdna_program* program, uint64_t* submission);
 uint64_t hrx_fabric_xdna_wait(hrx_fabric_xdna_program* program,
     uint64_t submission, uint64_t timeout_ns);

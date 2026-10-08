@@ -1,3 +1,4 @@
+mod sdma;
 use super::*;
 use std::{
     collections::VecDeque,
@@ -45,6 +46,7 @@ impl StreamQueues {
 }
 struct QueueInner {
     device: Device,
+    family: u32,
     raw: *mut amdf_user_queue_t,
     mapping: *mut amdf_user_queue_mapping_t,
     info: amdf_user_queue_mapping_info_t,
@@ -81,8 +83,14 @@ pub struct Completion {
     value: u32,
 }
 impl Completion {
-    /// Observe a completion fence, never just the queue's consumed index.
+    /// Read cached retirement without native queries, locks, or progress work.
+    /// Call `refresh` or `wait` to advance retirement.
     pub fn is_complete(&self) -> Result<bool> {
+        Ok(self.work.retired.load(Ordering::Acquire) >= self.value)
+    }
+    /// Observe the execution fence and retire completed resource leases.
+    /// This performs bounded progress work; ring consumption is not completion.
+    pub fn refresh(&self) -> Result<bool> {
         if !self.queue.0.poll(&self.work, self.value)? {
             return Ok(false);
         }
@@ -106,7 +114,7 @@ impl Completion {
     pub fn wait_timeout(&self, timeout: Duration) -> Result<bool> {
         let start = Instant::now();
         loop {
-            if self.is_complete()? {
+            if self.refresh()? {
                 return Ok(true);
             }
             if start.elapsed() >= timeout {
@@ -117,7 +125,7 @@ impl Completion {
     }
     /// Wait until execution retires or the provider reports failure.
     pub fn wait(&self) -> Result<()> {
-        while !self.is_complete()? {
+        while !self.refresh()? {
             std::thread::yield_now();
         }
         Ok(())
@@ -326,6 +334,13 @@ impl Device {
 
     /// Create a native PM4 queue with one serialized host producer.
     pub fn queue(&self) -> Result<Queue> {
+        self.create_queue(AMDF_QUEUE_COMMAND_TYPE_GPU_PM4)
+    }
+    /// Create a native SDMA transfer queue without loading compute kernels.
+    pub fn sdma_queue(&self) -> Result<Queue> {
+        self.create_queue(AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA)
+    }
+    fn create_queue(&self, command: u32) -> Result<Queue> {
         if self.endpoint().engine() != Engine::Gpu {
             return Err(Error::Unsupported(
                 "PM4 queues require an AMDGPU device".into(),
@@ -355,10 +370,12 @@ impl Device {
                     &mut family,
                 )
             })?;
-            if family.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4
+            if family.command_type != command
                 || family.format_version != AMDF_GPU_PM4_QUEUE_FORMAT_VERSION_1
                 || family.publication_modes & AMDF_QUEUE_PUBLICATION_MODE_USER == 0
-                || family.format_features & AMDF_GPU_PM4_FORMAT_FEATURE_ACQUIRE_MEM_GCR as u64 == 0
+                || (command == AMDF_QUEUE_COMMAND_TYPE_GPU_PM4
+                    && family.format_features & AMDF_GPU_PM4_FORMAT_FEATURE_ACQUIRE_MEM_GCR as u64
+                        == 0)
             {
                 continue;
             }
@@ -381,6 +398,7 @@ impl Device {
             }
             let mut queue = QueueInner {
                 device: self.clone(),
+                family: ordinal,
                 raw,
                 mapping: ptr::null_mut(),
                 info: amdf_user_queue_mapping_info_t::default(),
@@ -399,7 +417,7 @@ impl Device {
                 entry!(api.core, user_queue_mapping_query_info)(queue.mapping, &mut queue.info)
             })?;
             let info = &queue.info;
-            if info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4
+            if info.command_type != command
                 || info.format_version != 1
                 || !info.ring_byte_length.is_power_of_two()
                 || info.ring_byte_length < 4096
@@ -415,13 +433,13 @@ impl Device {
                 .any(|address| *address == 0 || address % 8 != 0)
             {
                 return Err(Error::Unsupported(
-                    "unexpected native PM4 mapping contract".into(),
+                    "unexpected native GPU queue mapping contract".into(),
                 ));
             }
             return Ok(Queue(Arc::new(queue)));
         }
         Err(Error::Unsupported(
-            "no qualified native PM4 queue family".into(),
+            "no qualified native queue family for the requested engine".into(),
         ))
     }
 }
@@ -502,6 +520,11 @@ impl Queue {
         arguments: &[Argument<'_>],
         arena: Option<&mut GraphArena>,
     ) -> Result<PreparedGpu> {
+        if self.0.info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 {
+            return Err(Error::Unsupported(
+                "kernel dispatch requires a compute queue".into(),
+            ));
+        }
         if !Arc::ptr_eq(&kernel.device().0, &self.0.device.0) {
             return Err(Error::Message(
                 "kernel belongs to another native device".into(),
@@ -687,6 +710,11 @@ impl Queue {
         profile: Option<&profile::ProfileCapture>,
         profile_start: usize,
     ) -> Result<PreparedGpu> {
+        if self.0.info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 {
+            return Err(Error::Unsupported(
+                "indirect compute batches require a PM4 queue".into(),
+            ));
+        }
         if commands.is_empty() {
             return Err(Error::Message("empty native command batch".into()));
         }
@@ -830,6 +858,9 @@ impl Queue {
                 None => vec![(completion.work.clone(), completion.value)],
             }
         };
+        if self.0.info.command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA {
+            return self.prepare_sdma_wait(completion, dependencies);
+        }
         let address = completion.work.fence.device_address(self.device())?;
         let fence = self
             .device()
@@ -942,6 +973,8 @@ impl PreparedGpu {
             .ok_or_else(|| Error::DeviceLost("prepared completion timeline exhausted".into()))?;
         let words = &self.inner.words;
         let capacity = self.queue.0.info.ring_byte_length / 4;
+        let sdma = self.queue.0.info.command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA;
+        let index_scale = if sdma { 4 } else { 1 };
         let (mut state, cursor, wrap, required) = loop {
             let mut state = self
                 .queue
@@ -966,7 +999,7 @@ impl PreparedGpu {
             let read = unsafe {
                 (&*(self.queue.0.info.read_index_address as *const AtomicU64))
                     .load(Ordering::Acquire)
-            };
+            } / index_scale;
             let outstanding = state.write.wrapping_sub(read) & (capacity - 1);
             let full = if state.pending.len() >= 4096 {
                 Some("native queue submission capacity")
@@ -993,6 +1026,9 @@ impl PreparedGpu {
             .write
             .checked_add(required)
             .ok_or_else(|| Error::DeviceLost("native queue index exhausted".into()))?;
+        let native_published = published
+            .checked_mul(index_scale)
+            .ok_or_else(|| Error::DeviceLost("native queue byte index exhausted".into()))?;
         let work = self.inner.work.clone();
         let mut leases = work
             .leases
@@ -1019,16 +1055,21 @@ impl PreparedGpu {
         unsafe {
             let ring = self.queue.0.info.ring_address as *mut u32;
             if wrap != 0 {
-                ptr::write(ring.add(cursor as usize), header(0x10, wrap as usize));
-                ptr::write_bytes(ring.add(cursor as usize + 1), 0, wrap as usize - 1);
+                ptr::write_bytes(ring.add(cursor as usize), 0, wrap as usize);
+                if !sdma {
+                    ptr::write(ring.add(cursor as usize), header(0x10, wrap as usize));
+                }
             }
             let cursor = if wrap == 0 { cursor as usize } else { 0 };
             ptr::copy_nonoverlapping(words.as_ptr(), ring.add(cursor), words.len());
             ptr::write(ring.add(cursor + self.inner.fence_word), value);
             (&*(self.queue.0.info.write_index_address as *const AtomicU64))
-                .store(published, Ordering::Release);
+                .store(native_published, Ordering::Release);
             std::sync::atomic::fence(Ordering::SeqCst);
-            ptr::write_volatile(self.queue.0.info.doorbell_address as *mut u64, published);
+            ptr::write_volatile(
+                self.queue.0.info.doorbell_address as *mut u64,
+                native_published,
+            );
         }
         state.write = published;
         *previous = value;
@@ -1049,6 +1090,18 @@ fn wait_for_capacity(oldest: Option<Completion>) -> Result<()> {
 }
 
 impl Queue {
+    /// Exact native family used by this queue and its visibility recipes.
+    pub fn family_ordinal(&self) -> u32 {
+        self.0.family
+    }
+    /// Native command representation.
+    pub fn command(&self) -> QueueCommand {
+        if self.0.info.command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA {
+            QueueCommand::Sdma
+        } else {
+            QueueCommand::Pm4
+        }
+    }
     /// Device whose address domain this queue executes in.
     pub fn device(&self) -> &Device {
         &self.0.device
@@ -1100,6 +1153,15 @@ impl Queue {
         {
             return Err(Error::Message("native copy ranges overlap".into()));
         }
+        if self.0.info.command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA {
+            return self.prepare_sdma_copy(
+                destination,
+                destination_offset,
+                source,
+                source_offset,
+                length,
+            );
+        }
         let kernels = self.transfer_kernels()?;
         let wide = (destination_offset | source_offset | length) & 7 == 0;
         let copy = &kernels[if wide { 2 } else { 0 }];
@@ -1118,6 +1180,32 @@ impl Queue {
             )
         }
     }
+    pub(crate) fn prepare_copy_reserved(
+        &self,
+        destination: &Buffer,
+        destination_offset: usize,
+        source: &Buffer,
+        source_offset: usize,
+        length: usize,
+        reservation: Option<Arc<crate::residency::MemoryReservation>>,
+    ) -> Result<PreparedGpu> {
+        let mut command = self.prepare_copy(
+            destination,
+            destination_offset,
+            source,
+            source_offset,
+            length,
+        )?;
+        let inner =
+            Arc::get_mut(&mut command.inner).expect("new prepared copy is exclusively owned");
+        let work = Arc::get_mut(&mut inner.work).expect("new copy work is exclusively owned");
+        // A fence is private until first submission. Keep the charge on its
+        // native memory owner, which survives uncertain queue retirement.
+        Arc::get_mut(&mut work.fence.0)
+            .expect("new fence is exclusively owned")
+            .reservation = reservation;
+        Ok(command)
+    }
     /// Prepare a repeated byte fill over one logical range.
     pub fn prepare_fill(
         &self,
@@ -1127,6 +1215,9 @@ impl Queue {
         value: u8,
     ) -> Result<PreparedGpu> {
         transfer_range(destination, offset, length)?;
+        if self.0.info.command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA {
+            return self.prepare_sdma_fill(destination, offset, length, value);
+        }
         let kernels = self.transfer_kernels()?;
         let wide = (offset | length) & 7 == 0;
         let fill = &kernels[if wide { 3 } else { 1 }];

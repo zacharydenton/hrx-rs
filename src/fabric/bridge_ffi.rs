@@ -118,6 +118,12 @@ pub struct Bridge {
         index: u32,
         out: *mut hrx_fabric_gpu_argument,
     ) -> ::std::os::raw::c_int,
+    pub hrx_fabric_gpu_global_info: unsafe extern "C" fn(
+        image: *const hrx_fabric_gpu_image,
+        name: *const ::std::os::raw::c_char,
+        offset: *mut u64,
+        length: *mut u64,
+    ) -> ::std::os::raw::c_int,
     pub hrx_fabric_gpu_image_load: unsafe extern "C" fn(
         image: *const hrx_fabric_gpu_image,
         storage: *mut u8,
@@ -156,6 +162,17 @@ pub struct Bridge {
     ) -> ::std::os::raw::c_int,
     pub hrx_fabric_xdna_close:
         unsafe extern "C" fn(program: *mut hrx_fabric_xdna_program) -> ::std::os::raw::c_int,
+    pub hrx_fabric_xdna_command_copy: unsafe extern "C" fn(
+        program: *mut hrx_fabric_xdna_program,
+        bytes: *mut u8,
+        capacity: usize,
+        length: *mut usize,
+    ) -> ::std::os::raw::c_int,
+    pub hrx_fabric_xdna_command_replace: unsafe extern "C" fn(
+        program: *mut hrx_fabric_xdna_program,
+        bytes: *const u8,
+        length: usize,
+    ) -> ::std::os::raw::c_int,
     pub hrx_fabric_xdna_submit:
         unsafe extern "C" fn(program: *mut hrx_fabric_xdna_program, submission: *mut u64) -> u64,
     pub hrx_fabric_xdna_wait: unsafe extern "C" fn(
@@ -188,6 +205,9 @@ impl Bridge {
         let hrx_fabric_gpu_argument_info = __library
             .get(b"hrx_fabric_gpu_argument_info\0")
             .map(|sym| *sym)?;
+        let hrx_fabric_gpu_global_info = __library
+            .get(b"hrx_fabric_gpu_global_info\0")
+            .map(|sym| *sym)?;
         let hrx_fabric_gpu_image_load = __library
             .get(b"hrx_fabric_gpu_image_load\0")
             .map(|sym| *sym)?;
@@ -196,6 +216,12 @@ impl Bridge {
             .map(|sym| *sym)?;
         let hrx_fabric_xdna_open = __library.get(b"hrx_fabric_xdna_open\0").map(|sym| *sym)?;
         let hrx_fabric_xdna_close = __library.get(b"hrx_fabric_xdna_close\0").map(|sym| *sym)?;
+        let hrx_fabric_xdna_command_copy = __library
+            .get(b"hrx_fabric_xdna_command_copy\0")
+            .map(|sym| *sym)?;
+        let hrx_fabric_xdna_command_replace = __library
+            .get(b"hrx_fabric_xdna_command_replace\0")
+            .map(|sym| *sym)?;
         let hrx_fabric_xdna_submit = __library.get(b"hrx_fabric_xdna_submit\0").map(|sym| *sym)?;
         let hrx_fabric_xdna_wait = __library.get(b"hrx_fabric_xdna_wait\0").map(|sym| *sym)?;
         Ok(Bridge {
@@ -204,10 +230,13 @@ impl Bridge {
             hrx_fabric_gpu_image_open,
             hrx_fabric_gpu_image_close,
             hrx_fabric_gpu_argument_info,
+            hrx_fabric_gpu_global_info,
             hrx_fabric_gpu_image_load,
             hrx_fabric_gpu_dispatch,
             hrx_fabric_xdna_open,
             hrx_fabric_xdna_close,
+            hrx_fabric_xdna_command_copy,
+            hrx_fabric_xdna_command_replace,
             hrx_fabric_xdna_submit,
             hrx_fabric_xdna_wait,
         })
@@ -235,6 +264,15 @@ impl Bridge {
         out: *mut hrx_fabric_gpu_argument,
     ) -> ::std::os::raw::c_int {
         (self.hrx_fabric_gpu_argument_info)(image, index, out)
+    }
+    pub unsafe fn hrx_fabric_gpu_global_info(
+        &self,
+        image: *const hrx_fabric_gpu_image,
+        name: *const ::std::os::raw::c_char,
+        offset: *mut u64,
+        length: *mut u64,
+    ) -> ::std::os::raw::c_int {
+        (self.hrx_fabric_gpu_global_info)(image, name, offset, length)
     }
     pub unsafe fn hrx_fabric_gpu_image_load(
         &self,
@@ -314,6 +352,23 @@ impl Bridge {
         program: *mut hrx_fabric_xdna_program,
     ) -> ::std::os::raw::c_int {
         (self.hrx_fabric_xdna_close)(program)
+    }
+    pub unsafe fn hrx_fabric_xdna_command_copy(
+        &self,
+        program: *mut hrx_fabric_xdna_program,
+        bytes: *mut u8,
+        capacity: usize,
+        length: *mut usize,
+    ) -> ::std::os::raw::c_int {
+        (self.hrx_fabric_xdna_command_copy)(program, bytes, capacity, length)
+    }
+    pub unsafe fn hrx_fabric_xdna_command_replace(
+        &self,
+        program: *mut hrx_fabric_xdna_program,
+        bytes: *const u8,
+        length: usize,
+    ) -> ::std::os::raw::c_int {
+        (self.hrx_fabric_xdna_command_replace)(program, bytes, length)
     }
     pub unsafe fn hrx_fabric_xdna_submit(
         &self,

@@ -1,0 +1,158 @@
+// Copyright 2026 The IREE Authors
+//
+// Licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+kernel.def @tsan_workgroup_write_race() {
+  %unit = index.constant 1 : index
+  %threads = index.constant 2 : index
+  kernel.launch.config workgroups(%unit, %unit, %unit) workgroup_size(%threads, %unit, %unit) : index
+} launch(%output: buffer) {
+  %base = index.constant 0 : offset
+  %element_index = index.constant 0 : index
+  %bytes = index.constant 4 : offset
+  %value = scalar.constant 1 : i32
+  %continued_value = scalar.constant 9 : i32
+  %global = buffer.assume.memory_space<global> %output : buffer
+  %output_view = buffer.view %global[%base] : buffer -> view<1xi32>
+  view.store %value, %output_view[%element_index] : i32, view<1xi32>
+  %scratch = buffer.alloca<workgroup> align(4) %bytes : buffer
+  %scratch_view = buffer.view %scratch[%base] : buffer -> view<1xi32>
+  view.store %value, %scratch_view[%element_index] : i32, view<1xi32>
+  view.store %continued_value, %output_view[%element_index] : i32, view<1xi32>
+  kernel.return
+}
+
+kernel.def @tsan_workgroup_wide_upper_half_write_race() {
+  %unit = index.constant 1 : index
+  %threads = index.constant 2 : index
+  kernel.launch.config workgroups(%unit, %unit, %unit) workgroup_size(%threads, %unit, %unit) : index
+} launch(%output: buffer) {
+  %byte0 = index.constant 0 : offset
+  %byte4 = index.constant 4 : offset
+  %element0 = index.constant 0 : index
+  %element1 = index.constant 1 : index
+  %bytes = index.constant 8 : offset
+  %wide_value = scalar.constant 4294967297 : i64
+  %narrow_value = scalar.constant 2 : i32
+  %output_value = scalar.constant 1 : i32
+  %lane = kernel.workitem.id<x> : index
+
+  %global = buffer.assume.memory_space<global> %output : buffer
+  %output_view = buffer.view %global[%byte0] : buffer -> view<2xi32>
+  view.store %output_value, %output_view[%lane] : i32, view<2xi32>
+
+  %scratch = buffer.alloca<workgroup> align(8) %bytes : buffer
+  %wide_view = buffer.view %scratch[%byte0] : buffer -> view<1xi64>
+  %upper_view = buffer.view %scratch[%byte4] : buffer -> view<1xi32>
+  %is_first_lane = index.cmp eq, %lane, %element0 : index
+  scf.if %is_first_lane {
+    view.store %wide_value, %wide_view[%element0] : i64, view<1xi64>
+  }
+  %is_second_lane = index.cmp eq, %lane, %element1 : index
+  scf.if %is_second_lane {
+    view.store %narrow_value, %upper_view[%element0] : i32, view<1xi32>
+  }
+  kernel.return
+}
+
+kernel.def @tsan_workgroup_wide_current_write_race() {
+  %unit = index.constant 1 : index
+  %threads = index.constant 2 : index
+  kernel.launch.config workgroups(%unit, %unit, %unit) workgroup_size(%threads, %unit, %unit) : index
+} launch(%output: buffer) {
+  %byte0 = index.constant 0 : offset
+  %byte4 = index.constant 4 : offset
+  %element0 = index.constant 0 : index
+  %element1 = index.constant 1 : index
+  %bytes = index.constant 8 : offset
+  %wide_value = scalar.constant 4294967297 : i64
+  %narrow_value = scalar.constant 2 : i32
+  %output_value = scalar.constant 1 : i32
+  %lane = kernel.workitem.id<x> : index
+
+  %global = buffer.assume.memory_space<global> %output : buffer
+  %output_view = buffer.view %global[%byte0] : buffer -> view<2xi32>
+  view.store %output_value, %output_view[%lane] : i32, view<2xi32>
+
+  %scratch = buffer.alloca<workgroup> align(8) %bytes : buffer
+  %wide_view = buffer.view %scratch[%byte0] : buffer -> view<1xi64>
+  %upper_view = buffer.view %scratch[%byte4] : buffer -> view<1xi32>
+  %is_first_lane = index.cmp eq, %lane, %element0 : index
+  scf.if %is_first_lane {
+    view.store %narrow_value, %upper_view[%element0] : i32, view<1xi32>
+  }
+  %is_second_lane = index.cmp eq, %lane, %element1 : index
+  scf.if %is_second_lane {
+    view.store %wide_value, %wide_view[%element0] : i64, view<1xi64>
+  }
+  kernel.return
+}
+
+kernel.def @tsan_workgroup_adjacent_wide_writes() {
+  %unit = index.constant 1 : index
+  %threads = index.constant 2 : index
+  kernel.launch.config workgroups(%unit, %unit, %unit) workgroup_size(%threads, %unit, %unit) : index
+} launch(%output: buffer) {
+  %byte0 = index.constant 0 : offset
+  %byte8 = index.constant 8 : offset
+  %element0 = index.constant 0 : index
+  %element1 = index.constant 1 : index
+  %bytes = index.constant 16 : offset
+  %wide_value = scalar.constant 4294967297 : i64
+  %narrow_value = scalar.constant 2 : i32
+  %output_value = scalar.constant 1 : i32
+  %lane = kernel.workitem.id<x> : index
+
+  %global = buffer.assume.memory_space<global> %output : buffer
+  %output_view = buffer.view %global[%byte0] : buffer -> view<2xi32>
+  view.store %output_value, %output_view[%lane] : i32, view<2xi32>
+
+  %scratch = buffer.alloca<workgroup> align(8) %bytes : buffer
+  %wide_view = buffer.view %scratch[%byte0] : buffer -> view<1xi64>
+  %adjacent_view = buffer.view %scratch[%byte8] : buffer -> view<1xi32>
+  %is_first_lane = index.cmp eq, %lane, %element0 : index
+  scf.if %is_first_lane {
+    view.store %wide_value, %wide_view[%element0] : i64, view<1xi64>
+  }
+  %is_second_lane = index.cmp eq, %lane, %element1 : index
+  scf.if %is_second_lane {
+    view.store %narrow_value, %adjacent_view[%element0] : i32, view<1xi32>
+  }
+  kernel.return
+}
+
+kernel.def @tsan_workgroup_barrier_safe_write() {
+  %unit = index.constant 1 : index
+  %threads = index.constant 2 : index
+  kernel.launch.config workgroups(%unit, %unit, %unit) workgroup_size(%threads, %unit, %unit) : index
+} launch(%output: buffer) {
+  %base = index.constant 0 : offset
+  %first_lane = index.constant 0 : index
+  %second_lane = index.constant 1 : index
+  %bytes = index.constant 4 : offset
+  %before_value = scalar.constant 1 : i32
+  %after_value = scalar.constant 2 : i32
+  %lane = kernel.workitem.id<x> : index
+  %global = buffer.assume.memory_space<global> %output : buffer
+  %output_view = buffer.view %global[%base] : buffer -> view<1xi32>
+  %scratch = buffer.alloca<workgroup> align(4) %bytes : buffer
+  %scratch_view = buffer.view %scratch[%base] : buffer -> view<1xi32>
+  %is_first_lane = index.cmp eq, %lane, %first_lane : index
+  scf.if %is_first_lane {
+    view.store %before_value, %scratch_view[%first_lane] : i32, view<1xi32>
+  }
+  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+  %is_second_lane = index.cmp eq, %lane, %second_lane : index
+  scf.if %is_second_lane {
+    view.store %after_value, %scratch_view[%first_lane] : i32, view<1xi32>
+  }
+  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+  scf.if %is_first_lane {
+    %result = view.load %scratch_view[%first_lane] : view<1xi32> -> i32
+    view.store %result, %output_view[%first_lane] : i32, view<1xi32>
+  }
+  kernel.return
+}
+

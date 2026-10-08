@@ -1,0 +1,190 @@
+// Copyright 2026 The IREE Authors
+//
+// Licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+// One invocation owns every GPU access in the finite request/response service.
+// Arithmetic is modulo 2^32. The caller owns disjoint, 64-byte-aligned request
+// and response allocations, startup (separate allocation), control (256 bytes),
+// and result records. Each request/response allocation holds credit_count slots,
+// where credit_count is 1 or 2. Each slot holds a generation at word 0 and
+// payload_word_count words beginning at payload_word_offset. The payload count
+// is in [1, 1024] and the offset is in [1, 16]. The byte stride is the slot's
+// complete ready/payload extent rounded up to 64 bytes. Every slot generation,
+// startup, and terminal starts at zero.
+//
+// Startup DWORD 0: host WAIT 0, RUN 1, ABORT 2. The host publishes its immutable
+// decision once: RUN after both submissions succeed, or ABORT
+// if the peer submission fails. Separate allocation isolates that host cache
+// maintenance from every device-owned payload/control range.
+//
+// The GPU writes request slots; the NPU writes response slots. Payload
+// word offsets 1 and 16 respectively share the ready word's first 64-byte line
+// or begin on the following line. Control DWORD 48 is the GPU terminal/final
+// ACK (pending 0, COMPLETE 1, ABORTED 2); all other control bytes are guards.
+// After RUN, both participants exchange exactly round_count generations. The
+// GPU first publishes min(credit_count, round_count) requests. Consuming a
+// response returns that slot's credit: the next request uses the first response
+// word as its cause and is published only after the response and record accesses
+// complete. The final COMPLETE release acknowledges all remaining accesses.
+// Slot 0 starts with seed; slot 1 starts with seed + 0x9e3779b9 modulo 2^32.
+//
+// Each record occupies 4 * (payload_word_count + 4) bytes: generation, causal
+// input, start tick, end tick, then every response word.
+// NPU response[i] = request[i] * 3 + generation modulo 2^32. Ticks are raw 32-bit
+// values; modulo subtraction is not an unbounded duration.
+
+template.decl @completed_tick() -> (i32)
+
+kernel.def export("resident_exchange") @resident_exchange() {
+  %unit = index.constant 1 : index
+  kernel.launch.config workgroups(%unit, %unit, %unit) workgroup_size(%unit, %unit, %unit) : index
+} launch(%request: buffer, %response: buffer, %startup: buffer, %control: buffer, %records: buffer, %round_count: i32, %seed: i32, %payload_word_count: i32, %payload_word_offset: i32, %credit_count: i32, %slot_byte_stride: i32) {
+  %request_aligned = buffer.assume.alignment %request {minimum_alignment = 64} : buffer
+  %response_aligned = buffer.assume.alignment %response {minimum_alignment = 64} : buffer
+  %startup_aligned = buffer.assume.alignment %startup {minimum_alignment = 64} : buffer
+  %control_aligned = buffer.assume.alignment %control {minimum_alignment = 64} : buffer
+  %records_aligned = buffer.assume.alignment %records {minimum_alignment = 64} : buffer
+  %origin = index.constant 0 : offset
+  %word_bytes = index.constant 4 : offset
+  %element_limit_input = index.cast %payload_word_count : i32 to index
+  %element_limit = index.assume %element_limit_input [range(%element_limit_input, 1, 1024)] : index
+  %payload_offset_input = index.cast %payload_word_offset : i32 to index
+  %payload_offset_words = index.assume %payload_offset_input [range(%payload_offset_input, 1, 16)] : index
+  %payload_offset = index.scale %payload_offset_words, %word_bytes : index, offset -> offset
+  %credit_limit_input = index.cast %credit_count : i32 to index
+  %credit_limit = index.assume %credit_limit_input [range(%credit_limit_input, 1, 2)] : index
+  %credits = index.cast %credit_limit : index to i32
+  %slot_stride_input = index.cast %slot_byte_stride : i32 to offset
+  %slot_stride = index.assume %slot_stride_input [range(%slot_stride_input, 64, 4160), mul(%slot_stride_input, 64)] : offset
+  %startup_word = buffer.view %startup_aligned[%origin] : buffer -> view<1xi32>
+  %control_words = buffer.view %control_aligned[%origin] : buffer -> view<64xi32>
+  %c0 = scalar.constant 0 : i32
+  %c1 = scalar.constant 1 : i32
+  %aborted_state = scalar.constant 2 : i32
+  %generation_scale = scalar.constant 257 : i32
+  %element_scale = scalar.constant 17 : i32
+  %second_seed_increment = scalar.constant -1640531527 : i32
+  %second_seed = scalar.addi %seed, %second_seed_increment : i32
+  %slot_mask = scalar.subi %credits, %c1 : i32
+  %first_element = index.constant 0 : index
+  %second_element = index.constant 1 : index
+  %element_step = index.constant 1 : index
+  %record_header_words = index.constant 4 : index
+  %record_word_count = index.add %element_limit, %record_header_words : index
+  %record_byte_stride = index.scale %record_word_count, %word_bytes : index, offset -> offset
+
+  %start = scf.while(%state = %c0 : i32) -> (i32) {
+    %waiting_state = scalar.cmpi eq, %state, %c0 : i32
+    scf.condition %waiting_state, %state : i1, i32
+  } do(%state: i32) {
+    %observed = view.atomic.load %startup_word[0] {ordering = relaxed, scope = system} : view<1xi32> -> i32
+    scf.yield %observed : i32
+  }
+  buffer.fence scope(system) ordering(acquire)
+  %running_state = scalar.cmpi eq, %start, %c1 : i32
+
+  // Prime every owned credit before waiting for a response. Each start sample
+  // remains in program state until its corresponding response is consumed.
+  %published, %first_start, %second_start = scf.while(%slot = %c0 : i32, %first_tick = %c0 : i32, %second_tick = %c0 : i32) -> (i32, i32, i32) {
+    %credit_available = scalar.cmpi ult, %slot, %credits : i32
+    %request_available = scalar.cmpi ult, %slot, %round_count : i32
+    %can_publish = scalar.andi %credit_available, %request_available : i1
+    %continue_publishing = scalar.andi %can_publish, %running_state : i1
+    scf.condition %continue_publishing, %slot, %first_tick, %second_tick : i1, i32, i32, i32
+  } do(%slot: i32, %first_tick: i32, %second_tick: i32) {
+    %first_slot = scalar.cmpi eq, %slot, %c0 : i32
+    %slot_offset = scf.select %first_slot, %origin, %slot_stride : offset
+    %slot_payload_offset = index.add %slot_offset, %payload_offset : offset
+    %request_ready = buffer.view %request_aligned[%slot_offset] : buffer -> view<1xi32>
+    %request_words = buffer.view %request_aligned[%slot_payload_offset] : buffer -> view<[%element_limit]xi32>
+    %cause = scf.select %first_slot, %seed, %second_seed : i32
+    %generation = scalar.addi %slot, %c1 : i32
+    %generation_term = scalar.muli %generation, %generation_scale : i32
+    %request_base = scalar.addi %cause, %generation_term : i32
+    scf.for %element = [%first_element to %element_limit step %element_step] {
+      %element_word = index.cast %element : index to i32
+      %element_term = scalar.muli %element_word, %element_scale : i32
+      %value = scalar.addi %request_base, %element_term : i32
+      view.store %value, %request_words[%element] : i32, view<[%element_limit]xi32>
+    }
+    %start_tick = template.apply<@completed_tick>() : () -> (i32)
+    view.atomic.store %generation, %request_ready[0] {ordering = release, scope = system} : i32, view<1xi32>
+    %updated_first = scf.select %first_slot, %start_tick, %first_tick : i32
+    %updated_second = scf.select %first_slot, %second_tick, %start_tick : i32
+    scf.yield %generation, %updated_first, %updated_second : i32, i32, i32
+  }
+
+  %completed_rounds, %final_first_cause, %final_second_cause, %final_first_tick, %final_second_tick = scf.while(%round = %c0 : i32, %first_cause = %seed : i32, %second_cause = %second_seed : i32, %first_tick = %first_start : i32, %second_tick = %second_start : i32) -> (i32, i32, i32, i32, i32) {
+    %remaining = scalar.cmpi ult, %round, %round_count : i32
+    %continue_rounds = scalar.andi %remaining, %running_state : i1
+    scf.condition %continue_rounds, %round, %first_cause, %second_cause, %first_tick, %second_tick : i1, i32, i32, i32, i32, i32
+  } do(%round: i32, %first_cause: i32, %second_cause: i32, %first_tick: i32, %second_tick: i32) {
+    %slot = scalar.andi %round, %slot_mask : i32
+    %first_slot = scalar.cmpi eq, %slot, %c0 : i32
+    %slot_offset = scf.select %first_slot, %origin, %slot_stride : offset
+    %slot_payload_offset = index.add %slot_offset, %payload_offset : offset
+    %request_ready = buffer.view %request_aligned[%slot_offset] : buffer -> view<1xi32>
+    %response_ready = buffer.view %response_aligned[%slot_offset] : buffer -> view<1xi32>
+    %request_words = buffer.view %request_aligned[%slot_payload_offset] : buffer -> view<[%element_limit]xi32>
+    %response_words = buffer.view %response_aligned[%slot_payload_offset] : buffer -> view<[%element_limit]xi32>
+    %cause = scf.select %first_slot, %first_cause, %second_cause : i32
+    %start_tick = scf.select %first_slot, %first_tick, %second_tick : i32
+    %generation = scalar.addi %round, %c1 : i32
+    %response_generation = scf.while(%seen = %c0 : i32) -> (i32) {
+      %pending = scalar.cmpi ne, %seen, %generation : i32
+      scf.condition %pending, %seen : i1, i32
+    } do(%seen: i32) {
+      %observed_generation = view.atomic.load %response_ready[0] {ordering = relaxed, scope = system} : view<1xi32> -> i32
+      scf.yield %observed_generation : i32
+    }
+    buffer.fence scope(system) ordering(acquire)
+    %unsigned_round = index.cast %round : i32 to offset
+    %round_index = index.cast %unsigned_round : offset to index
+    %record_offset = index.scale %round_index, %record_byte_stride : index, offset -> offset
+    %record = buffer.view %records_aligned[%record_offset] : buffer -> view<[%record_word_count]xi32>
+    %causal_result = view.load %response_words[0] : view<[%element_limit]xi32> -> i32
+    view.store %causal_result, %record[4] : i32, view<[%record_word_count]xi32>
+    scf.for %element = [%second_element to %element_limit step %element_step] {
+      %value = view.load %response_words[%element] : view<[%element_limit]xi32> -> i32
+      %record_element = index.add %element, %record_header_words : index
+      view.store %value, %record[%record_element] : i32, view<[%record_word_count]xi32>
+    }
+    view.store %generation, %record[0] : i32, view<[%record_word_count]xi32>
+    view.store %cause, %record[1] : i32, view<[%record_word_count]xi32>
+    view.store %start_tick, %record[2] : i32, view<[%record_word_count]xi32>
+    %end_tick = template.apply<@completed_tick>() : () -> (i32)
+    view.store %end_tick, %record[3] : i32, view<[%record_word_count]xi32>
+
+    // The subtraction admits g + C without unsigned overflow. The next ready
+    // publication returns this slot's credit only after all prior reads and
+    // record stores have completed through the timestamp and release waits.
+    %unpublished_rounds = scalar.subi %round_count, %generation : i32
+    %has_next_request = scalar.cmpi uge, %unpublished_rounds, %credits : i32
+    %next_start_tick = scf.if %has_next_request -> (i32) {
+      %next_generation = scalar.addi %generation, %credits : i32
+      %generation_term = scalar.muli %next_generation, %generation_scale : i32
+      %request_base = scalar.addi %causal_result, %generation_term : i32
+      scf.for %element = [%first_element to %element_limit step %element_step] {
+        %element_word = index.cast %element : index to i32
+        %element_term = scalar.muli %element_word, %element_scale : i32
+        %value = scalar.addi %request_base, %element_term : i32
+        view.store %value, %request_words[%element] : i32, view<[%element_limit]xi32>
+      }
+      %next_tick = template.apply<@completed_tick>() : () -> (i32)
+      view.atomic.store %next_generation, %request_ready[0] {ordering = release, scope = system} : i32, view<1xi32>
+      scf.yield %next_tick : i32
+    } else {
+      scf.yield %start_tick : i32
+    }
+    %updated_first_cause = scf.select %first_slot, %causal_result, %first_cause : i32
+    %updated_second_cause = scf.select %first_slot, %second_cause, %causal_result : i32
+    %updated_first_tick = scf.select %first_slot, %next_start_tick, %first_tick : i32
+    %updated_second_tick = scf.select %first_slot, %second_tick, %next_start_tick : i32
+    scf.yield %generation, %updated_first_cause, %updated_second_cause, %updated_first_tick, %updated_second_tick : i32, i32, i32, i32, i32
+  }
+  %terminal = scf.select %running_state, %c1, %aborted_state : i32
+  view.atomic.store %terminal, %control_words[48] {ordering = release, scope = system} : i32, view<64xi32>
+  kernel.return
+}

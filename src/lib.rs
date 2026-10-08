@@ -88,6 +88,8 @@ pub enum Error {
         message: String,
         /// Complete structured diagnostics.
         diagnostics: Vec<loom::Diagnostic>,
+        /// Compiler report produced before failure, when requested and available.
+        report: Option<Box<serde_json::Value>>,
     },
     /// An operating-system failure, preserving its error kind and source.
     #[error("{0}")]
@@ -123,6 +125,24 @@ pub enum Error {
     },
 }
 impl Error {
+    /// Structured compiler diagnostics through any contextual wrappers.
+    pub fn compiler_diagnostics(&self) -> Option<&[loom::Diagnostic]> {
+        match self {
+            Self::Compile { diagnostics, .. } => Some(diagnostics),
+            Self::Context { source, .. } => source.compiler_diagnostics(),
+            Self::Execution { source } => source.compiler_diagnostics(),
+            _ => None,
+        }
+    }
+    /// Compiler report retained from a failed invocation, when requested.
+    pub fn compiler_report(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Compile { report, .. } => report.as_deref(),
+            Self::Context { source, .. } => source.compiler_report(),
+            Self::Execution { source } => source.compiler_report(),
+            _ => None,
+        }
+    }
     /// Attach context without flattening the underlying error.
     pub fn context(self, context: impl Into<String>) -> Self {
         Self::Context {

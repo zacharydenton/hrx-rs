@@ -374,3 +374,60 @@ uint64_t hrx_fabric_xdna_wait(hrx_fabric_xdna_program* program,
     uint64_t submission, uint64_t timeout_ns) {
   return program->api->kernel_queue_wait(program->queue, submission, timeout_ns, 0);
 }
+
+int hrx_fabric_xdna_command_copy(hrx_fabric_xdna_program* run,
+    uint8_t* bytes, size_t capacity, size_t* length) {
+  if (!run || !length || run->command.byte_length > SIZE_MAX)
+    return hrx_fabric_status(iree_make_status(IREE_STATUS_INVALID_ARGUMENT));
+  *length = run->command.byte_length;
+  if (!bytes && !capacity) return 0;
+  if (capacity < *length)
+    return hrx_fabric_status(iree_make_status(IREE_STATUS_OUT_OF_RANGE));
+  for (uint32_t i = 0; i < run->storage.count; ++i) {
+    const iree_hal_amd_xdna_executable_storage_t* storage = &run->storage.values[i];
+    if (storage->memory != run->command.memory) continue;
+    if (run->command.byte_offset > storage->mapping.data_length ||
+        *length > storage->mapping.data_length - run->command.byte_offset)
+      return hrx_fabric_status(iree_make_status(IREE_STATUS_OUT_OF_RANGE));
+    memcpy(bytes, storage->mapping.data + run->command.byte_offset, *length);
+    return 0;
+  }
+  return hrx_fabric_status(iree_make_status(IREE_STATUS_NOT_FOUND));
+}
+static iree_status_t replace_command(hrx_fabric_xdna_program* run,
+    const uint8_t* bytes, size_t length) {
+  if (!run || !bytes || !length || run->storage.count == UINT32_MAX)
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT);
+  const uint32_t slot = run->storage.count;
+  iree_host_size_t total_size = 0, mappings_offset = 0;
+  IREE_RETURN_IF_ERROR(IREE_STRUCT_LAYOUT(0, &total_size,
+      IREE_STRUCT_FIELD(slot + 1, iree_hal_amd_xdna_executable_storage_t, NULL),
+      IREE_STRUCT_FIELD(slot + 1, amdf_host_mapping_t*, &mappings_offset)));
+  iree_hal_amd_xdna_executable_storage_t* values = NULL;
+  IREE_RETURN_IF_ERROR(iree_allocator_malloc(run->host_allocator,
+      total_size, (void**)&values));
+  amdf_host_mapping_t** mappings =
+      (amdf_host_mapping_t**)((uint8_t*)values + mappings_offset);
+  memset(&values[slot], 0, sizeof(*values));
+  memset(&mappings[slot], 0, sizeof(*mappings));
+  memcpy(values, run->storage.values, slot * sizeof(*values));
+  memcpy(mappings, run->storage.mappings, slot * sizeof(*mappings));
+  iree_allocator_free(run->host_allocator, run->storage.values);
+  run->storage.values = values;
+  run->storage.mappings = mappings;
+  run->storage.count = slot + 1;
+  const iree_xdna_elf_allocation_record_t requirement = {
+      .domain = IREE_XDNA_ELF_ALLOCATION_DOMAIN_COMMAND, .byte_length = length};
+  IREE_RETURN_IF_ERROR(iree_xdna_run_allocate_storage(run, slot, &requirement));
+  memcpy(values[slot].mapping.data, bytes, length);
+  IREE_RETURN_IF_ERROR(IREE_HAL_AMD_STATUS_FROM_AMDF(
+      run->api->host_mapping_cache_control(mappings[slot],
+          AMDF_HOST_CACHE_OPERATION_FLUSH, 0, length), "composed command flush"));
+  run->command = (amdf_xdna_kernel_command_t){
+      .memory = values[slot].memory, .byte_length = length};
+  return iree_ok_status();
+}
+int hrx_fabric_xdna_command_replace(hrx_fabric_xdna_program* run,
+    const uint8_t* bytes, size_t length) {
+  return hrx_fabric_status(replace_command(run, bytes, length));
+}

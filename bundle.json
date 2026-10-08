@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "target": "x86_64-unknown-linux-gnu-gfx1151",
-  "revision": "HRX fbbf300312; fix retained value-domain arena lifetime; Ubuntu 26.04",
-  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20260929-fbbf300312-fix1/hrx-linux-x86_64-gfx1151.tar.gz",
-  "archive_sha256": "57fa0d8509b7b495076feb7556edfb80e92829eb0b832788ce663e0758d60d68",
+  "revision": "HRX 7e9c7bbd5e; current Loom artifact API; Ubuntu 26.04",
+  "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20261008-7e9c7bbd5e/hrx-linux-x86_64-gfx1151.tar.gz",
+  "archive_sha256": "9cbc375dceb1bb93f45e141a5f2377293ee9596348c42488c1b23ba2e28298d3",
   "files": {
     "LICENSE-AMDGPU-ISA.txt": "4b58c86ef9b8f1be198079e5b62ea5c2bea0cc2f9187d21463a9c5e4ca75d69c",
     "LICENSE-CORE-MATH.txt": "4639ae96f455d387fd2b042ce11a2713ac3ee9bfc82591182683f4ee503be011",
@@ -15,12 +15,12 @@
     "LICENSE-Vulkan-Headers.txt": "1ca3502222d967f3be5751c55f6b7ee735b5383909c3b501495f54b216dbf227",
     "LICENSE-linux-gpl2-license.txt": "8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa",
     "LICENSE-linux-syscall-note.txt": "8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f",
-    "LICENSE-linux-uapi.txt": "aa58e02703c9fe5ddb9ff0a971db64f6f3a331fe9f855efb86ff0abeb6ecef3f",
-    "NOTICE": "d8098eaf9375bfb92436e26a2293ec4accb7a4db144ad8152692a2ee0f968831",
-    "THIRD-PARTY.json": "09026ec4894f407f1f96123ae0c26d22c160e6944c217bb01588cfef2870561d",
-    "libamdf.so": "a535883a40639339e89fd6c6e5e8c4937e31cda7bfd12b859e03b550f98b133d",
-    "libhrx_fabric.so": "96e0482d466a06eab19c392fde3de4d307bbe49b23e0065459f7df917e3cea28",
-    "libloomc.so": "02c418c6c1f0b1eec5b13ffd0f44afdef64d5fc36278d1c2e1c7f06bdd4a9e93",
-    "provenance.json": "7e575066feeeb443ffd563a8876fabd610906137c9bc6f04282dfc1019af2656"
+    "LICENSE-linux-uapi.txt": "92152ba337f60157525215efd807599fb813c97045eabf0594924db88d6bab79",
+    "NOTICE": "38f59409b2f54920e711bc038b8bd7d9e241e140553db933ff1f9e1eac3e15f2",
+    "THIRD-PARTY.json": "23b42e0818a7205bf64b6954ae2bd548ae710fc3aa223e49f463226c03292a37",
+    "libamdf.so": "8a3b242b4a73c5755b2b62ae0cbb6ffc899926f1a2a779aeec67943246174bb5",
+    "libhrx_fabric.so": "b09ff481c1ed454d07fdc58e877bd4be01d8bf344bf50a785474de6661583d40",
+    "libloomc.so": "8c7fa6ab9f7ecf0eaf53b7095e3d3eab458ee7868d2a442f5bb58d4049cd3ee7",
+    "provenance.json": "c7c68db6aa231644872370d1cff1947148aeaa5fa624716ee56bcf75d6802d16"
   }
 }
