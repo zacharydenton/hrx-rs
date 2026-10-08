@@ -274,8 +274,10 @@ fn run_exchange(registered: bool, aql: bool) -> hrx::Result<()> {
             let mut final_npu = [0; 64];
             terminal.read(0, &mut final_npu)?;
             let terminal_words: Vec<_> = final_npu
-                .chunks_exact(4)
-                .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|v| u32::from_le_bytes(*v))
                 .collect();
             if abort == 1 {
                 assert!(terminal_words.iter().all(|v| *v == 0));

@@ -775,8 +775,8 @@ kernel.def target(@target) @check_lanes() {{
             if wave == 32 {
                 let mut first_wave = [0; 128];
                 output.read(0, &mut first_wave)?;
-                for word in first_wave.chunks_exact(4) {
-                    assert_eq!(word, 9u32.to_le_bytes());
+                for word in first_wave.as_chunks::<4>().0 {
+                    assert_eq!(*word, 9u32.to_le_bytes());
                 }
             }
         }

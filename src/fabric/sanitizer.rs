@@ -535,7 +535,7 @@ fn parse_sites(bytes: &[u8]) -> Result<BTreeMap<u64, SanitizerSite>> {
     }
     let strings = region(bytes, u32_at(bytes, 12)?, u32_at(bytes, 16)?)?;
     let payload = region(bytes, u32_at(bytes, 20)?, u32_at(bytes, 24)?)?;
-    for row in bytes[32..table_end].chunks_exact(48) {
+    for row in bytes[32..table_end].as_chunks::<48>().0 {
         let flags = u32_at(row, 8)?;
         let source = flags & 2 != 0;
         let source_name = source
