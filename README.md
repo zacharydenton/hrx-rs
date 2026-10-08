@@ -1,37 +1,100 @@
 # hrx-rs
 
-**GPU and NPU compute from Rust—no PyTorch or ROCm SDK installation.**
+Rust APIs for AMD GPU and NPU execution, with an in-process
+[Loom](https://github.com/ROCm/hrx-system) compiler.
 
-Write GPU kernels in [Loom](https://github.com/ROCm/hrx-system), compile them
-inside your application, and run them through [HRX](https://github.com/ROCm/hrx-system).
-Add the crate with Cargo; the runtime and compiler download automatically on
-first use, with pinned versions and verified hashes. GPU execution and Loom
-compilation need no Python environment, HIP headers, or `hipcc`.
+Cargo builds need no native SDK. On first use, HRX downloads a pinned,
+hash-verified bundle containing the runtime and compiler. The host supplies
+Linux drivers and system libraries.
 
-The unified native bundle contains **libamdf, Loom, and the executable bridge**.
-It compiles and executes GPU and NPU programs without a vendor SDK or external
-compiler toolchain. Native libraries download only on first use.
+Supported hardware is AMD Strix Halo (`gfx1151`) and its NPU
+(`amd.xdna.strix_halo.17f0_11`) on Linux x86_64. The native bundle is built on
+Ubuntu 26.04 and requires glibc 2.43 or newer.
 
-- **Build with Cargo:** no GPU SDK, C++ compiler, or native-library download at build time.
-- **Compile and reuse:** Loom kernels compile in process and share a verified disk cache across applications.
-- **Control execution:** owned buffers, ordered streams, events, and reusable graphs keep data and work on the device.
-- **Use the NPU too:** compile and run native XDNA programs in process, and coordinate GPU/NPU work through one API.
+## Quick start
 
-Tested on **AMD Strix Halo (`gfx1151`)**, on Linux x86_64. The host supplies the
-kernel drivers and compatible system libraries; see [requirements and setup](#cli-and-native-setup).
-The qualified NPU target is `amd.xdna.strix_halo.17f0_11`. Native device admission
-rejects other profiles. Ubuntu 26.04 is the distribution baseline.
+Requires Rust 1.91 or later. The package is `hrx-rs`; the Rust crate and CLI are
+named `hrx`.
 
-The package is `hrx-rs`; Rust imports and the primary CLI use `hrx`.
-Native licenses, source provenance, and rebuild instructions are documented in
-[THIRD-PARTY.md](THIRD-PARTY.md).
+```toml
+[dependencies]
+hrx = { package = "hrx-rs", version = "0.10.0" }
+```
 
-## Project showcase
+```rust,no_run
+fn main() -> hrx::Result<()> {
+    let mut stream = hrx::Stream::open()?;
+    let buffer = stream.allocate(4096)?;
+    stream.upload(buffer.binding(), &[7; 4096])?;
+    let readback = stream.read(buffer.binding())?;
+    assert_eq!(readback.wait(&mut stream)?, vec![7; 4096]);
+    Ok(())
+}
+```
 
-These projects use HRX and Loom on AMD Strix Halo for local generation,
-computer vision, and vector search. They depend on HRX; HRX has no Cargo
-dependencies on these model crates. Model-specific pipelines and benchmarks
-belong in downstream applications.
+`Device` selects a GPU, `Stream` orders work, and `Buffer` owns an allocation.
+Use `loom::Compiler` to compile kernels and `Stream::graph` to prepare reusable
+GPU work. `execution::Runtime` coordinates GPU/NPU graphs, shared buffers and
+completion futures. Add the `npu` Cargo feature for NPU execution.
+
+Loading native code, dispatching kernels and declaring memory-access contracts
+are unsafe operations. Callers must validate code, arguments and synchronization.
+
+## Install the CLI
+
+```sh
+cargo install hrx-rs --version 0.10.0 --locked --features npu
+hrx prepare
+hrx doctor
+```
+
+GPU execution requires the `amdgpu`/KFD driver, access to `/dev/kfd` and the
+render device, compatible C/C++ runtimes, and `libatomic`. NPU execution also
+requires the `amdxdna` driver and firmware. A ROCm SDK is not required.
+
+`hrx prepare` downloads the archive pinned in [bundle.json](bundle.json).
+APIs also provision it on first use. For offline installation, run
+`HRX_OFFLINE=1 hrx prepare native.tar.gz` with the matching archive.
+
+| Setting | Purpose |
+| --- | --- |
+| `HRX_RUNTIME_DIR` | Use a trusted local native-library directory; bypasses bundle verification |
+| `HRX_BUNDLE_MANIFEST` | Use a local bundle manifest for a mirror or custom build |
+| `HRX_OFFLINE` | Disable network provisioning when set |
+| `HRX_AMDF_LIBRARY` | Override `libamdf.so` |
+| `HRX_FABRIC_LIBRARY` | Override `libhrx_fabric.so` |
+| `HRX_LOOM_LIBRARY` | Override `libloomc.so` |
+
+Caches use `$XDG_CACHE_HOME/hrx`, or `$HOME/.cache/hrx` if the variable is unset
+or relative. The runtime lock uses `$XDG_RUNTIME_DIR`. Compiled kernels share a
+content-addressed cache across applications; each cache hit verifies the artifact
+hash. `hrx gc [DAYS]` removes unpinned bundles and kernels unused for DAYS
+(default 30).
+
+## Guides
+
+- [GPU execution and inference](docs/EXECUTION.md): streams, graphs, memory,
+  model composition and allocation budgets.
+- [Loom compilation](docs/COMPILER.md): targets, launch geometry, reports,
+  tracing and sanitizers.
+- [GPU/NPU execution](docs/GPU-NPU.md): shared memory, scheduling and examples.
+- [Native storage](docs/STORAGE.md): buffered/direct file I/O and read leases.
+- [Queue pool benchmarks](benchmarks/queue-pool/README.md): queue sizing and
+  reproduction commands.
+- [Native builds](native/RELEASE.md) and [compiler patches](patches/loom/README.md).
+- [API reference](https://docs.rs/hrx-rs) and [changelog](CHANGELOG.md).
+
+To run independent GPU and NPU work in one graph:
+
+```sh
+cargo run --release --features npu --example gpu_npu_parallel -- 16777216 1024 21 trace.json
+```
+
+The example checks a GPU vector transform and NPU matrix multiplication against
+CPU results, compares sequential and concurrent execution, and writes a
+Chrome/Perfetto trace. See the [GPU/NPU guide](docs/GPU-NPU.md#examples) for details.
+
+## Projects using HRX
 
 | Project | What it does |
 | --- | --- |
@@ -47,409 +110,8 @@ belong in downstream applications.
 | [![An enormous alien creature glides above a fjord and a small boat](https://raw.githubusercontent.com/zacharydenton/h3-hrx/master/docs/media/benchmarks/20260914/h3-i8.jpg)](https://github.com/zacharydenton/h3-hrx/blob/master/docs/media/benchmarks/20260914/h3-i8.mp4) | [![A figure on a basalt sea cliff beneath a ringed planet](https://raw.githubusercontent.com/zacharydenton/krea2-hrx/master/docs/images/planetrise.png)](https://github.com/zacharydenton/krea2-hrx#gallery) |
 | [Watch the 768p alien video](https://github.com/zacharydenton/h3-hrx/blob/master/docs/media/benchmarks/20260914/h3-i8.mp4) | [Explore the image gallery and prompts](https://github.com/zacharydenton/krea2-hrx#gallery) |
 
-h3 generates this five-second 768p clip with sound in **35 min 59 s** on Strix
-Halo. Complete native ComfyUI runs took **4 h 3 min 53 s** with default attention
-and **43 min 33 s** with built-in Comfy Kitchen INT8 attention: **6.78×** and
-**1.21×** h3 end-to-end speedups, respectively. h3 runs without the Python/PyTorch
-stack. See the [full comparison, videos, and memory measurements](https://github.com/zacharydenton/h3-hrx/blob/master/docs/benchmarks/20260914/README.md).
-
-The vision libraries also fit together: SCRFD supplies face landmarks to
-ArcFace for alignment and embeddings, while DINOv3 produces image vectors
-that an application can index with hrxdb.
-
-## GPU + NPU pipelines
-
-Run independent work on both devices at once:
-
-```sh
-cargo run --release --features npu --example gpu_npu_parallel -- 16777216 1024 21 trace.json
-```
-
-This [example](examples/gpu_npu_parallel.rs) combines a GPU vector transform
-with batched NPU matrix multiplication in one prepared graph. It checks both
-CPU references, compares sequential and concurrent completion times, and writes
-a Chrome/Perfetto trace of host-observed device activity. Setup and host data
-transfers are excluded from the timings; speedup depends on the workload.
-
-The coordinated API is `hrx::execution`: owned shared buffers, checked kernel
-contracts, inferred dependencies, reusable GPU/NPU graphs, and completion handles
-that support blocking waits and Rust `Future`. `hrx::gpu` exposes the existing
-low-level GPU API. Enable `npu` for native XDNA execution; Cargo builds need no native tools.
-
-`execution::Runtime` runs at most one region per upload, compute, download and
-NPU lane, even across independent graphs. Independent lanes can overlap when
-the hardware permits; memory hazards remain ordered across every lane.
-Increasing `RuntimeOptions::max_submissions` raises queue capacity only. The low-level
-`gpu::Stream::graph` API batches independent dispatches and inserts dependency barriers.
-
-See [the GPU/NPU guide](docs/GPU-NPU.md) for the trust boundary, host mapping guards,
-shared native runtime setup, compiler pinning, and runnable hardware validation.
-The unified bundle includes both native device backends.
-
-
-## Use from Rust
-
-Requires Rust 1.91 or later.
-
-```toml
-[dependencies]
-hrx = { package = "hrx-rs", version = "0.10.0", features = ["npu"] }
-```
-
-```rust,no_run
-fn main() -> hrx::Result<()> {
-    let mut stream = hrx::Stream::open()?;
-    let buffer = stream.allocate(4096)?;
-    stream.upload(buffer.binding(), &[7; 4096])?;
-    let readback = stream.read(buffer.binding())?;
-    assert_eq!(readback.wait(&mut stream)?, vec![7; 4096]);
-    Ok(())
-}
-```
-
-`Device` selects a GPU, `Stream` orders work, and `Buffer` owns an allocation.
-Streams share up to eight native queues per device by default, so native queue
-capacity does not limit the number of streams. Each stream stays on one queue to
-preserve its order. Assignment is round-robin, without priority or load awareness:
-a long kernel or event wait can delay other streams assigned to that queue.
-To tune this tradeoff, call `device.set_stream_queue_count(count)?` before
-creating its first stream. The positive count is shared by clones and reopened
-handles to the live device; `device.stream_queue_count()?` reads it. Queues are
-created lazily, and an excessive count can still exhaust native queue resources.
-See the [queue pool measurements](benchmarks/queue-pool/README.md) for throughput
-and latency comparisons, their limitations, and the reproducible benchmark.
-A buffer is bound to its device, not to the stream that allocated it: any stream
-on that device may use it, and `record_event`/`wait_event` order conflicting
-access. Unordered cross-stream use yields whichever bytes the device held.
-Dispatches, fills and copies take `&self`; only staging-backed transfers and
-synchronization need `&mut`. `Kernel` is `Clone`, retaining the executable.
-Transfers, fills, copies and dispatch bindings use `View`. Borrow a whole buffer
-with `buffer.binding()` and a subregion with `view.slice(offset, length)?`.
-`upload` queues a transfer through owned staging; `upload_blocking` waits for it.
-For immutable weights, `stream.allocate_from(bytes)` creates an owned copy and
-publishes it directly from the host. Fresh backing is initialized in one pass,
-without zeroing and flushing it before writing the data. The slice must be
-nonempty; allocation budgets and safe reuse of pooled storage still apply.
-Ordinary GPU buffers use cacheable system memory; stream transfers perform the
-required host cache maintenance. For direct host pointers, use
-`allocate_shared` with external synchronization, or call `Buffer::cache_control`
-before host reads and after host writes on ordinary allocations.
-
-Events coordinate streams. `Stream::graph` records work as a dependency graph:
-each operation names its predecessors, and `&[]` starts an independent branch.
-Pass branch endings directly to their consumer. `join` collects dependencies
-in an empty node, which adds a native partition and queue barrier. The runtime
-can batch independent nodes without intervening barriers; the graph's shape
-and GPU resource use determine whether execution overlaps. Loading kernels,
-dispatching them, and sharing buffers across streams are unsafe: callers must
-validate code, arguments, memory access, and synchronization.
-
-`Stream::owned_graph` creates a recording that owns the execution domain and
-prepares each command immediately, without executing it. Buffer and kernel
-wrappers may be dropped after recording a command; the graph retains their
-native resources and allocation charges through replay. Pooled storage still
-needs explicit lifetime and ordering control: native retention prevents freeing
-backing, but does not prevent a pool from reusing it. `Graph::binding_bytes`
-reports the distinct bound allocation bytes.
-
-When dependencies follow buffer hazards rather than an application-specific
-schedule, use `Stream::access_graph`. Each dispatch binding declares
-`read()`, `write()`, or `read_write()` and HRX infers the minimal byte-range
-frontier. `BufferPool` provides bounded best-fit reuse for temporary device
-allocations; a returned `PooledBuffer` recycles its allocation on drop.
-
-`hrx::loom::Compiler` compiles Loom in process and caches artifacts.
-`Compiler::for_stream` and `Compiler::for_target` select and share the matching
-compiler profile.
-`Compiler::compile_all` runs a batch across `CompilerOptions::workers`
-workspaces and returns results in request order; `Module::compile` is blocking,
-so a single-threaded caller never reaches that bound on its own. Compiler setup
-and source pins are in [patches/loom](patches/loom/README.md).
-
-AMDGPU artifacts include an executable manifest and a serialized host launch
-program. `artifact.launch_program(artifact.symbol())?` binds an exact export;
-`evaluate(&workload_bits)` returns compiler-authored grid, workgroup, subgroup,
-cluster, and storage requirements. Workload arguments follow the kernel
-definition's signature and can differ from device scalar arguments.
-`Kernel::launch_config`, `ModelSession::launch_config`, and
-`ModelDefinition::launch_config` evaluate and validate these requirements during
-preparation. Each evaluator owns exclusive scratch and retains its native library.
-
-`hrx compile` accepts `--manifest-output=FILE`, `--launch-output=FILE`, and
-`--trace-output=FILE --trace-format=jsonl`. Trace filters use repeated
-`--trace-before=PATTERN` / `--trace-after=PATTERN`; `--trace-max-bytes=N`
-bounds output. Tracing runs compilation even on a cache hit. Diagnostics own
-formatted source context and named parameters; failed compilations retain any
-native report via `Error::compiler_report`. Detailed reports expose structured
-source-to-low expansion selections through `CompileReport::expansions`.
-
-`CompilerOptions::sanitizer` selects access, value, operation, and race checks,
-with native default, trap, or report-only behavior. CLI equivalents are
-`--sanitizer=access,value,operation,race` and `--sanitizer-reporting=trap`.
-Instrumentation has its own compiler and artifact identities. Address/value/operation
-reports and workgroup-local race checks are available through
-`Device::load_sanitized` on AQL, or through
-`Runtime::load_sanitized_gpu_artifact` with the AQL compute engine. Use report-only
-instrumentation, wait for execution completion, then call `sanitizer_reports()`
-on the loaded kernel. Reports own their source/predicate metadata; collection
-drains the channel, and reports beyond its fixed capacity increment `dropped`.
-The channel remains alive through prepared and pending work and is charged to
-the supplied memory budget. Collection returns `Busy` while native work remains
-pending. A report marks a failed native check; it does not make arbitrary code
-safe or prove outputs valid. Race reports include both access sites, access widths,
-addresses, and workitem coordinates. Each prepared AQL dispatch owns bounded
-shadow storage for its actual grid and compiled LDS requirement; ordered GPU
-clears reset it before replay. `SanitizerRuntimeOptions::maximum_shadow_bytes`
-limits combined address/race shadow storage, and the supplied budget also
-covers private instrumented code. Race checking covers workgroup-local memory,
-not global memory or races
-between queues. Address checks cover complete bound allocations and executable
-storage, with partial allocation tails and gaps poisoned. Allocation starts must
-be 8-byte aligned; preparation rejects address spans whose shadow exceeds the
-configured limit. Slice boundaries inside an allocation are not separate address
-limits, and pointers to undeclared allocations remain poisoned. The current
-compiler masks out-of-window shadow loads, including wrapped and wide accesses.
-Ordinary loading also rejects artifacts
-requiring a feedback channel instead of leaving their configuration disabled.
-
-`fabric::Endpoint::queue_capabilities` exposes native queue families;
-`hrx doctor` prints them. `Device::sdma_queue` prepares native transfers,
-including unaligned copy/fill tails and cross-queue PM4/SDMA waits.
-`execution::RuntimeOptions::copy_engine = CopyEngine::Sdma` selects SDMA for
-copy-only graph regions. Memory must qualify for that queue; coherent backing
-from `Fabric::allocate_shared` is supported on the tested provider.
-
-`Device::aql_queue(maximum_private_bytes)` creates a directly published AQL v1
-queue with fixed scratch allocated at creation. Prepared dispatches retain code,
-kernargs, scratch and payloads through execution completion. Set
-`RuntimeOptions::compute_engine = ComputeEngine::Aql { maximum_private_bytes: 0 }`
-to prepare explicit GPU graph nodes on AQL. Mixed PM4/AQL/SDMA regions use checked
-host completion for dependency edges. Scratch, arguments, publication storage,
-and signals retain their runtime budget charges through retirement or quarantine.
-Native XDNA programs admit up to 128 pending invocations with the same immutable
-bindings. Fabric completion `is_complete` reads cached retirement;
-`refresh` observes device progress and retires leases, and `wait` drives progress.
-The higher-level stream event APIs continue to poll when queried.
-
-`fabric::ResidentSession` owns one prepared GPU invocation and one immutable
-XDNA invocation. Submit both in either order, publish RUN once, and join both
-native completions. `ResidentStartup` supplies a separate coherent startup
-allocation; pre-start ABORT lets an accepted participant retire without its peer.
-`XdnaProgram::wrap_transaction` retains additional DMA backing while composing
-trusted native records around the original compiler command. Payload allocations
-and program release/acquire operations must meet the native directional memory
-contracts. Timeouts retain ownership; they do not cancel running device work.
-
-On Linux, `fabric::StorageRing` registers fixed regular files and an owned payload
-from `Fabric::allocate_registered`. Open the fabric with
-`Fabric::resolve_with_lifetime(NativeLifetime::Process)` for KFD host registration;
-this retains and reuses the native process provider until exit.
-The ring uses caller-owned SQ/CQ pages, SQPOLL and fixed-file restrictions.
-Its returned layout distinguishes CPU payload addresses used by Linux from GPU
-addresses used by the program. `StorageExecution` owns the dispatch, files,
-registered pages and budget charges until both GPU and kernel I/O retire. Waits
-wake idle SQPOLL; the GPU authors requests and consumes completions. Trusted
-programs must handle ring capacity, partial/error completions and final drain.
-Application paging and cache policy remain with the caller.
-
-`Buffer::visibility(producer, consumer)` describes directional reach,
-release/acquire actions, and width-specific atomic scopes for concrete native
-sites. The returned object retains backing and can execute qualified host
-transitions. `Fabric::allocation_profiles` queries the complete device set before
-allocation; each profile provides prospective visibility and constructs backing
-with that exact profile. These plans cover allocation, not registration or
-external imports. `prepare_release_host` and `prepare_acquire_host` merge ranges
-once and retain executable host cache work. Execution ordering remains separate. `Fabric::load_with_lifetime`
-selects the native instance/process lifetime before device activation.
-
-Resident inference libraries can use `hrx::model::ModelSession` instead
-of rebuilding the same buffer arena and graph cache. It compiles a trusted batch
-of embedded kernels, owns device-local or coherent allocations, infers graph
-dependencies from each binding's declared `Read`, `Write`, or `ReadWrite`
-access, reuses combined readback storage, and compares graph replay with direct
-dispatch. Regions and kernel IDs are session-scoped and checked. Compiling
-native source and recording its memory-access contract are explicit `unsafe`
-boundaries; model parsing and shape validation remain application concerns.
-
-For shared-context pipelines, `hrx::inference::ModelContext` owns the allocation,
-compiler and scheduling domain. `ModelSession::freeze` produces immutable shared
-weights/code; `ModelDefinition::prepare` creates bounded private inference slots.
-Owned `DeviceTensor` views carry checked metadata, producer completions and slot
-leases, so downstream consumers cannot observe recycled output storage.
-
-For a composed pipeline, validate each stage with `ModelDefinition::fragment`
-and call `ModelFragment::record` on the same `execution::Graph`, passing one
-stage's output tensors directly to the next. Prepare that graph once. Adjacent
-GPU stages become one native graph without intermediate copies or submissions.
-Image normalization, patchification, resize, affine sampling, RGB views and
-compositing, similarity fitting and finite-value checks also expose recordable
-fragments. `PreparedModel::prepare` takes a slot
-factory returning `InferenceGraph { inputs, outputs, graph }`: each slot owns
-the actual pipeline bindings, including sliced or in-place IO. Host transfer
-storage is allocated on first upload/readback and reused thereafter; device-only
-pipelines allocate none. Independent slots must not share writable IO.
-
-Audited fragments can opt into `reuse_private_scratch`: private activation
-storage is reused across stages in the same graph, while outputs, inputs and
-weights remain distinct. The fragment must initialize every temporary byte it
-reads; the graph's memory hazards order reuse after earlier readers. Independent
-slots never share this workspace. `ModelSlot::submit_host_with` publishes packed
-host inputs directly into reserved staging without an extra host assembly buffer.
-
-`TensorOps::linear` provides a decode projection for contiguous BF16 `[1, K]`
-inputs and `[N, K]` weights, with K divisible by 128 and BF16 or F32 output.
-`linear_many` combines up to three projections in one dispatch, useful for Q/K/V
-and gate/up; `linear_fragment` records it in an inference graph. These operations
-use the same bounded prepared-plan cache and output leases as other tensor ops.
-They cover single-row decoding; larger matrix products remain caller-provided.
-
-Shared operations need not all execute on the GPU. `TensorOps::gather_rows`
-accepts checked host-selected indices while keeping complete rows on-device.
-It preserves dtype bits, duplicates and order, uses bounded power-of-two shape
-caches, and retains private output slots through returned tensor views. This
-supports CPU sorting/selection between GPU stages without a full tensor readback.
-`PreparedModel` supports device submissions, reusable host staging, capacity
-futures and explicit readback. Upload, compute and download lanes share hazard
-tracking. `Graph::gpu_scoped` integrates owned native clients at an audited boundary.
-For stream-bound models with borrowed inputs and progress callbacks,
-`execution::NativeSession` reserves the shared compute lane on the calling thread.
-Its stage boundary fences errors and panics, quarantines owners on uncertain
-completion, and records host-observed latency without copying host inputs.
-It uses private storage; tracked-buffer integrations use `Graph::gpu_scoped`.
-It does not turn a synchronous stage into asynchronous inference or split that
-stage's native transfers onto separate lanes.
-
-`hrx::image` provides resident RGB normalization, patchification, and FP32 affine
-RGB sampling with black borders and ties-to-even byte rounding. Affine plans
-accept one resident image and runtime inverse matrices for multiple crops;
-prepared plans and private slots are reused across changing matrices.
-`PlanCache` bounds concurrent shape preparation with idle-only LRU eviction;
-the opt-in `ResidencyManager` adds declared byte budgets and persistent pins.
-`load_budgeted` caches units whose native allocations hold their own charges,
-allowing private workspace growth while leased and idle-only LRU eviction.
-Passing its `budget()` to `RuntimeOptions::memory_budget` charges tracked weights,
-scratch and transfer staging against the same ceiling before allocation. Aliases,
-queued work and quarantined storage retain those charges. Native storage outside
-the coordinated runtime is covered when its stream uses `with_memory_budget`.
-NPU kernels loaded through that runtime also charge their instruction buffers.
-NPU storage uses the tracked runtime budget; imported shared storage retains
-the backing owner's charge without double counting.
-`ModelSession::in_context` applies that policy during native loading as well;
-freezing into the same budget does not charge weights twice. Otherwise adopted
-buffers are charged only at adoption. Do not declare the same bytes twice in a
-cached resource and its budgeted allocations. Requested buffer extents exclude
-native allocator rounding and compiler/code-object memory.
-Runtime statistics include transfer bytes and live/peak tracked memory. Optional
-bounded traces and completion profiles measure **host-observed latency**, not GPU
-timestamps.
-
-`hrx::artifacts` contains the common model-file boundary. `hf::Resolver` checks
-the standard Hugging Face cache before downloading and supports pinned revisions,
-offline operation, progress policy, and SHA-256 verification. `onnx::Model`
-provides owned graph indexes and checked attributes/tensor decoding without
-exposing protobuf types. `safetensors::FileView` reads or memory maps a file,
-indexes checked tensor ranges, and provides page-advice hooks for large models.
-These dependencies are always available; they are not split behind features.
-
-Two different things are called the target, and they are chosen independently.
-The **profile** target is `hrx::Target` — the architecture a device reports and
-the one the compiler emits for. It is a bare architecture key such as `gfx1151`;
-`Target::new` rejects generic names. The **source-level** target is what Loom
-source writes as `amdgpu.target<...>`, which does accept generic names such as
-`gfx11-generic` and compiles fine under a bare profile. A generic source target
-has no low-asm contract, so hand-written asm needs a bare architecture there
-too.
-
-## Native storage
-
-Linux `storage::StorageSession` owns a GPU-authored io_uring queue, retained file
-handles, a service thread, and a bounded pool of registered system pages. Select
-`NativeLifetime::Process` when opening the stream or runtime:
-
-```rust,no_run
-# fn main() -> hrx::Result<()> {
-use hrx::{fabric::NativeLifetime, storage::{StorageConfig, StorageSession}};
-let device = hrx::Device::open_with_lifetime(0, NativeLifetime::Process)?;
-let mut stream = device.stream()?;
-let file = std::fs::File::open("checkpoint.bin")?;
-let storage = StorageSession::new(&stream, &[file], StorageConfig::default())?;
-let ticket = storage.read(0, 0, 4096)?;
-let output = stream.allocate(4096)?;
-let mut transfer = ticket.wait()?.copy_to(&mut stream, output.binding())?;
-transfer.wait()?;
-# Ok(()) }
-```
-
-The default pool is four 16 MiB slots with 64 native SQ entries. Identical retained
-reads share a slot; tickets and consumers keep it unavailable for reuse. A full
-pool returns `Error::Busy`. Payloads, ring pages, metadata and commands use the
-stream's allocation budget. Timed-out native work retains its owners and charges.
-Session drop drains accepted requests. The first I/O failure stops new issuance.
-
-Choose `StorageMode::Buffered` or `Direct` explicitly. Direct mode requires
-filesystem-reported `STATX_DIOALIGN`; enclosing reads hide alignment padding,
-while writes require aligned offsets and lengths. Unsupported direct I/O fails.
-`StorageProgress::Sqpoll` uses the kernel poller; `Wait` services deferred work on
-the dedicated thread through eventfd. Write completion does not imply durability.
-Host access can return Busy while the registered allocation has device use.
-This path transfers through GPU-visible system pages; it is not NVMe-to-VRAM peer
-DMA. It requires the native Linux io_uring features supported by the bundle.
-
-Set `StorageConfig::statistics` for host-observed queue, completion and service CPU
-intervals. Counters distinguish logical reads, shared requests, physical requests,
-and peak retained slots. `FileView::file_range` resolves tensor subranges to a
-retained descriptor and absolute offset without faulting mapped tensor data.
-
-## CLI and native setup
-
-GPU execution requires Linux x86_64, the AMD `amdgpu`/KFD kernel driver,
-the system C/C++ runtimes and `libatomic`, and access to `/dev/kfd` and the render
-device. You do not need a system ROCm SDK or PyTorch installation: HRX supplies
-its own pinned native runtime and the Loom compiler.
-
-Install the CLI, including optional NPU support:
-
-```sh
-cargo install hrx-rs --version 0.9.0 --locked --features npu
-hrx prepare
-hrx doctor
-```
-
-`hrx prepare` downloads and verifies the unified archive pinned in
-[bundle.json](bundle.json). GPU, compiler, and NPU APIs also provision it on first
-use. For offline installation, run `HRX_OFFLINE=1 hrx prepare native.tar.gz`
-with the matching archive. Linux drivers, firmware, and permissions remain host
-prerequisites. The bundle targets Ubuntu 26.04, requiring glibc 2.43+ and compatible
-C/C++ runtimes. See [the native setup guide](docs/GPU-NPU.md#native-setup).
-
-| Setting | Purpose |
-| --- | --- |
-| `HRX_RUNTIME_DIR` | Use a trusted local directory of native libraries, bypassing bundle verification |
-| `HRX_BUNDLE_MANIFEST` | Use a local JSON manifest for a mirror or custom bundle |
-| `HRX_OFFLINE` | Disable network provisioning when set |
-| `HRX_AMDF_LIBRARY` | Override the path to `libamdf.so` |
-| `HRX_FABRIC_LIBRARY` | Override the path to `libhrx_fabric.so` |
-| `HRX_LOOM_LIBRARY` | Override the path to `libloomc.so` |
-
-Caches live at `$XDG_CACHE_HOME/hrx`, or `$HOME/.cache/hrx` when that is unset,
-per the XDG Base Directory specification; a relative `XDG_CACHE_HOME` is ignored
-as the specification requires. The runtime lock lives in `$XDG_RUNTIME_DIR`.
-
-Compiled kernels go to one cache under that root, shared by every consumer on the
-machine. Artifacts are content-addressed — the key covers compiler identity,
-source, export, target and canonical configuration, and every hit re-verifies the
-bytes against their recorded digest — so there is nothing a per-model location
-could distinguish, and two models that compile the same kernel compile it once.
-`hrx gc [DAYS]` evicts runtime bundles `bundle.json` does not pin and kernels not
-read for DAYS (default 30), by access time, so entries written by any release are
-dated the same way.
-
-The only optional Cargo feature is `npu`, enabling NPU execution
-and cross-device probes. GPU execution, Loom compilation, downloads and the
-`hrx` CLI are always available; native libraries still load only on first use.
-`HRX_OFFLINE=1` controls offline provisioning independently of Cargo features.
-The CLI's `run` subcommand launches a compiled kernel and dumps its buffers.
-`Stream` is the execution API; dispatch takes explicit `Constants`.
+See H3's [generation benchmark](https://github.com/zacharydenton/h3-hrx/blob/master/docs/benchmarks/20260914/README.md)
+for timings, memory use and a ComfyUI comparison.
 
 ## Development
 
@@ -459,7 +121,8 @@ cargo clippy --all-features --all-targets -- -D warnings
 cargo doc --all-features --no-deps --open
 ```
 
-Use `scripts/check-feature-matrix.sh` for feature checks. See
-[CHANGELOG.md](CHANGELOG.md) for API changes and [THIRD-PARTY.md](THIRD-PARTY.md)
-for native distribution status. Original Rust code is [MIT licensed](LICENSE); NPU-derived code retains its
-[upstream licenses](THIRD-PARTY.md).
+Run `scripts/check-feature-matrix.sh` for feature checks. Hardware test commands
+are in the device and storage guides.
+
+Original Rust code is [MIT licensed](LICENSE). Native component licenses and
+source provenance are listed in [THIRD-PARTY.md](THIRD-PARTY.md).

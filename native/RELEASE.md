@@ -1,4 +1,4 @@
-# Unified native release
+# Building the native bundle
 
 The native archive contains `libamdf.so`, `libhrx_fabric.so`, and `libloomc.so`.
 All three are built from the pinned HRX source on Ubuntu 26.04. GPU execution
@@ -7,12 +7,11 @@ Loom and explicitly supplied C23/C++26 translation units in process.
 
 `release-inputs.json` records every upstream download, the compiler patch set,
 the native build, queue and cache-policy patches, and the Ubuntu image digest. The upstream tree
-also pins its build dependencies. `provenance.json` records bridge source hashes,
+pins its build dependencies. `provenance.json` records bridge source hashes,
 compiler version, CMake cache hash, and library hashes. OS package versions are
-included with the rebuild sources. This is source provenance, not a claim of
-bit-for-bit build reproducibility.
+included with the rebuild sources. Rebuilds may produce different binary hashes.
 
-The qualified profiles are Linux x86_64 gfx1151 and
+Supported profiles are Linux x86_64 gfx1151 and
 `amd.xdna.strix_halo.17f0_11`. Host requirements are glibc 2.43 or newer,
 compatible libstdc++/libgcc, amdgpu/KFD and amdxdna drivers, firmware, and device
 permissions. The bundle ships no HSA/ROCr, XRT, IRON, or Python runtime.
@@ -33,7 +32,7 @@ python3 scripts/stage-native-release.py --work artifacts/native-release \
 cargo run --release --bin hrx -- pack artifacts/native-release/stage-amdf \
   artifacts/native-release/output \
   https://github.com/zacharydenton/hrx-rs/releases/download/native-20261008-7e9c7bbd5e/hrx-linux-x86_64-gfx1151.tar.gz \
-  'HRX 7e9c7bbd5e; current Loom artifact API; Ubuntu 26.04' gfx1151
+  'HRX 7e9c7bbd5e; Ubuntu 26.04' gfx1151
 ```
 
 The container build defaults to two jobs and an 8 GiB memory limit, with no
@@ -41,9 +40,8 @@ additional swap allowance. `HRX_BUILD_JOBS` and `HRX_BUILD_MEMORY` override thes
 limits. The job count is passed into the container. Direct `build-amdf.sh` builds
 also default to two jobs; apply an external memory limit when building on the host.
 
-The build enables the task driver declarations required by upstream's shared
-compiler ABI-layout libraries, while the distributed bridge continues to use
-native libamdf GPU and XDNA execution.
+The build enables task driver declarations needed by the compiler ABI-layout
+libraries. The bridge uses libamdf for GPU and XDNA execution.
 
 The source archive contains upstream inputs, local patches, the native bridge,
 license texts, and rebuild scripts. To rebuild from the archive, extract it,

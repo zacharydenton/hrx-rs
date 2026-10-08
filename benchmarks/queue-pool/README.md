@@ -47,8 +47,7 @@ have disjoint source and destination buffers, and a 64-byte output prefix is che
 
 The benchmark retains sixteen empty streams to keep all pool queues alive for
 all cases. The sixteen-queue case gives each of the sixteen active streams its
-own queue. This is a comparison of queue counts within the new implementation,
-not a before/after benchmark of the previous implementation.
+own queue. Each case measures the same implementation with a different queue count.
 
 ## Recorded environment
 
@@ -65,17 +64,9 @@ scheduling are not pinned; small differences should not be treated as decisive.
 
 ## Results and default
 
-The default is **eight queues**. This is a measured compromise for gfx1151, not
-a hardware-derived or universally optimal value. The evidence is provisional:
-the benchmark completed at 19:49:15, and the machine suffered a system-wide OOM
-at 19:50:47 during subsequent validation. The kernel reported about 80 GiB of
-active GPU memory while several linker processes were running. Ownership of that
-GPU memory was not established, and memory pressure during these measurements
-was not recorded. These runs therefore do not establish uncontended performance.
-They also precede the subsequent timeline-lock fix, which has not been
-rebenchmarked after the OOM.
-GPU tests were stopped; subsequent CPU validation uses one build job in a 4 GiB
-memory-limited scope with swap disabled for that scope.
+The default is **eight queues**. These measurements predate the timeline-lock
+fix. Memory pressure was not recorded, and the host ran out of memory shortly
+afterward. Rerun the benchmark before using these numbers to tune current builds.
 
 The table uses the median of
 three per-process summaries; p95 columns are medians of the three per-run p95s,
@@ -99,8 +90,7 @@ creates only one queue regardless of the configured maximum.
 
 Run-to-run variation is substantial: concurrent throughput ranged from
 1.24–1.92 Mcommands/s with four queues, 1.51–2.18 with eight, and 1.97–2.25 with
-sixteen. Eight did not outperform four in every repetition. These results support
-the default as a practical starting point, not a guaranteed speedup. Bulk-loaded
+sixteen. Eight did not outperform four in every repetition. Bulk-loaded
 latency stayed around 22 ms for all sizes: increasing the pool does not remove
 contention for the GPU and memory bandwidth. Benchmark the actual workload when
 choosing an override, especially for compute-heavy kernels or a different GPU.
