@@ -108,6 +108,7 @@ pub struct PreparedAql {
     work: Arc<Work>,
     packets: Vec<[u32; 16]>,
     next: Arc<Mutex<u64>>,
+    storage_bytes: usize,
 }
 /// A native AQL execution completion retaining code, arguments and payloads.
 #[derive(Clone)]
@@ -475,6 +476,17 @@ impl AqlQueue {
         buffers.extend([kernarg, publication]);
         buffers.sort_by_key(Buffer::identity);
         buffers.dedup_by(|a, b| a.same_backing(b));
+        let storage_bytes = signal.len()
+            + buffers
+                .iter()
+                .filter(|buffer| {
+                    !arguments.iter().any(|argument| {
+                        matches!(argument,
+                Argument::Buffer(bound, _) if buffer.same_backing(bound))
+                    })
+                })
+                .map(Buffer::len)
+                .sum::<usize>();
         let leases = Mutex::new(Vec::with_capacity(buffers.len()));
         Ok(PreparedAql {
             queue: self.clone(),
@@ -488,10 +500,15 @@ impl AqlQueue {
             }),
             packets,
             next: Arc::new(Mutex::new(0)),
+            storage_bytes,
         })
     }
 }
 impl PreparedAql {
+    pub(crate) fn storage_bytes(&self) -> usize {
+        self.storage_bytes
+    }
+
     /// Publish prepared packets without allocating or growing scratch.
     /// # Safety
     /// Caller orders conflicting accesses on other queues and obeys the kernel contract.

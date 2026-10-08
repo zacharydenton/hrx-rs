@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.0 — Unreleased
+## 0.9.0 — 2026-10-08
 
 - Cache native manifests and verified launch-program companions with AMDGPU
   artifacts. Expose owned export evaluators, loaded-kernel/model launch geometry,
@@ -21,6 +21,10 @@
   Add owned AQL v1 dispatch with fixed scratch and instruction-cache publication,
   budgeted graph integration, prospective allocation-profile visibility and
   coalesced prepared host transitions.
+- Add `StreamOptions`, `Device::stream_with_options`, and `Runtime::stream`.
+  Native streams and recorded graphs honor PM4/AQL compute, compute/SDMA copies,
+  shared budgets, and bounded sanitizer storage. Preserve PM4 graph batching;
+  fence engine transitions and foreign events before dependent execution.
 - Admit 128 pending immutable XDNA invocations. Separate cached fabric completion
   inspection from explicit native progress/retirement.
 - Add owned resident GPU–NPU sessions with one-time startup, either submission

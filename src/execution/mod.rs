@@ -430,6 +430,20 @@ impl Runtime {
             storage: Arc::new(storage),
         })
     }
+    /// Create a native stream with this runtime's GPU, engines and allocation budget.
+    /// Callers coordinate its work through NativeSession or explicit completion boundaries.
+    pub fn stream(
+        &self,
+        sanitizer: Option<crate::fabric::SanitizerRuntimeOptions>,
+    ) -> Result<crate::Stream> {
+        crate::Device::open(self.options.gpu_index)?.stream_with_options(crate::StreamOptions {
+            compute_engine: self.options.compute_engine,
+            copy_engine: self.options.copy_engine,
+            memory_budget: self.options.memory_budget.clone(),
+            sanitizer,
+        })
+    }
+
     /// Observe allocation, transfer, and execution counters.
     pub fn statistics(&self) -> Statistics {
         self.inner.core.counters.snapshot()

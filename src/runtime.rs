@@ -19,9 +19,74 @@ pub struct ExportInfo {
     /// Required workgroup dimensions; zero means unconstrained.
     pub workgroup_size: [u32; 3],
 }
+/// Native engines and instrumentation fixed before a stream allocates or submits.
+#[derive(Clone, Debug, Default)]
+pub struct StreamOptions {
+    /// Protocol used for kernel dispatch and graph replay.
+    pub compute_engine: crate::execution::ComputeEngine,
+    /// Engine used for byte fills and copies.
+    pub copy_engine: crate::execution::CopyEngine,
+    /// Shared allocation ceiling, including AQL scratch and diagnostic storage.
+    pub memory_budget: Option<crate::residency::MemoryBudget>,
+    /// Requires AQL. Instrumented artifacts use this bounded report/shadow storage.
+    pub sanitizer: Option<fabric::SanitizerRuntimeOptions>,
+}
+#[derive(Clone)]
+enum Command {
+    Gpu(fabric::PreparedGpu, u8),
+    Aql(fabric::PreparedAql),
+}
+impl Command {
+    fn engine(&self) -> u8 {
+        match self {
+            Self::Gpu(_, engine) => *engine,
+            Self::Aql(_) => 2,
+        }
+    }
+    fn storage_bytes(&self) -> usize {
+        match self {
+            Self::Gpu(c, _) => c.storage_bytes(),
+            Self::Aql(c) => c.storage_bytes(),
+        }
+    }
+}
+#[derive(Clone)]
+enum Completion {
+    Gpu(fabric::Completion, u8),
+    Aql(fabric::AqlCompletion),
+}
+impl Completion {
+    fn engine(&self) -> u8 {
+        match self {
+            Self::Gpu(_, engine) => *engine,
+            Self::Aql(_) => 2,
+        }
+    }
+    fn refresh(&self) -> Result<bool> {
+        match self {
+            Self::Gpu(c, _) => c.refresh(),
+            Self::Aql(c) => c.refresh(),
+        }
+    }
+    fn wait(&self) -> Result<()> {
+        match self {
+            Self::Gpu(c, _) => c.wait(),
+            Self::Aql(c) => c.wait(),
+        }
+    }
+    fn wait_timeout(&self, timeout: std::time::Duration) -> Result<bool> {
+        match self {
+            Self::Gpu(c, _) => c.wait_timeout(timeout),
+            Self::Aql(c) => c.wait_timeout(timeout),
+        }
+    }
+}
 struct Inner {
     device: fabric::Device,
     queue: fabric::Queue,
+    aql: Option<fabric::AqlQueue>,
+    sdma: Option<fabric::Queue>,
+    sanitizer: Option<fabric::SanitizerRuntimeOptions>,
     timeline: StreamTimeline,
     free: Mutex<Vec<fabric::Buffer>>,
     dispatch_cache: Mutex<Vec<CachedDispatch>>,
@@ -30,10 +95,10 @@ struct Inner {
 #[derive(Default)]
 struct StreamTimeline {
     producer: Mutex<()>,
-    last: Mutex<Option<fabric::Completion>>,
+    last: Mutex<Option<Completion>>,
 }
 impl StreamTimeline {
-    fn submit(&self, dispatch: impl FnOnce() -> Result<fabric::Completion>) -> Result<()> {
+    fn submit(&self, dispatch: impl FnOnce() -> Result<Completion>) -> Result<()> {
         // Serialize publication without blocking observers while another stream
         // occupies the shared queue. Only published work enters the timeline.
         let _producer = self
@@ -47,7 +112,7 @@ impl StreamTimeline {
             .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))? = Some(done);
         Ok(())
     }
-    fn snapshot(&self) -> Result<Option<fabric::Completion>> {
+    fn snapshot(&self) -> Result<Option<Completion>> {
         Ok(self
             .last
             .lock()
@@ -56,8 +121,26 @@ impl StreamTimeline {
     }
 }
 impl Inner {
-    fn submit(&self, command: &fabric::PreparedGpu) -> Result<()> {
-        self.timeline.submit(|| unsafe { command.dispatch_wait() })
+    fn submit(&self, command: &Command) -> Result<()> {
+        self.timeline.submit(|| {
+            if let Some(previous) = self.timeline.snapshot()?
+                && previous.engine() != command.engine()
+            {
+                previous.wait()?;
+            }
+            match command {
+                Command::Gpu(c, engine) => {
+                    Ok(Completion::Gpu(unsafe { c.dispatch_wait() }?, *engine))
+                }
+                Command::Aql(c) => match unsafe { c.dispatch() } {
+                    Err(Error::Busy(_)) => {
+                        self.wait()?;
+                        Ok(Completion::Aql(unsafe { c.dispatch() }?))
+                    }
+                    result => result.map(Completion::Aql),
+                },
+            }
+        })
     }
     fn drain_for_drop(&self) -> bool {
         self.timeline.snapshot().ok().is_some_and(|last| {
@@ -75,7 +158,7 @@ impl Inner {
     }
 }
 impl Inner {
-    fn prepare_fill(self: &Arc<Self>, dst: View<'_>, value: u8) -> Result<fabric::PreparedGpu> {
+    fn prepare_fill(self: &Arc<Self>, dst: View<'_>, value: u8) -> Result<Command> {
         owns(self, dst.owner)?;
         let mut cache = self
             .transfer_cache
@@ -90,9 +173,15 @@ impl Inner {
         }) {
             return Ok(entry.command.clone());
         }
-        let command = self
-            .queue
-            .prepare_fill(&dst.owner.native, dst.offset, dst.length, value)?;
+        let command = Command::Gpu(
+            self.sdma.as_ref().unwrap_or(&self.queue).prepare_fill(
+                &dst.owner.native,
+                dst.offset,
+                dst.length,
+                value,
+            )?,
+            u8::from(self.sdma.is_some()),
+        );
         // Other streams may use this device-scoped allocation. Only cache when
         // its owning stream can evict the entry when the public buffer drops.
         if Arc::ptr_eq(&dst.owner.owner, self) {
@@ -110,7 +199,7 @@ impl Inner {
         }
         Ok(command)
     }
-    fn prepare_copy(self: &Arc<Self>, dst: View<'_>, src: View<'_>) -> Result<fabric::PreparedGpu> {
+    fn prepare_copy(self: &Arc<Self>, dst: View<'_>, src: View<'_>) -> Result<Command> {
         owns(self, dst.owner)?;
         owns(self, src.owner)?;
         if dst.len() != src.len() {
@@ -130,13 +219,16 @@ impl Inner {
         }) {
             return Ok(entry.command.clone());
         }
-        let command = self.queue.prepare_copy(
-            &dst.owner.native,
-            dst.offset,
-            &src.owner.native,
-            src.offset,
-            src.length,
-        )?;
+        let command = Command::Gpu(
+            self.sdma.as_ref().unwrap_or(&self.queue).prepare_copy(
+                &dst.owner.native,
+                dst.offset,
+                &src.owner.native,
+                src.offset,
+                src.length,
+            )?,
+            u8::from(self.sdma.is_some()),
+        );
         if Arc::ptr_eq(&dst.owner.owner, self) && Arc::ptr_eq(&src.owner.owner, self) {
             if cache.len() == 128 {
                 cache.remove(0);
@@ -160,7 +252,7 @@ impl Inner {
         constants: &Constants,
         bindings: &[View<'_>],
         arena: Option<&mut fabric::GraphArena>,
-    ) -> Result<fabric::PreparedGpu> {
+    ) -> Result<Command> {
         if kernel.device_id() != self.device.id() {
             return Err(Error::Message("kernel belongs to another device".into()));
         }
@@ -174,6 +266,11 @@ impl Inner {
         }
         for view in bindings {
             owns(self, view.owner)?;
+        }
+        if let Some(queue) = &self.aql {
+            return Ok(Command::Aql(unsafe {
+                kernel.prepare_aql(queue, grid, block, constants, bindings)
+            }?));
         }
         let mut args = Vec::with_capacity(kernel.layout.len());
         let mut scalar = 0;
@@ -203,6 +300,7 @@ impl Inner {
                     .queue
                     .prepare(&kernel.native, grid, block.map(|v| v as u16), &args),
             }
+            .map(|c| Command::Gpu(c, 0))
         }
     }
 }
@@ -254,10 +352,42 @@ impl Device {
     /// Assignment is round-robin, without priority or load awareness. A long
     /// command or event wait can delay other streams assigned to the same queue.
     pub fn stream(&self) -> Result<Stream> {
+        self.stream_with_options(StreamOptions::default())
+    }
+    /// Create a stream whose eager dispatches and recorded graphs use the selected engines.
+    /// Engine changes fence on the host. SDMA selects coherent allocation backing.
+    pub fn stream_with_options(&self, mut options: StreamOptions) -> Result<Stream> {
+        if options.sanitizer.is_some()
+            && !matches!(
+                options.compute_engine,
+                crate::execution::ComputeEngine::Aql { .. }
+            )
+        {
+            return Err(Error::Unsupported("stream sanitizers require AQL".into()));
+        }
+        if let Some(sanitizer) = &mut options.sanitizer {
+            sanitizer.memory_budget = options.memory_budget.clone();
+        }
+        let aql = match options.compute_engine {
+            crate::execution::ComputeEngine::Pm4 => None,
+            crate::execution::ComputeEngine::Aql {
+                maximum_private_bytes,
+            } => Some(
+                self.native
+                    .aql_queue_budgeted(maximum_private_bytes, options.memory_budget.as_ref())?,
+            ),
+        };
+        let sdma = match options.copy_engine {
+            crate::execution::CopyEngine::Compute => None,
+            crate::execution::CopyEngine::Sdma => Some(self.native.sdma_queue()?),
+        };
         Ok(Stream {
             inner: Arc::new(Inner {
                 device: self.native.clone(),
                 queue: self.native.stream_queue()?,
+                aql,
+                sdma,
+                sanitizer: options.sanitizer,
                 timeline: StreamTimeline::default(),
                 free: Mutex::new(Vec::with_capacity(16)),
                 dispatch_cache: Mutex::new(Vec::with_capacity(64)),
@@ -268,7 +398,7 @@ impl Device {
             scratch: BTreeMap::new(),
             scratch_bytes: 0,
             scratch_limit: 256 * 1024 * 1024,
-            budget: None,
+            budget: options.memory_budget,
             budget_uses: RefCell::new(BudgetUses::default()),
         })
     }
@@ -571,7 +701,7 @@ struct CachedDispatch {
     block: [u32; 3],
     constants: Constants,
     bindings: Vec<(fabric::Buffer, usize, usize)>,
-    command: fabric::PreparedGpu,
+    command: Command,
 }
 impl CachedDispatch {
     fn matches(
@@ -604,7 +734,7 @@ struct CachedTransfer {
     length: usize,
     source: Option<(fabric::Buffer, usize)>,
     value: u8,
-    command: fabric::PreparedGpu,
+    command: Command,
 }
 /// An ordered GPU stream with explicit prepared commands and bounded pools.
 pub struct Stream {
@@ -667,6 +797,13 @@ impl Stream {
         self.allocate_initialized(data.len(), Some(data))
     }
     fn allocate_initialized(&self, bytes: usize, data: Option<&[u8]>) -> Result<Buffer> {
+        if self.inner.sdma.is_some() {
+            let buffer = self.allocate_shared(bytes)?;
+            if let Some(data) = data {
+                buffer.native.write(0, data)?;
+            }
+            return Ok(buffer);
+        }
         let reservation = self.reserve(bytes)?;
         let reused = if reservation.is_none() {
             let mut pool = self
@@ -763,7 +900,15 @@ impl Stream {
             return Err(Error::Message("event belongs to another device".into()));
         }
         if let Some(done) = &event.done {
-            self.inner.submit(&self.inner.queue.prepare_wait(done)?)?;
+            match done {
+                Completion::Gpu(done, 0)
+                    if self.inner.aql.is_none() && self.inner.sdma.is_none() =>
+                {
+                    self.inner
+                        .submit(&Command::Gpu(self.inner.queue.prepare_wait(done)?, 0))?;
+                }
+                _ => done.wait()?,
+            }
         }
         Ok(())
     }
@@ -798,10 +943,10 @@ impl Stream {
     ) -> Result<()> {
         self.read_blocking(src.try_slice(offset, bytes.len())?, bytes)
     }
-    fn prepare_fill(&self, dst: View<'_>, value: u8) -> Result<fabric::PreparedGpu> {
+    fn prepare_fill(&self, dst: View<'_>, value: u8) -> Result<Command> {
         self.inner.prepare_fill(dst, value)
     }
-    fn prepare_copy(&self, dst: View<'_>, src: View<'_>) -> Result<fabric::PreparedGpu> {
+    fn prepare_copy(&self, dst: View<'_>, src: View<'_>) -> Result<Command> {
         self.inner.prepare_copy(dst, src)
     }
     /// Enqueue a native byte-pattern fill.
@@ -893,6 +1038,9 @@ impl Stream {
     /// # Safety
     /// Native code must obey its declared memory and argument contract.
     pub unsafe fn load_artifact(&self, artifact: &crate::loom::Artifact) -> Result<Kernel> {
+        if let Some(options) = &self.inner.sanitizer {
+            return unsafe { self.load_sanitized_artifact(artifact, options) };
+        }
         let mut kernel = Kernel::from_native(
             unsafe { self.inner.device.load(artifact) }?,
             artifact.symbol(),
@@ -933,7 +1081,7 @@ impl Stream {
         constants: &Constants,
         bindings: &[View<'_>],
         arena: Option<&mut fabric::GraphArena>,
-    ) -> Result<fabric::PreparedGpu> {
+    ) -> Result<Command> {
         unsafe {
             self.inner
                 .prepare_dispatch(kernel, grid, block, constants, bindings, arena)
@@ -1066,18 +1214,16 @@ impl Drop for Stream {
 #[derive(Clone)]
 pub struct Event {
     device: usize,
-    done: Option<fabric::Completion>,
+    done: Option<Completion>,
 }
 impl Event {
     /// Poll terminal completion.
     pub fn is_complete(&self) -> Result<bool> {
-        self.done
-            .as_ref()
-            .map_or(Ok(true), fabric::Completion::refresh)
+        self.done.as_ref().map_or(Ok(true), Completion::refresh)
     }
     /// Wait on the host for preceding work.
     pub fn synchronize(&self) -> Result<()> {
-        self.done.as_ref().map_or(Ok(()), fabric::Completion::wait)
+        self.done.as_ref().map_or(Ok(()), Completion::wait)
     }
 }
 /// Borrowed completion observer that also reclaims completed staging.
@@ -1094,7 +1240,7 @@ impl Submission<'_> {
             .timeline
             .snapshot()?
             .as_ref()
-            .map_or(Ok(true), fabric::Completion::refresh)?;
+            .map_or(Ok(true), Completion::refresh)?;
         if done {
             self.stream.reclaim_staging();
             self.stream.budget_uses.get_mut().clear();
@@ -1296,15 +1442,15 @@ pub struct Graph<'a> {
     budget_uses: BudgetUses,
 }
 enum Recorded {
-    Prepared(fabric::PreparedGpu),
+    Prepared(Command),
     Join,
 }
 /// Reusable prepared GPU graph and its last immutable completion point.
 pub struct GraphExec {
     inner: Arc<Inner>,
-    commands: Vec<fabric::PreparedGpu>,
+    commands: Vec<Command>,
     profile: Option<fabric::profile::ProfileCapture>,
-    last: Option<fabric::Completion>,
+    last: Option<Completion>,
     failed: bool,
     budget_uses: BudgetUses,
 }
@@ -1480,8 +1626,31 @@ impl<'a> Graph<'a> {
         }
         // Every batch is prepared before submission. The queue orders batches,
         // including dependencies and scratch aliases that cross a split.
-        let (commands, profile) =
-            unsafe { self.inner.queue.prepare_graph_batches(&ordered, labels) }?;
+        let (commands, profile) = if self.inner.aql.is_none() && self.inner.sdma.is_none() {
+            let native: Vec<_> = ordered
+                .into_iter()
+                .map(|(command, barrier)| match command {
+                    Command::Gpu(c, 0) => (c, barrier),
+                    _ => unreachable!("PM4 stream only prepares PM4 commands"),
+                })
+                .collect();
+            let (commands, profile) =
+                unsafe { self.inner.queue.prepare_graph_batches(&native, labels) }?;
+            (
+                commands.into_iter().map(|c| Command::Gpu(c, 0)).collect(),
+                profile,
+            )
+        } else {
+            if labels.is_some() {
+                return Err(Error::Unsupported(
+                    "device graph profiling requires PM4 compute and compute copies".into(),
+                ));
+            }
+            (
+                ordered.into_iter().map(|(command, _)| command).collect(),
+                None,
+            )
+        };
         Ok(GraphExec {
             inner: self.inner.clone(),
             commands,
@@ -1969,6 +2138,82 @@ mod dag_probe {
             timings[1] * 1.2 < timings[0],
             "omitting edges should be materially cheaper: {timings:?}"
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod engine_tests {
+    use super::*;
+    use crate::execution::{ComputeEngine, CopyEngine};
+
+    #[test]
+    #[ignore = "requires native compiler and gfx1151"]
+    fn engines_order_eager_graph_replay_and_foreign_events() -> Result<()> {
+        let device = Device::open(0)?;
+        let compiler = crate::loom::Compiler::for_target(None, device.target())?;
+        let artifact = compiler
+            .module(include_str!("../tests/kernels/add_f32.loom"))
+            .compile(&crate::loom::Specialization::new("add_f32").with_config("add.grid", "1"))?;
+        for compute_engine in [
+            ComputeEngine::Pm4,
+            ComputeEngine::Aql {
+                maximum_private_bytes: 0,
+            },
+        ] {
+            for copy_engine in [CopyEngine::Compute, CopyEngine::Sdma] {
+                let mut stream = device.stream_with_options(StreamOptions {
+                    compute_engine,
+                    copy_engine,
+                    ..Default::default()
+                })?;
+                let kernel = unsafe { stream.load_artifact(&artifact) }?;
+                let mut constants = Constants::new();
+                match kernel.layout[0].1 {
+                    4 => constants.push(64u32)?,
+                    8 => constants.push(64u64)?,
+                    _ => unreachable!(),
+                }
+                constants.push(1f32)?;
+                let a = stream.allocate(256)?;
+                let b = stream.allocate(256)?;
+                stream.fill(a.binding(), 0)?;
+                unsafe {
+                    stream.dispatch(&kernel, [1; 3], [256, 1, 1], &constants, &[a.binding()])?;
+                }
+                stream.copy(b.binding(), a.binding())?;
+                let mut graph = stream.owned_graph()?;
+                let add = unsafe {
+                    graph.dispatch(
+                        &[],
+                        &kernel,
+                        [1; 3],
+                        [256, 1, 1],
+                        &constants,
+                        &[b.binding()],
+                    )?
+                };
+                graph.copy(&[add], a.binding(), b.binding())?;
+                let mut graph = graph.finish()?;
+                for _ in 0..3 {
+                    stream.launch(&mut graph)?;
+                }
+                let event = stream.record_event()?;
+                let mut observer = device.stream()?;
+                observer.wait_event(&event)?;
+                let mut bytes = [0; 256];
+                observer.read_blocking(a.binding(), &mut bytes)?;
+                assert!(
+                    bytes
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .all(|v| f32::from_le_bytes(*v) == 4.),
+                    "{compute_engine:?} / {copy_engine:?}"
+                );
+                stream.synchronize()?;
+            }
+        }
         Ok(())
     }
 }

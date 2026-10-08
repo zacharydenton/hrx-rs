@@ -475,6 +475,7 @@ impl Fabric {
             None,
         )
     }
+    #[allow(clippy::too_many_arguments)]
     fn create_memory(
         &self,
         bytes: usize,

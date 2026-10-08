@@ -2,6 +2,7 @@
 // Copyright 2026 The IREE Authors and hrx-rs contributors
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 // One-column scalar stream service; ordinary compiler command bytes stay intact.
+#[allow(clippy::too_many_arguments)]
 pub fn records(
     startup: u64,
     request: u64,
