@@ -363,7 +363,9 @@ impl Graph {
                 let lane = self.entries[index].lane;
                 let queue =
                     crate::cached_init(&self.runtime.inner.aql_queues[lane as usize], || {
-                        crate::gpu::Device::open(self.runtime.inner.gpu_index)?
+                        self.runtime
+                            .inner
+                            .device()?
                             .native()
                             .aql_queue_budgeted(maximum_private_bytes, self.runtime.memory_budget())
                     })?;
@@ -418,9 +420,7 @@ impl Graph {
                 if self.runtime.options.copy_engine == super::CopyEngine::Sdma {
                     let queue =
                         crate::cached_init(&self.runtime.inner.sdma_queues[lane as usize], || {
-                            crate::gpu::Device::open(self.runtime.inner.gpu_index)?
-                                .native()
-                                .sdma_queue()
+                            self.runtime.inner.device()?.native().sdma_queue()
                         })?;
                     let commands = self.entries[start..index]
                         .iter()
@@ -465,8 +465,7 @@ impl Graph {
                 }
                 let stream =
                     crate::cached_init(&self.runtime.inner.copy_streams[lane as usize], || {
-                        let stream =
-                            crate::gpu::Device::open(self.runtime.inner.gpu_index)?.stream()?;
+                        let stream = self.runtime.inner.device()?.stream()?;
                         self.runtime
                             .inner
                             .core
@@ -499,7 +498,7 @@ impl Graph {
                 });
                 continue;
             }
-            let stream = crate::gpu::Device::open(self.runtime.inner.gpu_index)?.stream()?;
+            let stream = self.runtime.inner.device()?.stream()?;
             let mut graph = stream.graph()?;
             let mut nodes = Vec::new();
             let mut uses = Vec::new();

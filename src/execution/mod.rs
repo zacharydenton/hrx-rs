@@ -38,10 +38,16 @@ pub(super) struct RuntimeOwner {
     core: Arc<Core>,
     workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
     gpu_index: i32,
+    native_lifetime: crate::fabric::NativeLifetime,
     copy_streams: [Mutex<Option<Arc<Mutex<graph::CopyStream>>>>; 3],
     allocation_stream: Mutex<Option<crate::gpu::Stream>>,
     aql_queues: [Mutex<Option<crate::fabric::AqlQueue>>; 3],
     sdma_queues: [Mutex<Option<crate::fabric::Queue>>; 3],
+}
+impl RuntimeOwner {
+    fn device(&self) -> Result<crate::Device> {
+        crate::Device::open_with_lifetime(self.gpu_index, self.native_lifetime)
+    }
 }
 impl Drop for RuntimeOwner {
     fn drop(&mut self) {
@@ -94,6 +100,8 @@ pub struct RuntimeOptions {
     pub memory_budget: Option<crate::residency::MemoryBudget>,
     /// Physical GPU index; zero selects the integrated GPU on the tested host.
     pub gpu_index: i32,
+    /// Native ownership domain. Process lifetime enables registered storage pages.
+    pub native_lifetime: crate::fabric::NativeLifetime,
     /// Maximum simultaneous submissions. Exhaustion returns `Busy`.
     /// This bounds queued work; it does not increase per-engine concurrency.
     pub max_submissions: usize,
@@ -109,6 +117,7 @@ impl Default for RuntimeOptions {
         Self {
             memory_budget: None,
             gpu_index: 0,
+            native_lifetime: Default::default(),
             max_submissions: 64,
             graph_slots: 2,
             copy_engine: CopyEngine::Compute,
@@ -205,8 +214,12 @@ impl Runtime {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 
-    /// Shared allocation ceiling, if selected at construction. Native clients
-    /// can attach it to their streams before loading weights or workspace.
+    /// Native ownership domain selected before device activation.
+    pub fn native_lifetime(&self) -> crate::fabric::NativeLifetime {
+        self.options.native_lifetime
+    }
+
+    /// Shared allocation ceiling selected at construction.
     pub fn memory_budget(&self) -> Option<&crate::residency::MemoryBudget> {
         self.options.memory_budget.as_ref()
     }
@@ -227,6 +240,7 @@ impl Runtime {
             core: core.clone(),
             workers: Mutex::new(Vec::new()),
             gpu_index: options.gpu_index,
+            native_lifetime: options.native_lifetime,
             copy_streams: std::array::from_fn(|_| Mutex::new(None)),
             allocation_stream: Mutex::new(None),
             aql_queues: std::array::from_fn(|_| Mutex::new(None)),
@@ -250,7 +264,7 @@ impl Runtime {
     }
     /// Open the selected GPU and return its actual target.
     pub fn gpu(&self) -> Result<GpuDevice> {
-        let device = crate::gpu::Device::open(self.inner.gpu_index)?;
+        let device = self.inner.device()?;
         Ok(GpuDevice {
             index: self.inner.gpu_index,
             target: device.target().clone(),
@@ -263,7 +277,11 @@ impl Runtime {
             return Err(Error::Message("NPU index must be nonnegative".into()));
         }
         Ok(NpuDevice {
-            native: crate::fabric::Device::open(crate::fabric::Engine::Xdna, index as usize)?,
+            native: crate::fabric::Device::open_with_lifetime(
+                crate::fabric::Engine::Xdna,
+                index as usize,
+                self.options.native_lifetime,
+            )?,
             index,
             budget: self.options.memory_budget.clone(),
         })
@@ -279,7 +297,7 @@ impl Runtime {
             .lock()
             .map_err(|_| Error::DeviceLost("allocation stream poisoned".into()))?;
         if stream.is_none() {
-            *stream = Some(crate::gpu::Device::open(self.inner.gpu_index)?.stream()?);
+            *stream = Some(self.inner.device()?.stream()?);
         }
         Ok(stream)
     }
@@ -392,9 +410,7 @@ impl Runtime {
                         stream.allocate_for(
                             bytes,
                             &[
-                                crate::gpu::Device::open(self.inner.gpu_index)?
-                                    .native()
-                                    .clone(),
+                                self.inner.device()?.native().clone(),
                                 device.native().clone(),
                             ],
                         )?
@@ -436,12 +452,14 @@ impl Runtime {
         &self,
         sanitizer: Option<crate::fabric::SanitizerRuntimeOptions>,
     ) -> Result<crate::Stream> {
-        crate::Device::open(self.options.gpu_index)?.stream_with_options(crate::StreamOptions {
-            compute_engine: self.options.compute_engine,
-            copy_engine: self.options.copy_engine,
-            memory_budget: self.options.memory_budget.clone(),
-            sanitizer,
-        })
+        self.inner
+            .device()?
+            .stream_with_options(crate::StreamOptions {
+                compute_engine: self.options.compute_engine,
+                copy_engine: self.options.copy_engine,
+                memory_budget: self.options.memory_budget.clone(),
+                sanitizer,
+            })
     }
 
     /// Observe allocation, transfer, and execution counters.

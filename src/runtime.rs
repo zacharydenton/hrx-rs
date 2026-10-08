@@ -313,10 +313,14 @@ pub struct Device {
 impl Device {
     /// Activate an exact GPU ordinal in the native provider.
     pub fn open(index: i32) -> Result<Self> {
+        Self::open_with_lifetime(index, fabric::NativeLifetime::Instance)
+    }
+    /// Activate a GPU in the selected native ownership domain.
+    pub fn open_with_lifetime(index: i32, lifetime: fabric::NativeLifetime) -> Result<Self> {
         let index = usize::try_from(index)
             .map_err(|_| Error::Message("GPU index must be nonnegative".into()))?;
         Ok(Self {
-            native: fabric::Device::open(fabric::Engine::Gpu, index)?,
+            native: fabric::Device::open_with_lifetime(fabric::Engine::Gpu, index, lifetime)?,
         })
     }
     /// Require the workload's exact target before creating execution resources.
@@ -874,6 +878,21 @@ impl Stream {
             bytes,
             owner: self.inner.clone(),
             reservation,
+            poolable: false,
+        })
+    }
+    #[cfg(target_os = "linux")]
+    pub(crate) fn native_device(&self) -> &fabric::Device {
+        &self.inner.device
+    }
+    #[cfg(target_os = "linux")]
+    pub(crate) fn storage_buffer(&self, native: fabric::Buffer) -> Result<Buffer> {
+        native.device_address(&self.inner.device)?;
+        Ok(Buffer {
+            bytes: native.len(),
+            native,
+            owner: self.inner.clone(),
+            reservation: None,
             poolable: false,
         })
     }

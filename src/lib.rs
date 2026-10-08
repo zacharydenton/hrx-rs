@@ -16,6 +16,8 @@ pub mod jobs;
 pub mod plan_cache;
 pub mod residency;
 mod runtime;
+#[cfg(target_os = "linux")]
+pub mod storage;
 mod target;
 pub mod tensor;
 pub use access_graph::{AccessGraph, AccessView};

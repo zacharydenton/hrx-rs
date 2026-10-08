@@ -371,6 +371,7 @@ pub(super) fn runtime_without_workers() -> Runtime {
             core: Arc::new(Core::new(options.max_submissions)),
             workers: Mutex::new(Vec::new()),
             gpu_index: options.gpu_index,
+            native_lifetime: options.native_lifetime,
             copy_streams: std::array::from_fn(|_| Mutex::new(None)),
             allocation_stream: Mutex::new(None),
             aql_queues: std::array::from_fn(|_| Mutex::new(None)),

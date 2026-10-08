@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.0 — 2026-10-08
+
+- Propagate explicit native lifetime selection through runtime devices, streams,
+  tracked allocations and GPU/NPU execution. Keep device caches separate by lifetime.
+- Add bounded owned storage sessions with shared immutable reads, aligned direct
+  I/O, positioned writes, short-I/O retries, consumer leases and budgeted retirement.
+  Expose SQPOLL and deferred-work/eventfd progress, plus opt-in host timing counters.
+- Preserve mapped SafeTensors file identity and expose checked physical tensor
+  ranges for native loaders, including header offsets.
+
 ## 0.9.0 — 2026-10-08
 
 - Cache native manifests and verified launch-program companions with AMDGPU

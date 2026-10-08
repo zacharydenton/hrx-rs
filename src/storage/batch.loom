@@ -1,0 +1,74 @@
+// Trusted finite coordinator. One publisher and consumer; at most one batch
+// outstanding, with one CQE for each request. Payload leases outlive this kernel.
+kernel.def export("storage_batch") @storage_batch() {
+  %one = index.constant 1 : index
+  kernel.launch.config workgroups(%one, %one, %one) workgroup_size(%one, %one, %one) : index
+} launch(%submission_entries: buffer, %submission_tail: buffer, %completion_entries: buffer, %completion_head: buffer, %completion_tail: buffer, %descriptors: buffer, %results: buffer, %host_payload: i64, %submission_mask: i32, %completion_mask: i32, %request_count: i32) {
+  %origin = index.constant 0 : offset
+  %zero = index.constant 0 : index
+  %step = index.constant 1 : index
+  %sqe_bytes = index.constant 64 : offset
+  %cqe_bytes = index.constant 16 : offset
+  %desc_bytes = index.constant 32 : offset
+  %four_bytes = index.constant 4 : offset
+  %one32 = scalar.constant 1 : i32
+  %flags = scalar.constant 256 : i32
+  %count = index.cast %request_count : i32 to index
+  %sq = buffer.view %submission_tail[%origin] : buffer -> view<1xi32>
+  %cq = buffer.view %completion_tail[%origin] : buffer -> view<1xi32>
+  %head = buffer.view %completion_head[%origin] : buffer -> view<1xi32>
+  %initial = view.atomic.load %sq[0] {ordering = relaxed, scope = system} : view<1xi32> -> i32
+  scf.for %job = [%zero to %count step %step] {
+    %job32 = index.cast %job : index to i32
+    %ticket = scalar.addi %initial, %job32 : i32
+    %slot = scalar.andi %ticket, %submission_mask : i32
+    %slot_index = index.cast %slot : i32 to index
+    %sq_offset = index.scale %slot_index, %sqe_bytes : index, offset -> offset
+    %desc_offset = index.scale %job, %desc_bytes : index, offset -> offset
+    %d32 = buffer.view %descriptors[%desc_offset] : buffer -> view<8xi32>
+    %d64 = buffer.view %descriptors[%desc_offset] : buffer -> view<4xi64>
+    %s32 = buffer.view %submission_entries[%sq_offset] : buffer -> view<16xi32>
+    %s64 = buffer.view %submission_entries[%sq_offset] : buffer -> view<8xi64>
+    %offset = view.load %d64[0] : view<4xi64> -> i64
+    %payload_offset = view.load %d64[1] : view<4xi64> -> i64
+    %file = view.load %d32[4] : view<8xi32> -> i32
+    %op = view.load %d32[5] : view<8xi32> -> i32
+    %length = view.load %d32[6] : view<8xi32> -> i32
+    %operation = scalar.ori %op, %flags : i32
+    %address = scalar.addi %host_payload, %payload_offset : i64
+    %job64 = scalar.extui %job32 : i32 to i64
+    view.store %operation, %s32[0] : i32, view<16xi32>
+    view.store %file, %s32[1] : i32, view<16xi32>
+    view.store %offset, %s64[1] : i64, view<8xi64>
+    view.store %address, %s64[2] : i64, view<8xi64>
+    view.store %length, %s32[6] : i32, view<16xi32>
+    view.store %job64, %s64[4] : i64, view<8xi64>
+    %next = scalar.addi %ticket, %one32 : i32
+    view.atomic.store %next, %sq[0] {ordering = release, scope = system} : i32, view<1xi32>
+  }
+  scf.for %job = [%zero to %count step %step] {
+    %job32 = index.cast %job : index to i32
+    %ticket = scalar.addi %initial, %job32 : i32
+    %observed = scf.while(%tail = %ticket : i32) -> (i32) {
+      %pending = scalar.cmpi eq, %tail, %ticket : i32
+      scf.condition %pending, %tail : i1, i32
+    } do(%tail: i32) {
+      %seen = view.atomic.load %cq[0] {ordering = relaxed, scope = system} : view<1xi32> -> i32
+      scf.yield %seen : i32
+    }
+    buffer.fence scope(system) ordering(acquire)
+    %slot = scalar.andi %ticket, %completion_mask : i32
+    %slot_index = index.cast %slot : i32 to index
+    %offset = index.scale %slot_index, %cqe_bytes : index, offset -> offset
+    %c = buffer.view %completion_entries[%offset] : buffer -> view<4xi32>
+    %identity = view.load %c[0] : view<4xi32> -> i32
+    %value = view.load %c[2] : view<4xi32> -> i32
+    %index = index.cast %identity : i32 to index
+    %out_offset = index.scale %index, %four_bytes : index, offset -> offset
+    %out = buffer.view %results[%out_offset] : buffer -> view<1xi32>
+    view.store %value, %out[0] : i32, view<1xi32>
+    %next = scalar.addi %ticket, %one32 : i32
+    view.atomic.store %next, %head[0] {ordering = release, scope = system} : i32, view<1xi32>
+  }
+  kernel.return
+}

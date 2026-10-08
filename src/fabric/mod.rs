@@ -39,7 +39,7 @@ macro_rules! entry {
 #[cfg(target_os = "linux")]
 mod storage;
 #[cfg(target_os = "linux")]
-pub use storage::{StorageExecution, StorageLayout, StorageOptions, StorageRing};
+pub use storage::{StorageExecution, StorageLayout, StorageOptions, StorageProgress, StorageRing};
 mod resident;
 pub use resident::{ResidentGpu, ResidentSession, ResidentStartup};
 mod xdna;
@@ -514,27 +514,35 @@ impl Device {
     /// Open a selected engine ordinal in the shared, weakly cached provider.
     /// Live buffers keep their exact device identity; the registry owns no device.
     pub fn open(engine: Engine, index: usize) -> Result<Self> {
-        type Devices = Vec<(Engine, usize, std::sync::Weak<DeviceInner>)>;
+        Self::open_with_lifetime(engine, index, NativeLifetime::Instance)
+    }
+    /// Open in an explicitly selected native ownership domain.
+    pub fn open_with_lifetime(
+        engine: Engine,
+        index: usize,
+        lifetime: NativeLifetime,
+    ) -> Result<Self> {
+        type Devices = Vec<(Engine, usize, NativeLifetime, std::sync::Weak<DeviceInner>)>;
         static DEVICES: std::sync::Mutex<Devices> = std::sync::Mutex::new(Vec::new());
         let mut devices = DEVICES
             .lock()
             .map_err(|_| Error::Message("device registry poisoned".into()))?;
-        if let Some(device) = devices.iter().find_map(|(kind, ordinal, device)| {
-            (*kind == engine && *ordinal == index)
+        if let Some(device) = devices.iter().find_map(|(kind, ordinal, policy, device)| {
+            (*kind == engine && *ordinal == index && *policy == lifetime)
                 .then(|| device.upgrade())
                 .flatten()
         }) {
             return Ok(Self(device));
         }
-        devices.retain(|(_, _, device)| device.strong_count() != 0);
-        let device = Fabric::resolve()?
+        devices.retain(|(_, _, _, device)| device.strong_count() != 0);
+        let device = Fabric::resolve_with_lifetime(lifetime)?
             .endpoints()?
             .into_iter()
             .filter(|endpoint| endpoint.engine() == engine)
             .nth(index)
             .ok_or_else(|| Error::Unsupported(format!("{engine:?} device {index} is unavailable")))?
             .open()?;
-        devices.push((engine, index, Arc::downgrade(&device.0)));
+        devices.push((engine, index, lifetime, Arc::downgrade(&device.0)));
         Ok(device)
     }
     /// Stable identity while this device or any dependent owner is live.

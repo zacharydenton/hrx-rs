@@ -7,6 +7,7 @@ use std::{
     collections::BTreeMap,
     fs::File,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 /// SafeTensors element type, independent of the parser crate's public API.
@@ -151,6 +152,7 @@ impl Storage {
 pub struct FileView {
     path: PathBuf,
     storage: Storage,
+    file: Option<Arc<File>>,
     data: usize,
     entries: BTreeMap<String, Entry>,
 }
@@ -197,7 +199,9 @@ impl FileView {
             .map_err(|error| Error::Io(error).context(format!("opening {}", path.display())))?;
         let map = unsafe { Mmap::map(&file) }
             .map_err(|error| Error::Io(error).context(format!("mapping {}", path.display())))?;
-        Self::from_storage(path, Storage::Mapped(map))
+        let mut view = Self::from_storage(path, Storage::Mapped(map))?;
+        view.file = Some(Arc::new(file));
+        Ok(view)
     }
 
     fn from_storage(path: PathBuf, storage: Storage) -> Result<Self> {
@@ -234,6 +238,7 @@ impl FileView {
         Ok(Self {
             path,
             storage,
+            file: None,
             data,
             entries,
         })
@@ -289,6 +294,44 @@ impl FileView {
             .bytes()
             .get(start..end)
             .ok_or_else(|| Error::Message("SafeTensors entry exceeds the file".into()))
+    }
+
+    /// Descriptor of the mapped file, retained across pathname replacement.
+    /// Owned snapshots have no backing descriptor.
+    pub fn backing_file(&self) -> Option<&Arc<File>> {
+        self.file.as_ref()
+    }
+
+    /// Absolute file offset of a checked tensor subrange, including its header.
+    /// This validates metadata without touching mapped tensor pages. The returned
+    /// descriptor identifies the original mapped inode, even after a rename.
+    pub fn file_range(
+        &self,
+        entry: &Entry,
+        offset: usize,
+        bytes: usize,
+    ) -> Result<(Arc<File>, u64)> {
+        if offset
+            .checked_add(bytes)
+            .is_none_or(|end| end > entry.bytes)
+        {
+            return Err(Error::Message("tensor subrange exceeds entry".into()));
+        }
+        let start = self
+            .data
+            .checked_add(entry.offset)
+            .and_then(|start| start.checked_add(offset))
+            .ok_or_else(|| Error::Message("SafeTensors offset overflow".into()))?;
+        if start
+            .checked_add(bytes)
+            .is_none_or(|end| end > self.storage.bytes().len())
+        {
+            return Err(Error::Message("SafeTensors entry exceeds file".into()));
+        }
+        let file = self.file.as_ref().ok_or_else(|| {
+            Error::Unsupported("owned SafeTensors snapshots have no backing file".into())
+        })?;
+        Ok((file.clone(), start as u64))
     }
 
     /// Look up and validate a tensor. Negative expected dimensions are wildcards.
@@ -419,6 +462,35 @@ fn advise_pages(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_ranges_retain_original_identity_without_faulting_data() {
+        use std::{io::Write, os::unix::fs::FileExt};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model.safetensors");
+        let header = br#"{"x":{"dtype":"U8","shape":[4],"data_offsets":[0,4]}}"#;
+        let mut file = File::create(&path).unwrap();
+        file.write_all(&(header.len() as u64).to_le_bytes())
+            .unwrap();
+        file.write_all(header).unwrap();
+        file.write_all(&[1, 2, 3, 4]).unwrap();
+        drop(file);
+        // SAFETY: the original inode remains immutable, including after rename.
+        let mapped = unsafe { FileView::map(&path) }.unwrap();
+        let owned = FileView::read(&path).unwrap();
+        let entry = &mapped.entries()["x"];
+        let (file, offset) = mapped.file_range(entry, 1, 2).unwrap();
+        assert_eq!(offset, header.len() as u64 + 9);
+        assert!(mapped.file_range(entry, 3, 2).is_err());
+        assert!(mapped.file_range(entry, usize::MAX, 1).is_err());
+        assert!(owned.file_range(entry, 0, 4).is_err());
+        std::fs::rename(&path, dir.path().join("old")).unwrap();
+        std::fs::write(&path, b"replacement").unwrap();
+        drop(mapped);
+        let mut bytes = [0; 2];
+        file.read_exact_at(&mut bytes, offset).unwrap();
+        assert_eq!(bytes, [2, 3]);
+    }
 
     #[test]
     fn preparation_checks_ownership_and_preserves_mapped_bytes() {

@@ -23,10 +23,27 @@ const REGISTER_BUFFERS: u32 = 0;
 const REGISTER_FILES: u32 = 2;
 const REGISTER_RESTRICTIONS: u32 = 11;
 const ENABLE_RINGS: u32 = 12;
+const REGISTER_EVENTFD: u32 = 4;
+const SINGLE_ISSUER: u32 = 1 << 12;
+const DEFER_TASKRUN: u32 = 1 << 13;
+const TASKRUN_FLAG: u32 = 1 << 9;
+const SQ_TASKRUN: u32 = 4;
+
+/// Kernel I/O progress service; neither mode relays application requests.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StorageProgress {
+    /// Kernel polling worker, with explicit idle wakes.
+    #[default]
+    Sqpoll,
+    /// Single-issuer deferred work with completion notifications.
+    Wait,
+}
 
 /// Bounded caller-owned SQ/CQ storage and its kernel SQPOLL service.
 #[derive(Clone, Debug)]
 pub struct StorageOptions {
+    /// Selected kernel progress mechanism.
+    pub progress: StorageProgress,
     /// Power-of-two SQ capacity, 2 through 4096. CQ capacity is twice this value.
     pub entries: u32,
     /// Milliseconds before an idle SQPOLL worker sleeps; waits issue idle wakes.
@@ -37,6 +54,7 @@ pub struct StorageOptions {
 impl Default for StorageOptions {
     fn default() -> Self {
         Self {
+            progress: StorageProgress::Sqpoll,
             entries: 8,
             idle_milliseconds: 1,
             memory_budget: None,
@@ -69,6 +87,10 @@ pub struct StorageLayout {
 /// They are not a sandbox for untrusted native programs.
 pub struct StorageRing {
     fd: OwnedFd,
+    notification: Option<OwnedFd>,
+    issuer: libc::pid_t,
+    service_calls: AtomicU32,
+    wait_calls: AtomicU32,
     memory: Buffer,
     // SQPOLL may update ring controls even before the GPU is submitted. Block
     // ordinary host buffer access for the entire enabled kernel ring lifetime.
@@ -89,7 +111,7 @@ fn syscall_result(result: libc::c_long) -> Result<libc::c_long> {
 impl StorageRing {
     /// Register regular files and a payload allocated by `allocate_registered`.
     /// File order defines fixed-file indices; payload is fixed-buffer index zero.
-    /// Requires NO_MMAP, NO_SQARRAY, restrictions and SQPOLL support. Admission
+    /// Requires NO_MMAP, NO_SQARRAY, restrictions and the selected progress mode. Admission
     /// failure is explicit; no alternate transport or host request relay is used.
     pub fn new(
         device: &Device,
@@ -140,7 +162,10 @@ impl StorageRing {
             flags: IORING_SETUP_NO_MMAP
                 | IORING_SETUP_NO_SQARRAY
                 | IORING_SETUP_R_DISABLED
-                | IORING_SETUP_SQPOLL,
+                | match options.progress {
+                    StorageProgress::Sqpoll => IORING_SETUP_SQPOLL,
+                    StorageProgress::Wait => SINGLE_ISSUER | DEFER_TASKRUN | TASKRUN_FLAG,
+                },
             sq_thread_idle: options.idle_milliseconds,
             ..Default::default()
         };
@@ -155,7 +180,7 @@ impl StorageRing {
                 Some(libc::ENOSYS | libc::EINVAL | libc::EPERM | libc::EACCES)
             ) {
                 Err(Error::Unsupported(format!(
-                    "caller-owned SQPOLL ring unavailable: {error}"
+                    "caller-owned io_uring ring unavailable: {error}"
                 )))
             } else {
                 Err(error.into())
@@ -194,8 +219,19 @@ impl StorageRing {
             host_payload: payload.host_pointer() as u64,
         };
         let kernel_use = memory.retain_use()?;
+        let notification = if options.progress == StorageProgress::Wait {
+            let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+            syscall_result(fd as _)?;
+            Some(unsafe { OwnedFd::from_raw_fd(fd) })
+        } else {
+            None
+        };
         let ring = Self {
             fd,
+            notification,
+            issuer: unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t },
+            service_calls: AtomicU32::new(0),
+            wait_calls: AtomicU32::new(0),
             memory,
             _kernel_use: kernel_use,
             payload: payload.clone(),
@@ -215,6 +251,10 @@ impl StorageRing {
             descriptors.as_ptr().cast(),
             descriptors.len() as u32,
         )?;
+        if let Some(notification) = &ring.notification {
+            let fd = notification.as_raw_fd();
+            ring.register(REGISTER_EVENTFD, (&fd as *const i32).cast(), 1)?;
+        }
         // restriction opcode: register-op=0, SQE-op=1, flags-allowed=2, flags-required=3.
         let restrictions =
             [(1, 4), (1, 5), (2, 1), (3, 1), (0, ENABLE_RINGS as u8)].map(|(opcode, value)| {
@@ -268,9 +308,66 @@ impl StorageRing {
         }
     }
     fn wake(&self) -> Result<()> {
+        if let Some(notification) = &self.notification {
+            if unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t } != self.issuer {
+                return Err(Error::Message(
+                    "wait-mode storage must be serviced by its creating thread".into(),
+                ));
+            }
+            let mut value = 0u64;
+            let read =
+                unsafe { libc::read(notification.as_raw_fd(), (&mut value as *mut u64).cast(), 8) };
+            if read < 0 {
+                let error = std::io::Error::last_os_error();
+                if !matches!(error.raw_os_error(), Some(libc::EAGAIN | libc::EINTR)) {
+                    return Err(error.into());
+                }
+            }
+            let completed = self.word(self.parameters.cq_off.tail);
+            let tail = self.word(self.parameters.sq_off.tail);
+            let head = self.word(self.parameters.sq_off.head);
+            if tail == completed {
+                return Ok(());
+            }
+            self.service_calls.fetch_add(1, Ordering::Relaxed);
+            let result = unsafe {
+                libc::syscall(
+                    libc::SYS_io_uring_enter,
+                    self.fd.as_raw_fd(),
+                    tail.wrapping_sub(head),
+                    0u32,
+                    1u32,
+                    ptr::null::<u8>(),
+                    0usize,
+                )
+            };
+            if result < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                return Ok(());
+            }
+            syscall_result(result)?;
+            if self.word(self.parameters.cq_off.tail) == completed
+                && self.word(self.parameters.sq_off.flags) & SQ_TASKRUN == 0
+                && self.word(self.parameters.sq_off.head) != completed
+            {
+                let mut fd = libc::pollfd {
+                    fd: notification.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                self.wait_calls.fetch_add(1, Ordering::Relaxed);
+                // Bounded wait preserves the caller's timeout and detects GPU failure.
+                let result = unsafe { libc::poll(&mut fd, 1, 1) };
+                if result < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
+                {
+                    syscall_result(result as _)?;
+                }
+            }
+            return Ok(());
+        }
         if self.word(self.parameters.sq_off.flags) & IORING_SQ_NEED_WAKEUP != 0
             && self.word(self.parameters.sq_off.tail) != self.word(self.parameters.sq_off.head)
         {
+            self.service_calls.fetch_add(1, Ordering::Relaxed);
             let result = unsafe {
                 libc::syscall(
                     libc::SYS_io_uring_enter,
@@ -288,6 +385,12 @@ impl StorageRing {
             syscall_result(result)?;
         }
         Ok(())
+    }
+    pub(crate) fn service_counts(&self) -> (u32, u32) {
+        (
+            self.service_calls.load(Ordering::Relaxed),
+            self.wait_calls.load(Ordering::Relaxed),
+        )
     }
     fn drained(&self) -> bool {
         let tail = self.word(self.parameters.sq_off.tail);
@@ -320,13 +423,19 @@ struct StorageOwners {
     done: Completion,
     uses: Vec<DeviceUse>,
 }
-/// Live GPU file work. Waits only wake idle SQPOLL; the host never authors SQEs,
+/// Live GPU file work. Waits service SQPOLL or deferred work; the host never authors SQEs,
 /// consumes CQEs, or reads/writes application payload to make device progress.
 pub struct StorageExecution {
     owners: Option<StorageOwners>,
     retired: bool,
 }
 impl StorageExecution {
+    pub(crate) fn into_ring(mut self) -> Result<StorageRing> {
+        if !self.retired {
+            return Err(Error::Busy("storage execution has not retired".into()));
+        }
+        Ok(self.owners.take().unwrap().ring)
+    }
     /// Cached combined GPU/kernel-I/O retirement.
     pub fn is_complete(&self) -> bool {
         self.retired
@@ -356,7 +465,7 @@ impl StorageExecution {
 }
 impl Drop for StorageExecution {
     fn drop(&mut self) {
-        if !self.wait_timeout(Duration::from_secs(10)).unwrap_or(false) {
+        if self.owners.is_some() && !self.wait_timeout(Duration::from_secs(10)).unwrap_or(false) {
             std::mem::forget(self.owners.take());
         }
     }
