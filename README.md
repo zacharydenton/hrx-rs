@@ -18,7 +18,7 @@ named `hrx`.
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.10.0" }
+hrx = { package = "hrx-rs", version = "0.10.1" }
 ```
 
 ```rust,no_run
@@ -43,7 +43,7 @@ are unsafe operations. Callers must validate code, arguments and synchronization
 ## Install the CLI
 
 ```sh
-cargo install hrx-rs --version 0.10.0 --locked --features npu
+cargo install hrx-rs --version 0.10.1 --locked --features npu
 hrx prepare
 hrx doctor
 ```

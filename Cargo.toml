@@ -1,6 +1,6 @@
 [package]
 name = "hrx-rs"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT AND Apache-2.0 AND (Apache-2.0 WITH LLVM-exception)"
@@ -11,7 +11,7 @@ keywords = ["gpu", "npu", "amdgpu", "compute", "loom"]
 categories = ["hardware-support", "science"]
 include = [
     "/src/**",
-    "/docs/GPU-NPU.md",
+    "/docs/**",
     "/benchmarks/queue-pool/**",
     "/tests/**",
     "/examples/**",

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.1 — 2026-10-09
 
 - Split large copies and fills inside HRX, using SDMA ring capacity and compute
   dispatch limits. Support ranges beyond 4 GiB in streams and graphs, with one
@@ -8,6 +8,7 @@
 - Bound host uploads to reusable 64 MiB staging chunks and validate their full
   destination before submission.
 - Flatten nested PM4 batches when composing graphs.
+- Include all API guides in the published crate.
 
 ## 0.10.0 — 2026-10-08
 

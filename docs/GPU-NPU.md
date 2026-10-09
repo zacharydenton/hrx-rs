@@ -7,7 +7,7 @@ Loom compilation for both targets is always available. Supported hardware is
 ## Native setup
 
 ```sh
-cargo install hrx-rs --version 0.10.0 --locked --features npu
+cargo install hrx-rs --version 0.10.1 --locked --features npu
 hrx prepare
 hrx doctor
 ```
