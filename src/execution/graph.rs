@@ -430,18 +430,13 @@ impl Graph {
                             };
                             let dst = dst.gpu()?;
                             let src = src.gpu()?;
-                            let reservation = self
-                                .runtime
-                                .memory_budget()
-                                .map(|budget| budget.reserve(64).map(Arc::new))
-                                .transpose()?;
                             queue.prepare_copy_reserved(
                                 &dst.owner().native,
                                 dst.offset(),
                                 &src.owner().native,
                                 src.offset(),
                                 dst.len(),
-                                reservation,
+                                self.runtime.memory_budget(),
                             )
                         })
                         .collect::<Result<Vec<_>>>()?;
@@ -663,7 +658,10 @@ impl Operation {
                 let mut last = None;
                 let submitted: Result<()> = (|| {
                     for command in commands {
-                        last = Some(unsafe { command.dispatch_wait() }?);
+                        let _uses = command.retain_parts()?;
+                        for part in command.parts() {
+                            last = Some(unsafe { part.dispatch_part_wait() }?);
+                        }
                     }
                     Ok(())
                 })();

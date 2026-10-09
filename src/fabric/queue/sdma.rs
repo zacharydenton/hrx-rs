@@ -1,6 +1,21 @@
 //! SDMA v1 packets follow libamdf/include/amdf/gpu.h, using the reported features.
 use super::*;
 
+// Keep each publication below half the ring so its wrap padding also fits.
+// Reserve two cache packets, a fence, and two unaligned fill-tail copy packets.
+fn transfer_word_budget(ring_bytes: usize) -> usize {
+    (ring_bytes / 8).saturating_sub(1) & !7
+}
+pub(super) fn transfer_limit(ring_bytes: usize) -> Result<usize> {
+    let packets = transfer_word_budget(ring_bytes).saturating_sub(10 + 4 + 14) / 7;
+    if packets == 0 {
+        return Err(Error::Unsupported(
+            "SDMA ring cannot hold a transfer".into(),
+        ));
+    }
+    Ok(packets.min((u32::MAX as usize) >> 20) << 20)
+}
+
 impl Queue {
     fn sdma_scoped(&self) -> bool {
         self.0.info.format_features & AMDF_GPU_SDMA_FORMAT_FEATURE_MEMORY_SCOPE as u64 != 0
@@ -92,6 +107,7 @@ impl Queue {
         buffers.dedup_by(|a, b| a.same_backing(b));
         let leases = Mutex::new(Vec::with_capacity(buffers.len()));
         Ok(PreparedGpu {
+            prefix: Default::default(),
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
                 storage_bytes: fence.len(),
@@ -106,6 +122,7 @@ impl Queue {
                 }),
                 words,
                 dispatch_range: 0..end,
+                indirect_words: None,
                 fence_word,
                 previous: Mutex::new(0),
             }),
@@ -236,5 +253,35 @@ impl Queue {
         ];
         self.sdma_cache(&mut words, false);
         self.sdma_prepared(words, Vec::new(), dependencies)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transfer_packets_and_wrap_fit_every_ring_cursor() {
+        for ring_bytes in [4096, 8192, 65536, 1 << 20] {
+            let limit = transfer_limit(ring_bytes).unwrap();
+            assert_eq!(limit % (1 << 20), 0);
+            let packets = limit.div_ceil(1 << 20);
+            // Worst case includes both unaligned fill tails and both cache packets.
+            let words = (packets * 7 + 10 + 4 + 14).next_multiple_of(8);
+            let capacity = ring_bytes / 4;
+            for cursor in (0..capacity).step_by(8) {
+                let wrap = if words > capacity - cursor {
+                    capacity - cursor
+                } else {
+                    0
+                };
+                assert!(
+                    wrap + words < capacity,
+                    "{ring_bytes}: cursor {cursor}, words {words}"
+                );
+            }
+        }
+        assert!(transfer_limit(0).is_err());
+        assert!(transfer_limit(64).is_err());
     }
 }

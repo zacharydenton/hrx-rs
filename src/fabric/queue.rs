@@ -626,6 +626,7 @@ impl Queue {
         buffers.dedup_by(|a, b| Arc::ptr_eq(&a.0, &b.0));
         let leases = Mutex::new(Vec::with_capacity(buffers.len()));
         Ok(PreparedGpu {
+            prefix: Default::default(),
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
                 storage_bytes,
@@ -640,6 +641,7 @@ impl Queue {
                 }),
                 words,
                 dispatch_range: dispatch_start..dispatch_end,
+                indirect_words: None,
                 fence_word,
                 previous: Mutex::new(0),
             }),
@@ -693,7 +695,7 @@ impl Queue {
         let ranges = batch_ranges(
             commands
                 .iter()
-                .map(|(command, dependency)| (command.inner.dispatch_range.len(), *dependency)),
+                .map(|(command, dependency)| (command.dispatch_words().len(), *dependency)),
             capture.is_some(),
         )?;
         let batches = ranges
@@ -743,7 +745,7 @@ impl Queue {
                     .api
                     .emit(address + (profile_start + index) as u64 * 16, &mut indirect)?;
             }
-            indirect.extend_from_slice(&command.inner.words[command.inner.dispatch_range.clone()]);
+            indirect.extend_from_slice(command.dispatch_words());
             if let (Some(profile), Some(address)) = (profile, timestamp_address) {
                 barrier(&mut indirect);
                 profile.api.emit(
@@ -809,6 +811,7 @@ impl Queue {
         pad(&mut words);
         let leases = Mutex::new(Vec::with_capacity(buffers.len()));
         Ok(PreparedGpu {
+            prefix: Default::default(),
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
                 storage_bytes,
@@ -823,6 +826,7 @@ impl Queue {
                 }),
                 words,
                 dispatch_range: dispatch_start..dispatch_end,
+                indirect_words: Some(indirect),
                 fence_word,
                 previous: Mutex::new(0),
             }),
@@ -890,6 +894,7 @@ impl Queue {
         ]);
         pad(&mut words);
         Ok(PreparedGpu {
+            prefix: Default::default(),
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
                 storage_bytes: fence.len(),
@@ -904,6 +909,7 @@ impl Queue {
                 }),
                 words,
                 dispatch_range: 0..dispatch_end,
+                indirect_words: None,
                 fence_word,
                 previous: Mutex::new(0),
             }),
@@ -929,6 +935,9 @@ impl Queue {
 /// Replays remain ordered on the originating queue, including scratch accesses.
 #[derive(Clone)]
 pub struct PreparedGpu {
+    // SDMA streams must fit the ring, including wrap padding. The final part
+    // supplies the public completion; preceding parts retire on the same queue.
+    prefix: Option<Arc<[PreparedGpu]>>,
     queue: Queue,
     inner: Arc<PreparedInner>,
 }
@@ -937,32 +946,103 @@ struct PreparedInner {
     work: Arc<Work>,
     words: Vec<u32>,
     dispatch_range: std::ops::Range<usize>,
+    // Flatten nested batches when composing graphs; PM4 IB nesting is bounded.
+    indirect_words: Option<Vec<u32>>,
     fence_word: usize,
     previous: Mutex<u32>,
 }
 impl PreparedGpu {
+    fn dispatch_words(&self) -> &[u32] {
+        self.inner
+            .indirect_words
+            .as_deref()
+            .unwrap_or_else(|| &self.inner.words[self.inner.dispatch_range.clone()])
+    }
+
+    fn reserve_fence(&mut self, reservation: Option<Arc<crate::residency::MemoryReservation>>) {
+        let inner = Arc::get_mut(&mut self.inner).expect("new prepared transfer");
+        let work = Arc::get_mut(&mut inner.work).expect("new transfer work");
+        Arc::get_mut(&mut work.fence.0)
+            .expect("new transfer fence")
+            .reservation = reservation;
+    }
+
+    /// Keep operands unavailable to host mappings between SDMA publications.
+    pub(crate) fn retain_parts(&self) -> Result<impl Drop> {
+        if self.prefix.is_none() {
+            return Ok(Vec::new());
+        }
+        self.inner
+            .work
+            .buffers
+            .iter()
+            .map(Buffer::retain_use)
+            .collect::<Result<Vec<_>>>()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn exhaust_final_timeline(&self) {
+        *self.inner.previous.lock().unwrap() = u32::MAX;
+    }
+
     /// Private argument, scratch and fence bytes, excluding operands, code and
     /// provider allocation rounding. Used to bound retained command caches.
     pub(crate) fn storage_bytes(&self) -> usize {
         self.inner.storage_bytes
+            + self.prefix.as_ref().map_or(0, |parts| {
+                parts.iter().map(Self::storage_bytes).sum::<usize>()
+            })
+    }
+
+    pub(crate) fn parts(&self) -> impl Iterator<Item = &Self> {
+        self.prefix
+            .iter()
+            .flat_map(|parts| parts.iter())
+            .chain(std::iter::once(self))
+    }
+
+    /// Submit one physical part; callers retain the logical transfer's guard
+    /// and record each accepted completion before advancing to its next part.
+    pub(crate) unsafe fn dispatch_part_wait(&self) -> Result<Completion> {
+        unsafe { self.dispatch_one(true) }
     }
 
     /// Submit previously prepared commands without creating native resources.
+    /// Large SDMA transfers may wait for ring capacity between publications.
+    /// A failure can leave an accepted prefix modified; it is drained before
+    /// returning unless native completion itself fails.
     ///
     /// # Safety
     /// Callers order conflicting accesses on other queues and obey the native
     /// executable's binding contracts.
     pub unsafe fn dispatch(&self) -> Result<Completion> {
-        unsafe { self.dispatch_inner(false) }
+        if self.prefix.is_some() {
+            unsafe { self.dispatch_wait() }
+        } else {
+            unsafe { self.dispatch_one(false) }
+        }
     }
 
-    /// Wait for shared queue capacity without holding its producer lock.
-    /// Return Busy if a full ring has no pending completion to wait for.
+    /// Wait for ring capacity while publishing all parts. Accepted work is
+    /// drained if a later part fails; uncertain completion retains native owners.
     pub(crate) unsafe fn dispatch_wait(&self) -> Result<Completion> {
-        unsafe { self.dispatch_inner(true) }
+        let _uses = self.retain_parts()?;
+        let mut last: Option<Completion> = None;
+        for part in self.parts() {
+            match unsafe { part.dispatch_one(true) } {
+                Ok(done) => last = Some(done),
+                Err(error) => {
+                    if let Some(done) = last {
+                        done.wait()?;
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        Ok(last.expect("prepared command has a final part"))
     }
 
-    unsafe fn dispatch_inner(&self, wait: bool) -> Result<Completion> {
+    unsafe fn dispatch_one(&self, wait: bool) -> Result<Completion> {
         let mut previous = self
             .inner
             .previous
@@ -1136,8 +1216,75 @@ impl Queue {
         }
         Ok(kernels.as_ref().unwrap().clone())
     }
-    /// Prepare a byte copy between non-overlapping logical ranges.
+    /// Prepare a copy of any nonempty, in-bounds, non-overlapping byte range.
+    /// Large transfers are split to fit the selected engine. The returned
+    /// completion covers every part; operands remain retained until retirement.
     pub fn prepare_copy(
+        &self,
+        destination: &Buffer,
+        destination_offset: usize,
+        source: &Buffer,
+        source_offset: usize,
+        length: usize,
+    ) -> Result<PreparedGpu> {
+        transfer_range(destination, destination_offset, length)?;
+        transfer_range(source, source_offset, length)?;
+        let dst = destination
+            .device_address(self.device())?
+            .checked_add(destination_offset as u64)
+            .ok_or_else(|| Error::Message("copy address overflow".into()))?;
+        let src = source
+            .device_address(self.device())?
+            .checked_add(source_offset as u64)
+            .ok_or_else(|| Error::Message("copy address overflow".into()))?;
+        if dst < src.saturating_add(length as u64) && src < dst.saturating_add(length as u64) {
+            return Err(Error::Message("native copy ranges overlap".into()));
+        }
+        self.prepare_transfer(length, |offset, bytes| {
+            self.prepare_copy_part(
+                destination,
+                destination_offset + offset,
+                source,
+                source_offset + offset,
+                bytes,
+            )
+        })
+    }
+
+    fn prepare_transfer(
+        &self,
+        length: usize,
+        mut prepare: impl FnMut(usize, usize) -> Result<PreparedGpu>,
+    ) -> Result<PreparedGpu> {
+        let sdma = self.0.info.command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA;
+        let limit = if sdma {
+            sdma::transfer_limit(self.0.info.ring_byte_length as usize)?
+        } else {
+            // Preserve alignment at chunk boundaries and the transfer kernels'
+            // bounded 32-bit dispatch extent after rounding to 256 work items.
+            (u32::MAX as usize) & !255
+        };
+        if length <= limit {
+            return prepare(0, length);
+        }
+        let mut parts = transfer_chunks(length, limit)
+            .map(|(offset, bytes)| prepare(offset, bytes))
+            .collect::<Result<Vec<_>>>()?;
+        let mut last = parts.pop().expect("validated nonempty transfer");
+        if sdma {
+            last.prefix = Some(parts.into());
+            Ok(last)
+        } else {
+            parts.push(last);
+            // PM4 indirect batches fit the ring regardless of payload size.
+            // Each part addresses disjoint bytes within the validated span.
+            let commands: Vec<_> = parts.into_iter().map(|part| (part, false)).collect();
+            unsafe { self.prepare_batch(&commands) }
+        }
+    }
+
+    /// Prepare a byte copy between non-overlapping logical ranges.
+    fn prepare_copy_part(
         &self,
         destination: &Buffer,
         destination_offset: usize,
@@ -1187,8 +1334,21 @@ impl Queue {
         source: &Buffer,
         source_offset: usize,
         length: usize,
-        reservation: Option<Arc<crate::residency::MemoryReservation>>,
+        budget: Option<&crate::residency::MemoryBudget>,
     ) -> Result<PreparedGpu> {
+        // Reserve before allocating native fences. One charge is shared by all
+        // parts so it survives dropped wrappers and any accepted prefix.
+        let count = if self.0.info.command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA {
+            length.div_ceil(sdma::transfer_limit(self.0.info.ring_byte_length as usize)?)
+        } else {
+            1
+        };
+        let bytes = count
+            .checked_mul(64)
+            .ok_or_else(|| Error::Message("transfer fence size overflow".into()))?;
+        let reservation = budget
+            .map(|budget| budget.reserve(bytes).map(Arc::new))
+            .transpose()?;
         let mut command = self.prepare_copy(
             destination,
             destination_offset,
@@ -1196,18 +1356,30 @@ impl Queue {
             source_offset,
             length,
         )?;
-        let inner =
-            Arc::get_mut(&mut command.inner).expect("new prepared copy is exclusively owned");
-        let work = Arc::get_mut(&mut inner.work).expect("new copy work is exclusively owned");
-        // A fence is private until first submission. Keep the charge on its
-        // native memory owner, which survives uncertain queue retirement.
-        Arc::get_mut(&mut work.fence.0)
-            .expect("new fence is exclusively owned")
-            .reservation = reservation;
+        if let Some(prefix) = &mut command.prefix {
+            for part in Arc::get_mut(prefix).expect("new transfer prefix") {
+                part.reserve_fence(reservation.clone());
+            }
+        }
+        command.reserve_fence(reservation);
         Ok(command)
     }
-    /// Prepare a repeated byte fill over one logical range.
+    /// Prepare a byte fill, splitting large ranges for the selected engine.
     pub fn prepare_fill(
+        &self,
+        destination: &Buffer,
+        offset: usize,
+        length: usize,
+        value: u8,
+    ) -> Result<PreparedGpu> {
+        transfer_range(destination, offset, length)?;
+        self.prepare_transfer(length, |first, bytes| {
+            self.prepare_fill_part(destination, offset + first, bytes, value)
+        })
+    }
+
+    /// Prepare a repeated byte fill over one logical range.
+    fn prepare_fill_part(
         &self,
         destination: &Buffer,
         offset: usize,
@@ -1238,15 +1410,20 @@ impl Queue {
         }
     }
 }
+fn transfer_chunks(length: usize, limit: usize) -> impl Iterator<Item = (usize, usize)> {
+    (0..length)
+        .step_by(limit)
+        .map(move |offset| (offset, (length - offset).min(limit)))
+}
+
 fn transfer_range(buffer: &Buffer, offset: usize, length: usize) -> Result<()> {
     if length == 0
-        || length > u32::MAX as usize
         || offset
             .checked_add(length)
             .is_none_or(|end| end > buffer.len())
     {
         return Err(Error::Message(
-            "native transfer range must be nonempty, in bounds, and at most 4 GiB".into(),
+            "native transfer range must be nonempty and in bounds".into(),
         ));
     }
     Ok(())
@@ -1255,6 +1432,73 @@ fn transfer_range(buffer: &Buffer, offset: usize, length: usize) -> Result<()> {
 #[cfg(test)]
 mod event_tests {
     use super::*;
+
+    #[test]
+    fn large_transfer_chunks_cover_boundaries_without_wrapping() {
+        let limit = (u32::MAX as usize) & !255;
+        for length in [
+            1,
+            limit - 1,
+            limit,
+            limit + 1,
+            1usize << 32,
+            (1usize << 33) + 19,
+        ] {
+            let mut end = 0;
+            for (offset, bytes) in transfer_chunks(length, limit) {
+                assert_eq!(offset, end);
+                assert_eq!(offset % 8, 0);
+                assert!((1..=limit).contains(&bytes));
+                assert!(bytes.div_ceil(256) <= u32::MAX as usize / 256);
+                end += bytes;
+            }
+            assert_eq!(end, length);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires gfx1151 and native SDMA"]
+    fn split_transfer_failure_drains_prefix_and_retains_fence_budget() -> Result<()> {
+        let gpu = Device::open(Engine::Gpu, 0)?;
+        let queue = gpu.sdma_queue()?;
+        let limit = sdma::transfer_limit(queue.0.info.ring_byte_length as usize)?;
+        let bytes = 2 * limit + 17;
+        let source = gpu
+            .fabric()
+            .allocate_shared(bytes, std::slice::from_ref(&gpu))?;
+        let target = gpu
+            .fabric()
+            .allocate_shared(bytes, std::slice::from_ref(&gpu))?;
+        // Probe both completed chunks and the unsubmitted tail.
+        for offset in [0, limit, 2 * limit] {
+            source.write(offset, &[0x51])?;
+        }
+        target.write(2 * limit, &[0])?;
+        let manager = crate::residency::ResidencyManager::new(4096)?;
+        let command =
+            queue.prepare_copy_reserved(&target, 0, &source, 0, bytes, Some(&manager.budget()))?;
+        assert_eq!(command.parts().count(), 3);
+        assert_eq!(manager.statistics().reserved_bytes, 3 * 64);
+        command.exhaust_final_timeline();
+        assert!(matches!(
+            unsafe { command.dispatch() },
+            Err(Error::DeviceLost(_))
+        ));
+        for offset in [0, limit] {
+            let mut actual = [0];
+            target.read(offset, &mut actual)?;
+            assert_eq!(actual, [0x51]);
+        }
+        let mut tail = [0];
+        target.read(2 * limit, &mut tail)?;
+        assert_eq!(tail, [0]);
+        for part in command.prefix.as_ref().unwrap().iter() {
+            assert_eq!(part.inner.work.retired.load(Ordering::Acquire), 1);
+        }
+        drop(command);
+        assert_eq!(manager.statistics().reserved_bytes, 0);
+        Ok(())
+    }
 
     #[test]
     fn a_full_ring_without_pending_work_returns_busy() {

@@ -18,7 +18,17 @@ buffer with `buffer.binding()` or a subregion with `view.slice(offset, length)?`
 Dispatches, fills and copies take `&self`; staging transfers and synchronization
 need `&mut`. Cloning a `Kernel` retains its executable.
 
-`upload` queues an owned staging transfer; `upload_blocking` waits for it.
+Copies and fills accept logical ranges larger than 4 GiB. HRX splits them to fit
+SDMA ring capacity or compute dispatch limits, including in recorded graphs.
+One completion covers the entire transfer, and HRX retains its buffers through
+retirement. Callers do not need a 64 MiB chunking loop. Ranges must be nonempty
+and in bounds; copy source and destination must not overlap.
+
+`upload` copies host bytes through reusable staging chunks of at most 64 MiB;
+large uploads wait between chunks to keep staging bounded. `upload_blocking`
+also waits for the final chunk. HRX checks the full destination before submission.
+If submission fails after some chunks were accepted, those chunks can still
+modify the destination; streams keep them on their completion timeline.
 `stream.allocate_from(bytes)` initializes a new buffer directly from a nonempty
 host slice, avoiding a staging copy and a separate zero-fill pass.
 

@@ -130,7 +130,21 @@ impl Inner {
             }
             match command {
                 Command::Gpu(c, engine) => {
-                    Ok(Completion::Gpu(unsafe { c.dispatch_wait() }?, *engine))
+                    let _uses = c.retain_parts()?;
+                    let mut last = None;
+                    for part in c.parts() {
+                        let done = Completion::Gpu(unsafe { part.dispatch_part_wait() }?, *engine);
+                        // Record every accepted part under the stream producer lock.
+                        // A later error must leave this prefix visible to fences/drop.
+                        *self
+                            .timeline
+                            .last
+                            .lock()
+                            .map_err(|_| Error::DeviceLost("stream timeline poisoned".into()))? =
+                            Some(done.clone());
+                        last = Some(done);
+                    }
+                    Ok(last.expect("prepared command has a final part"))
                 }
                 Command::Aql(c) => match unsafe { c.dispatch() } {
                     Err(Error::Busy(_)) => {
@@ -978,13 +992,17 @@ impl Stream {
         self.budget_uses.borrow_mut().retain(&[dst, src]);
         self.inner.submit(&self.prepare_copy(dst, src)?)
     }
-    /// Retain an owned staging copy of host bytes and enqueue a GPU transfer.
+    /// Enqueue a host upload using bounded, reusable staging chunks.
+    /// The full destination is checked before any chunk is submitted.
     pub fn upload(&mut self, dst: View<'_>, bytes: &[u8]) -> Result<()> {
         self.owns(dst.owner)?;
         checked_span(0, bytes.len(), dst.len())?;
-        if bytes.is_empty() {
-            return Ok(());
+        for (index, chunk) in bytes.chunks(STAGING_LIMIT).enumerate() {
+            self.upload_chunk(dst.slice(index * STAGING_LIMIT, chunk.len())?, chunk)?;
         }
+        Ok(())
+    }
+    fn upload_chunk(&mut self, dst: View<'_>, bytes: &[u8]) -> Result<()> {
         if self.staging.len() >= 8
             || self
                 .staging
@@ -1815,6 +1833,65 @@ mod tests {
 #[cfg(test)]
 mod staging_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires gfx1151 and native SDMA"]
+    fn split_transfer_failure_leaves_accepted_prefix_on_stream_timeline() -> Result<()> {
+        let manager = crate::residency::ResidencyManager::new(512 << 20)?;
+        {
+            let mut stream = Device::open(0)?.stream_with_options(StreamOptions {
+                copy_engine: crate::execution::CopyEngine::Sdma,
+                memory_budget: Some(manager.budget()),
+                ..Default::default()
+            })?;
+            let buffer = stream.allocate((256 << 20) + 17)?;
+            stream.upload_blocking_at(&buffer, buffer.bytes() - 1, &[0])?;
+            let command = stream.inner.prepare_fill(buffer.binding(), 0x39)?;
+            let Command::Gpu(native, _) = &command else {
+                unreachable!()
+            };
+            assert!(native.parts().count() > 1);
+            native.exhaust_final_timeline();
+            assert!(stream.inner.submit(&command).is_err());
+            assert!(stream.inner.timeline.snapshot()?.is_some());
+            stream.synchronize()?;
+            let mut first = [0];
+            stream.read_blocking(buffer.slice(0, 1), &mut first)?;
+            assert_eq!(first, [0x39]);
+            let mut last = [0];
+            stream.read_blocking(buffer.slice(buffer.bytes() - 1, 1), &mut last)?;
+            assert_eq!(last, [0]);
+        }
+        assert_eq!(manager.statistics().reserved_bytes, 0);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires gfx1151"]
+    fn large_uploads_bound_staging_and_validate_before_publication() -> Result<()> {
+        let manager = crate::residency::ResidencyManager::new(5 * STAGING_LIMIT)?;
+        {
+            let mut stream = Stream::open()?.with_memory_budget(manager.budget());
+            let bytes = 2 * STAGING_LIMIT + 19;
+            let buffer = stream.allocate(bytes + 16)?;
+            stream.fill(buffer.binding(), 0x79)?;
+            let data: Vec<_> = (0..bytes).map(|i| (i ^ (i >> 20)) as u8).collect();
+            assert!(stream.upload(buffer.slice(17, bytes - 1), &data).is_err());
+            let mut first = [0];
+            stream.read_blocking(buffer.slice(0, 1), &mut first)?;
+            assert_eq!(first, [0x79]);
+            stream.upload(buffer.slice(3, bytes), &data)?;
+            assert!(stream.staging.iter().map(|b| b.bytes).sum::<usize>() <= STAGING_LIMIT);
+            let mut actual = vec![0; bytes + 16];
+            stream.read_blocking(buffer.binding(), &mut actual)?;
+            assert_eq!(&actual[..3], &[0x79; 3]);
+            assert_eq!(&actual[3..3 + bytes], data);
+            assert!(actual[3 + bytes..].iter().all(|&b| b == 0x79));
+            assert!(stream.staging_pool.iter().map(|b| b.bytes).sum::<usize>() <= STAGING_LIMIT);
+        }
+        assert_eq!(manager.statistics().reserved_bytes, 0);
+        Ok(())
+    }
 
     #[test]
     #[ignore = "requires gfx1151"]

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Split large copies and fills inside HRX, using SDMA ring capacity and compute
+  dispatch limits. Support ranges beyond 4 GiB in streams and graphs, with one
+  logical completion and retained ownership for partially submitted transfers.
+- Bound host uploads to reusable 64 MiB staging chunks and validate their full
+  destination before submission.
+- Flatten nested PM4 batches when composing graphs.
+
 ## 0.10.0 — 2026-10-08
 
 - Propagate explicit native lifetime selection through runtime devices, streams,
