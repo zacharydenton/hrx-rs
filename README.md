@@ -2,19 +2,17 @@
 
 Rust APIs for AMD GPU and NPU execution, with an in-process
 [Loom](https://github.com/ROCm/hrx-system) compiler.
+Targets Strix Halo (`gfx1151`) and its XDNA NPU on Linux x86-64.
 
-Cargo builds need no native SDK. On first use, HRX downloads a pinned,
-hash-verified bundle containing the runtime and compiler. The host supplies
-Linux drivers and system libraries.
-
-Supported hardware is AMD Strix Halo (`gfx1151`) and its NPU
-(`amd.xdna.strix_halo.17f0_11`) on Linux x86_64. The native bundle is built on
-Ubuntu 26.04 and requires glibc 2.43 or newer.
+- GPU buffers, streams, events and reusable execution graphs.
+- Loom compilation, shared artifact caches, resource reports and sanitizers.
+- GPU/NPU scheduling with shared memory and completion futures.
+- Model composition, allocation budgets and residency management.
+- Buffered and direct file I/O with GPU-authored storage queues.
 
 ## Quick start
 
-Requires Rust 1.91 or later. The package is `hrx-rs`; the Rust crate and CLI are
-named `hrx`.
+Requires Rust 1.91+. The Cargo package is `hrx-rs`; import it as `hrx`:
 
 ```toml
 [dependencies]
@@ -32,13 +30,10 @@ fn main() -> hrx::Result<()> {
 }
 ```
 
-`Device` selects a GPU, `Stream` orders work, and `Buffer` owns an allocation.
-Use `loom::Compiler` to compile kernels and `Stream::graph` to prepare reusable
-GPU work. `execution::Runtime` coordinates GPU/NPU graphs, shared buffers and
-completion futures. Add the `npu` Cargo feature for NPU execution.
-
-Loading native code, dispatching kernels and declaring memory-access contracts
-are unsafe operations. Callers must validate code, arguments and synchronization.
+Use `loom::Compiler` for kernels and `Stream::graph` for reusable GPU work.
+`execution::Runtime` coordinates GPU/NPU graphs. Enable the `npu` Cargo feature
+for NPU execution. Native code loading, kernel dispatch and memory-access
+contracts require caller validation at the unsafe API boundaries.
 
 ## Install the CLI
 
@@ -48,70 +43,44 @@ hrx prepare
 hrx doctor
 ```
 
-GPU execution requires the `amdgpu`/KFD driver, access to `/dev/kfd` and the
-render device, compatible C/C++ runtimes, and `libatomic`. NPU execution also
-requires the `amdxdna` driver and firmware. A ROCm SDK is not required.
+HRX downloads a pinned runtime/compiler bundle; no ROCm SDK is needed to build.
+The host needs amdgpu/KFD access, glibc 2.43+ and compatible C/C++ libraries.
+NPU execution also needs the amdxdna driver and firmware.
+[Setup, offline bundles and overrides](docs/SETUP.md).
 
-`hrx prepare` downloads the archive pinned in [bundle.json](bundle.json).
-APIs also provision it on first use. For offline installation, run
-`HRX_OFFLINE=1 hrx prepare native.tar.gz` with the matching archive.
-
-| Setting | Purpose |
-| --- | --- |
-| `HRX_RUNTIME_DIR` | Use a trusted local native-library directory; bypasses bundle verification |
-| `HRX_BUNDLE_MANIFEST` | Use a local bundle manifest for a mirror or custom build |
-| `HRX_OFFLINE` | Disable network provisioning when set |
-| `HRX_AMDF_LIBRARY` | Override `libamdf.so` |
-| `HRX_FABRIC_LIBRARY` | Override `libhrx_fabric.so` |
-| `HRX_LOOM_LIBRARY` | Override `libloomc.so` |
-
-Caches use `$XDG_CACHE_HOME/hrx`, or `$HOME/.cache/hrx` if the variable is unset
-or relative. The runtime lock uses `$XDG_RUNTIME_DIR`. Compiled kernels share a
-content-addressed cache across applications; each cache hit verifies the artifact
-hash. `hrx gc [DAYS]` removes unpinned bundles and kernels unused for DAYS
-(default 30).
-
-## Guides
-
-- [GPU execution and inference](docs/EXECUTION.md): streams, graphs, memory,
-  model composition and allocation budgets.
-- [Loom compilation](docs/COMPILER.md): targets, launch geometry, reports,
-  tracing and sanitizers.
-- [GPU/NPU execution](docs/GPU-NPU.md): shared memory, scheduling and examples.
-- [Native storage](docs/STORAGE.md): buffered/direct file I/O and read leases.
-- [Queue pool benchmarks](benchmarks/queue-pool/README.md): queue sizing and
-  reproduction commands.
-- [Native builds](native/RELEASE.md) and [compiler patches](patches/loom/README.md).
-- [API reference](https://docs.rs/hrx-rs) and [changelog](CHANGELOG.md).
-
-To run independent GPU and NPU work in one graph:
+Run independent GPU and NPU operations in one graph:
 
 ```sh
 cargo run --release --features npu --example gpu_npu_parallel -- 16777216 1024 21 trace.json
 ```
 
-The example checks a GPU vector transform and NPU matrix multiplication against
-CPU results, compares sequential and concurrent execution, and writes a
-Chrome/Perfetto trace. See the [GPU/NPU guide](docs/GPU-NPU.md#examples) for details.
+The example checks results against CPU references, compares sequential and
+concurrent execution, and writes a Chrome/Perfetto trace.
 
 ## Projects using HRX
 
-| Project | What it does |
+| Project | Model or workload |
 | --- | --- |
-| [hrxdb](https://github.com/zacharydenton/hrxdb) | Embedded GPU vector database with exact cosine search, batched top-k, and custom scoring over resident collections. |
-| [h3-hrx](https://github.com/zacharydenton/h3-hrx) | MiniMax H3 video generation with sound, from text, a first frame, or image and audio references. |
-| [krea2-hrx](https://github.com/zacharydenton/krea2-hrx) | Krea 2 Turbo and Raw text-to-image generation with a complete text encoder, diffusion transformer, and VAE pipeline. |
-| [dinov3-hrx](https://github.com/zacharydenton/dinov3-hrx) | DINOv3 image embeddings and patch features, with resident weights and reusable execution graphs. |
-| [arcface-hrx](https://github.com/zacharydenton/arcface-hrx) | ArcFace face embeddings with five-point alignment and cosine similarity. |
-| [scrfd-hrx](https://github.com/zacharydenton/scrfd-hrx) | SCRFD face detection with bounding boxes, confidence scores, and five facial landmarks. |
+| [h3-hrx](https://github.com/zacharydenton/h3-hrx) | MiniMax H3 video and audio generation |
+| [krea2-hrx](https://github.com/zacharydenton/krea2-hrx) | Krea 2 Turbo and Raw image generation |
+| [clef-hrx](https://github.com/zacharydenton/clef-hrx) | Structured decisions from text and media |
+| [dinov3-hrx](https://github.com/zacharydenton/dinov3-hrx) | Image embeddings and patch features |
+| [scrfd-hrx](https://github.com/zacharydenton/scrfd-hrx) | Face detection and landmarks |
+| [arcface-hrx](https://github.com/zacharydenton/arcface-hrx) | Face alignment and embeddings |
+| [hrxdb](https://github.com/zacharydenton/hrxdb) | Vector search and custom scoring over resident corpora |
 
-| h3-hrx · video with sound | krea2-hrx · image generation |
-| --- | --- |
-| [![An enormous alien creature glides above a fjord and a small boat](https://raw.githubusercontent.com/zacharydenton/h3-hrx/master/docs/media/benchmarks/20260914/h3-i8.jpg)](https://github.com/zacharydenton/h3-hrx/blob/master/docs/media/benchmarks/20260914/h3-i8.mp4) | [![A figure on a basalt sea cliff beneath a ringed planet](https://raw.githubusercontent.com/zacharydenton/krea2-hrx/master/docs/images/planetrise.png)](https://github.com/zacharydenton/krea2-hrx#gallery) |
-| [Watch the 768p alien video](https://github.com/zacharydenton/h3-hrx/blob/master/docs/media/benchmarks/20260914/h3-i8.mp4) | [Explore the image gallery and prompts](https://github.com/zacharydenton/krea2-hrx#gallery) |
+[H3 videos and timings](https://github.com/zacharydenton/h3-hrx/blob/master/docs/showcase.md) ·
+[Krea image gallery](https://github.com/zacharydenton/krea2-hrx#gallery)
 
-See H3's [generation benchmark](https://github.com/zacharydenton/h3-hrx/blob/master/docs/benchmarks/20260914/README.md)
-for timings, memory use and a ComfyUI comparison.
+## Documentation
+
+- [GPU execution and model composition](docs/EXECUTION.md)
+- [Loom compilation and diagnostics](docs/COMPILER.md)
+- [GPU/NPU scheduling](docs/GPU-NPU.md)
+- [Native storage](docs/STORAGE.md)
+- [Queue pool benchmarks](benchmarks/queue-pool/README.md)
+- [Native builds](native/RELEASE.md) and [compiler patches](patches/loom/README.md)
+- [API reference](https://docs.rs/hrx-rs) and [changelog](CHANGELOG.md)
 
 ## Development
 
@@ -121,8 +90,10 @@ cargo clippy --all-features --all-targets -- -D warnings
 cargo doc --all-features --no-deps --open
 ```
 
-Run `scripts/check-feature-matrix.sh` for feature checks. Hardware test commands
-are in the device and storage guides.
+`scripts/check-feature-matrix.sh` checks feature combinations.
+Hardware test commands are in the execution and storage guides.
 
-Original Rust code is [MIT licensed](LICENSE). Native component licenses and
-source provenance are listed in [THIRD-PARTY.md](THIRD-PARTY.md).
+## License
+
+Original Rust code is [MIT licensed](LICENSE).
+[Native component licenses and source provenance](THIRD-PARTY.md).
