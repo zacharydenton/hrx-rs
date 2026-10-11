@@ -133,6 +133,31 @@ rounding. Plans reuse private slots across changing inverse matrices.
 units whose allocations carry their own charges; private workspaces can grow
 while leased, and only idle units can be evicted.
 
+Automatic idle unloading is optional. To unload each model after five minutes
+without use:
+
+```rust
+use hrx::residency::ResidencyManager;
+use std::time::Duration;
+
+let manager = ResidencyManager::with_idle_timeout(8 << 30, Duration::from_secs(300))?;
+# Ok::<(), hrx::Error>(())
+```
+
+The manager starts empty. Call `load` or `load_budgeted` when a request needs a
+model; a later request reloads it if it was evicted. One background worker shared
+by manager clones checks every second, even with no incoming requests. The idle
+countdown starts when a check first observes no leases, explicit pins or retained
+output owners, and the model's idle predicate confirms native work is drained.
+Renewed use resets the countdown. Polling, thread scheduling and native destruction
+can delay unloading beyond five minutes; memory pressure can evict idle models
+sooner. Idle predicates must return promptly, must not panic, and must not reenter
+the manager; they and model destructors can run on the background thread.
+
+`ResidencyManager::new` keeps automatic unloading disabled. The timeout affects
+only registered resources and preserves explicit pins and disk artifact caches.
+It does not imply zero process RSS or release of unrelated allocations.
+
 Pass the manager's `budget()` to `RuntimeOptions::memory_budget` to charge weights,
 scratch and transfer staging before allocation. Standalone streams use
 `with_memory_budget`. NPU instruction buffers and tracked NPU storage also count.
