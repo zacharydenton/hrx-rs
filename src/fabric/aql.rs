@@ -3,7 +3,7 @@ use super::*;
 use std::{
     collections::VecDeque,
     sync::{
-        Mutex,
+        Mutex, OnceLock,
         atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -21,11 +21,13 @@ struct QueueState {
     maximum_private_bytes: u32,
     budget: Option<crate::residency::MemoryBudget>,
     producer: Mutex<Producer>,
+    clock: Option<ClockInfo>,
 }
 struct Producer {
     write: u64,
     pending: VecDeque<(Arc<Work>, u64)>,
 }
+type TimingCapture = Arc<OnceLock<[u64; 2]>>;
 // One host publisher owns the ring under producer. Mapping and scratch remain
 // alive through queue destruction; completion observers only read owned signals.
 unsafe impl Send for QueueState {}
@@ -37,6 +39,18 @@ struct Work {
     leases: Mutex<Vec<memory::DeviceUse>>,
     active: AtomicU64,
     retired: AtomicU64,
+    timing: Option<Mutex<Option<TimingCapture>>>,
+}
+/// Firmware packet-processing interval for one dispatch with its own signal.
+/// It does not identify exact shader boundaries or a shared host-clock epoch.
+#[derive(Clone, Copy, Debug)]
+pub struct AqlDispatchTiming {
+    /// Raw queue-clock start counter.
+    pub start_tick: u64,
+    /// Raw queue-clock end counter.
+    pub end_tick: u64,
+    /// Nominal units; the rate does not establish oscillator accuracy.
+    pub clock: ClockInfo,
 }
 impl Work {
     fn refresh(&self, point: u64) -> Result<bool> {
@@ -59,6 +73,22 @@ impl Work {
             .lock()
             .map_err(|_| Error::DeviceLost("AQL leases poisoned".into()))?;
         if completed >= self.active.load(Ordering::Acquire) {
+            if let Some(state) = &self.timing
+                && let Some(timing) = state
+                    .lock()
+                    .map_err(|_| Error::DeviceLost("AQL timing poisoned".into()))?
+                    .as_ref()
+            {
+                // Completion acquisition makes the firmware's timestamp writes
+                // visible. Preserve the sample before a later dispatch clears it.
+                let ticks = unsafe {
+                    [
+                        ptr::read_volatile(self.signal.host_pointer().add(32).cast::<u64>()),
+                        ptr::read_volatile(self.signal.host_pointer().add(40).cast::<u64>()),
+                    ]
+                };
+                let _ = timing.set(ticks);
+            }
             leases.clear();
         }
         self.retired.fetch_max(completed, Ordering::Release);
@@ -116,8 +146,34 @@ pub struct AqlCompletion {
     queue: AqlQueue,
     work: Arc<Work>,
     point: u64,
+    timing: Option<TimingCapture>,
 }
 impl AqlCompletion {
+    /// Completed dispatch timestamps, or None while pending. Samples remain
+    /// valid after later replays; ordinary queues return Unsupported.
+    pub fn timing(&self) -> Result<Option<AqlDispatchTiming>> {
+        let capture = self
+            .timing
+            .as_ref()
+            .ok_or_else(|| Error::Unsupported("AQL dispatch timestamps were not enabled".into()))?;
+        if !self.refresh()? {
+            return Ok(None);
+        }
+        let ticks = capture
+            .get()
+            .ok_or_else(|| Error::Message("missing AQL timestamp capture".into()))?;
+        let timing = AqlDispatchTiming {
+            start_tick: ticks[0],
+            end_tick: ticks[1],
+            clock: self.queue.0.clock.unwrap(),
+        };
+        if timing.start_tick == 0 || timing.end_tick < timing.start_tick {
+            return Err(Error::Message(
+                "unwritten, reset or wrapped AQL timestamps".into(),
+            ));
+        }
+        Ok(Some(timing))
+    }
     /// Cached retirement only; no native query, lock or progress work.
     pub fn is_complete(&self) -> bool {
         self.work.retired.load(Ordering::Acquire) >= self.point
@@ -190,6 +246,18 @@ impl Device {
         maximum_private_bytes: u32,
         budget: Option<&crate::residency::MemoryBudget>,
     ) -> Result<AqlQueue> {
+        self.aql_queue_with_timestamps(maximum_private_bytes, budget, false)
+    }
+    /// Create an AQL queue with optional firmware dispatch timestamp capture.
+    /// Profiled prepared dispatches admit one invocation at a time so each
+    /// signal identifies exactly one interval; ordinary queues retain replay
+    /// concurrency. Each profiled invocation allocates one retained sample.
+    pub fn aql_queue_with_timestamps(
+        &self,
+        maximum_private_bytes: u32,
+        budget: Option<&crate::residency::MemoryBudget>,
+        timestamps: bool,
+    ) -> Result<AqlQueue> {
         if self.endpoint().engine() != Engine::Gpu {
             return Err(Error::Unsupported("AQL requires a GPU".into()));
         }
@@ -203,9 +271,18 @@ impl Device {
                     && f.user_publication
                     && f.system_release
                     && f.system_acquire
+                    && (!timestamps
+                        || f.format_features
+                            & AMDF_GPU_AQL_FORMAT_FEATURE_DISPATCH_TIMESTAMPS as u64
+                            != 0)
             })
             .ok_or_else(|| Error::Unsupported("no native AQL v1 family".into()))?;
         let api = &self.0.endpoint.0.instance.api;
+        let clock = if timestamps {
+            Some(self.queue_clock_info(family.ordinal)?)
+        } else {
+            None
+        };
         let _ = entry!(api.core, user_queue_destroy);
         let _ = entry!(api.core, user_queue_mapping_destroy);
         let mut scratch_info = amdf_gpu_queue_scratch_t::default();
@@ -262,6 +339,11 @@ impl Device {
             producer_mode: AMDF_QUEUE_PRODUCER_MODE_SINGLE,
             required_capabilities: AMDF_USER_QUEUE_CAPABILITY_HOST_PRODUCER as u64,
             scratch: scratch_info,
+            flags: if timestamps {
+                AMDF_GPU_USER_QUEUE_FLAG_DISPATCH_TIMESTAMPS
+            } else {
+                0
+            },
             ..Default::default()
         };
         let mut raw = ptr::null_mut();
@@ -272,6 +354,7 @@ impl Device {
             return Err(missing("AQL queue"));
         }
         let mut queue = QueueState {
+            clock,
             device: self.clone(),
             raw,
             mapping: ptr::null_mut(),
@@ -497,6 +580,7 @@ impl AqlQueue {
                 leases,
                 active: AtomicU64::new(0),
                 retired: AtomicU64::new(0),
+                timing: self.0.clock.map(|_| Mutex::new(None)),
             }),
             packets,
             next: Arc::new(Mutex::new(0)),
@@ -509,7 +593,8 @@ impl PreparedAql {
         self.storage_bytes
     }
 
-    /// Publish prepared packets without allocating or growing scratch.
+    /// Publish prepared packets without growing scratch. Timestamp-enabled
+    /// queues allocate one sample; ordinary dispatch remains allocation-free.
     /// # Safety
     /// Caller orders conflicting accesses on other queues and obeys the kernel contract.
     pub unsafe fn dispatch(&self) -> Result<AqlCompletion> {
@@ -549,6 +634,29 @@ impl PreparedAql {
             .leases
             .lock()
             .map_err(|_| Error::DeviceLost("AQL leases poisoned".into()))?;
+        let timing = if self.queue.0.clock.is_some() {
+            if self.work.active.load(Ordering::Acquire) > self.work.retired.load(Ordering::Acquire)
+            {
+                return Err(Error::Busy(
+                    "profiled AQL dispatch is still executing".into(),
+                ));
+            }
+            let capture = Arc::new(OnceLock::new());
+            *self
+                .work
+                .timing
+                .as_ref()
+                .unwrap()
+                .lock()
+                .map_err(|_| Error::DeviceLost("AQL timing poisoned".into()))? =
+                Some(capture.clone());
+            unsafe {
+                ptr::write_bytes(self.work.signal.host_pointer().add(32), 0, 16);
+            }
+            Some(capture)
+        } else {
+            None
+        };
         if leases.is_empty() {
             for buffer in &self.work.buffers {
                 match buffer.retain_use() {
@@ -580,6 +688,7 @@ impl PreparedAql {
             queue: self.queue.clone(),
             work: self.work.clone(),
             point,
+            timing,
         })
     }
 }

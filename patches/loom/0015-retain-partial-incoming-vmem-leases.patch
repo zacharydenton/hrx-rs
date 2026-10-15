@@ -1,6 +1,8 @@
+diff --git a/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c b/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c
+index bc8cbd2f31..58a0069d14 100644
 --- a/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c
 +++ b/loom/src/loom/target/arch/amdgpu/planning/wait_plan.c
-@@ -2055,11 +2055,17 @@
+@@ -2310,11 +2310,17 @@ static iree_status_t loom_amdgpu_wait_plan_handle_physical_write_range(
      if (incoming_lease_active &&
          loom_amdgpu_wait_plan_storage_release_is_ordered_vmem_reuse(
              builder, &action, record, reason)) {
@@ -23,6 +25,9 @@
        continue;
      }
      if (incoming_lease_active) {
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_partial_incoming_reuse.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_partial_incoming_reuse.loom-test
+new file mode 100644
+index 0000000000..5e18f68e5d
 --- /dev/null
 +++ b/loom/src/loom/target/arch/amdgpu/test/source_low/low_wait_partial_incoming_reuse.loom-test
 @@ -0,0 +1,28 @@

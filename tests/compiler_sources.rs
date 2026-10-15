@@ -1,5 +1,97 @@
 //! Native compiler qualification; no device or vendor compiler is required.
-use hrx::loom::{Compiler, CxxSource, ReportMode, Specialization};
+use hrx::loom::{Compiler, CxxFpModel, CxxSource, ReportMode, Specialization};
+
+#[test]
+#[ignore = "requires native compiler"]
+fn target_listing_survives_cache_hits_and_corruption_is_recompiled() -> hrx::Result<()> {
+    let compiler = Compiler::resolve(None)?;
+    let module = compiler.module(include_str!("kernels/euler.loom"));
+    let request = Specialization::new("krea2_euler")
+        .with_config("krea2.euler.grid_x", "1")
+        .with_config("krea2.euler.grid_y", "1");
+    let plain = module.compile(&request)?;
+    assert!(plain.listing().is_none());
+    let request = request.with_listing(true);
+    let artifact = module.compile(&request)?;
+    assert_ne!(plain.path(), artifact.path());
+    let listing = artifact.listing().expect("requested target listing");
+    assert!(listing.contains("s_endpgm"));
+    assert_eq!(module.compile(&request)?.listing(), Some(listing));
+    std::fs::write(
+        artifact.path().parent().unwrap().join("target.listing"),
+        "corrupt",
+    )?;
+    assert_eq!(module.compile(&request)?.listing(), Some(listing));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires native C++ importer"]
+fn preambles_reuse_prefixes_but_changed_headers_use_fresh_semantics() -> hrx::Result<()> {
+    let compiler = Compiler::resolve(None)?;
+    let mut source = CxxSource::new(
+        "prefix.cpp",
+        "#include \"factor.h\"\n\
+        [[loom::kernel, loom::workgroup_size(64, 1, 1), loom::workgroup_count(1, 1, 1)]]\n\
+        void fill(unsigned* output) { output[0] = FACTOR; }\n",
+    );
+    source
+        .headers
+        .insert("factor.h".into(), "#define FACTOR 13u\n".into());
+    let cold = compiler.import_cxx(source.clone())?;
+    source.preamble = Some(compiler.cxx_preamble(source.clone())?);
+    let warm = compiler.import_cxx(source.clone())?;
+    assert_eq!(cold.identity(), warm.identity());
+    // Change the suffix to ensure a new import rather than a module/cache hit.
+    source.contents.push_str("\n// warm suffix\n");
+    let request = Specialization::new("fill");
+    assert_eq!(
+        cold.compile(&request)?.bytes(),
+        compiler
+            .import_cxx(source.clone())?
+            .compile(&request)?
+            .bytes()
+    );
+    source
+        .headers
+        .insert("factor.h".into(), "#define FACTOR 29u\n".into());
+    let changed = compiler.import_cxx(source.clone())?.compile(&request)?;
+    assert_ne!(cold.compile(&request)?.bytes(), changed.bytes());
+    source.preamble = None;
+    assert_eq!(
+        changed.bytes(),
+        compiler.import_cxx(source)?.compile(&request)?.bytes()
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires native C++ importer"]
+fn cxx_diagnostic_paths_can_be_remapped_without_changing_include_lookup() -> hrx::Result<()> {
+    let compiler = Compiler::resolve(None)?;
+    let mut source = CxxSource::new("physical/unit.cpp", "#include \"missing.h\"\n");
+    source
+        .source_identifiers
+        .insert("physical/unit.cpp".into(), "logical/unit.cpp".into());
+    let error = compiler
+        .import_cxx(source)?
+        .compile(&Specialization::new("missing"))
+        .expect_err("missing header must fail");
+    fn diagnostics(error: &hrx::Error) -> &[hrx::loom::Diagnostic] {
+        match error {
+            hrx::Error::Compile { diagnostics, .. } => diagnostics,
+            hrx::Error::Context { source, .. } => diagnostics(source),
+            error => panic!("expected diagnostics, got {error}"),
+        }
+    }
+    assert!(
+        diagnostics(&error)
+            .iter()
+            .any(|d| d.source == "logical/unit.cpp"),
+        "{error:?}"
+    );
+    Ok(())
+}
 
 #[test]
 #[ignore = "requires the native compiler with C++ import and XDNA enabled"]
@@ -39,6 +131,10 @@ void fill(float* output) { output[threadIdx.x] = FACTOR; }
     let changed = compiler.import_cxx(source.clone())?;
     assert_ne!(module.identity(), changed.identity());
     assert_ne!(first.bytes(), changed.compile(&request)?.bytes());
+    source.fp_model = CxxFpModel::Fast;
+    let fast = compiler.import_cxx(source.clone())?;
+    assert_ne!(changed.identity(), fast.identity());
+    assert!(!fast.compile(&request)?.bytes().is_empty());
     source.headers.clear();
     assert!(compiler.import_cxx(source)?.compile(&request).is_err());
     Ok(())

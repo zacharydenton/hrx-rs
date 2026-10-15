@@ -1,6 +1,43 @@
 use super::*;
 use std::sync::Mutex;
 
+/// Additional requirements for fresh system backing. Unsupported constraints
+/// fail allocation; placement never silently falls back to another NUMA node.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AllocationOptions {
+    /// Prepare native source handles for remapping by every device consumer.
+    pub mapping_source: bool,
+    /// Prepare replaceable write-back CPU aliases.
+    pub host_mapping_source: bool,
+    /// Require physical host pages on this OS NUMA node.
+    pub host_numa_node: Option<u32>,
+    /// Require coherent GPU attachments (does not imply NPU coherence).
+    pub coherent_gpu: bool,
+    /// Minimum power-of-two alignment, or zero for provider policy.
+    pub minimum_alignment: u64,
+    /// Additional whole-backing flags, such as reservation capability requirements.
+    /// Constants are in [`native`]; per-device flags belong in the fields above.
+    pub required_backing_flags: u64,
+}
+impl AllocationOptions {
+    fn required_flags(self) -> u64 {
+        AMDF_MEMORY_FLAG_HOST_VISIBLE as u64
+            | self.required_backing_flags
+            | if self.host_mapping_source {
+                AMDF_MEMORY_FLAG_HOST_MAPPING_SOURCE as u64
+            } else {
+                0
+            }
+    }
+    fn placement(self) -> amdf_memory_placement_t {
+        self.host_numa_node
+            .map_or_else(Default::default, |node| amdf_memory_placement_t {
+                kind: AMDF_MEMORY_PLACEMENT_KIND_HOST_NUMA,
+                node,
+            })
+    }
+}
+
 /// Shared backing with explicit device access and checked host transfers.
 #[derive(Clone)]
 pub struct Buffer(pub(super) Arc<Memory>);
@@ -262,6 +299,7 @@ struct MemoryOwners {
     source: Option<Buffer>,
     reservation: Option<Arc<crate::residency::MemoryReservation>>,
     host_storage: Option<Arc<memmap2::MmapMut>>,
+    options: AllocationOptions,
 }
 struct ExternalMemory {
     api: Arc<Api>,
@@ -275,6 +313,30 @@ impl Drop for ExternalMemory {
     }
 }
 impl Fabric {
+    /// Allocate initialized system memory with explicit remapping/placement
+    /// requirements. Device access ordinals follow the order in `devices`.
+    pub fn allocate_with_options(
+        &self,
+        bytes: usize,
+        devices: &[Device],
+        options: AllocationOptions,
+        budget: Option<&crate::residency::MemoryBudget>,
+    ) -> Result<Buffer> {
+        self.create_memory(
+            bytes,
+            devices,
+            AMDF_MEMORY_ACCESS_READ | AMDF_MEMORY_ACCESS_WRITE,
+            options.minimum_alignment,
+            None,
+            MemoryOwners {
+                coherent: options.coherent_gpu,
+                reservation: budget.map(|b| b.reserve(bytes).map(Arc::new)).transpose()?,
+                options,
+                ..Default::default()
+            },
+            None,
+        )
+    }
     /// Allocate page-rounded anonymous host storage and register device access.
     /// The mapping and optional budget charge remain owned by every buffer alias,
     /// pending device use, and native-detach quarantine. Useful for kernel I/O
@@ -373,6 +435,7 @@ impl Fabric {
                 source: None,
                 host_storage: None,
                 reservation: Some(reservation),
+                ..Default::default()
             },
             None,
         )
@@ -416,6 +479,7 @@ impl Fabric {
                 source: None,
                 reservation,
                 host_storage: None,
+                ..Default::default()
             },
             None,
         )
@@ -442,6 +506,7 @@ impl Fabric {
                 host_storage: None,
                 source: Some(source.clone()),
                 reservation: None,
+                ..Default::default()
             },
             None,
         )
@@ -538,6 +603,11 @@ impl Fabric {
                 requirements: amdf_memory_access_requirements_t {
                     access,
                     flags: AMDF_MEMORY_FLAG_DEVICE_ADDRESS as u64
+                        | if owners.options.mapping_source {
+                            AMDF_MEMORY_FLAG_MAPPING_SOURCE as u64
+                        } else {
+                            0
+                        }
                         | if owners.coherent && device.endpoint().engine() == Engine::Gpu {
                             AMDF_MEMORY_FLAG_HOST_COHERENT as u64
                         } else {
@@ -635,7 +705,12 @@ impl Fabric {
                 };
                 if profile.roles & (role | AMDF_MEMORY_PROFILE_ROLE_HOST_MAP) as u64
                     != (role | AMDF_MEMORY_PROFILE_ROLE_HOST_MAP) as u64
-                    || profile.supported_flags & AMDF_MEMORY_FLAG_HOST_VISIBLE as u64 == 0
+                    || profile.supported_flags & owners.options.required_flags()
+                        != owners.options.required_flags()
+                    || (owners.options.host_numa_node.is_some()
+                        && construction.placement_kinds
+                            & (1 << AMDF_MEMORY_PLACEMENT_KIND_HOST_NUMA)
+                            == 0)
                     || construction.maximum_byte_length < bytes as u64
                 {
                     continue;
@@ -645,7 +720,8 @@ impl Fabric {
                     structure_size: size_of::<amdf_memory_create_info_t>() as u32,
                     memory_profile_ordinal: ordinal,
                     access_count: accesses.len() as u32,
-                    required_flags: AMDF_MEMORY_FLAG_HOST_VISIBLE as u64,
+                    required_flags: owners.options.required_flags(),
+                    placement: owners.options.placement(),
                     byte_length: bytes as u64,
                     minimum_alignment: alignment,
                     accesses: accesses.as_ptr(),
@@ -959,6 +1035,11 @@ fn profile_accesses(devices: &[Device], coherent: bool) -> Vec<amdf_memory_devic
         .collect()
 }
 impl AllocationProfile {
+    /// Whether this allocating profile accepts an explicit host NUMA constraint.
+    /// Node availability and native policy are checked during allocation.
+    pub fn supports_host_numa(&self) -> bool {
+        self.limits.placement_kinds & (1 << AMDF_MEMORY_PLACEMENT_KIND_HOST_NUMA) != 0
+    }
     /// Largest logical allocation admitted by this profile.
     pub fn maximum_bytes(&self) -> u64 {
         self.limits.maximum_byte_length
@@ -993,6 +1074,7 @@ impl AllocationProfile {
                 source: None,
                 host_storage: None,
                 reservation: budget.map(|b| b.reserve(bytes).map(Arc::new)).transpose()?,
+                ..Default::default()
             },
             None,
         )

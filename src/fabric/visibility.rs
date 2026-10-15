@@ -166,7 +166,7 @@ impl Buffer {
                     return source.site(site);
                 }
                 result.kind = AMDF_MEMORY_SITE_KIND_HOST;
-                result.value.host_mapping = self.0.mapping;
+                result.value.host.mapping = self.0.mapping;
             }
             MemorySite::Device(device, family) => {
                 let Some(index) = self

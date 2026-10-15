@@ -1,7 +1,7 @@
 use hrx::{
     Error, Result, Target,
     loom::{
-        CompileReport, Compiler, CompilerOptions, CxxSource, CxxStandard, ReportMode,
+        CompileReport, Compiler, CompilerOptions, CxxFpModel, CxxSource, CxxStandard, ReportMode,
         SanitizerOptions, SanitizerReporting, Specialization, TraceFormat, TraceOptions,
     },
 };
@@ -12,7 +12,8 @@ pub const HELP: &str = "hrx compile SOURCE SYMBOL [key=value ...] [--name=value 
   --language=loom|c23|c++26
   --include=DIR  --define=NAME[=VALUE]  --header=VIRTUAL=FILE
   --report=none|summary|details  --report-output=FILE
-  --manifest-output=FILE  --launch-output=FILE
+  --manifest-output=FILE  --launch-output=FILE  --listing-output=FILE
+  --fp-model=precise|fast  --source-identifier=PHYSICAL=LOGICAL
   --trace-output=FILE  --trace-format=text|jsonl  --trace-max-bytes=N
   --trace-before=PATTERN  --trace-after=PATTERN (repeatable)
   --sanitizer=access,value,operation,race
@@ -35,6 +36,7 @@ pub fn compile(args: &[String]) -> Result<()> {
     let mut report_output = None;
     let mut manifest_output = None;
     let mut launch_output = None;
+    let mut listing_output = None;
     let mut trace_output = None;
     let mut trace = TraceOptions::default();
     let mut sanitizer = SanitizerOptions::default();
@@ -87,6 +89,25 @@ pub fn compile(args: &[String]) -> Result<()> {
             "--report-output" => report_output = Some(value),
             "--manifest-output" => manifest_output = Some(value),
             "--launch-output" => launch_output = Some(value),
+            "--listing-output" => {
+                listing_output = Some(value);
+                request = request.with_listing(true);
+            }
+            "--fp-model" => {
+                source.fp_model = match value {
+                    "precise" => CxxFpModel::Precise,
+                    "fast" => CxxFpModel::Fast,
+                    _ => return Err(Error::Message("fp model must be precise or fast".into())),
+                }
+            }
+            "--source-identifier" => {
+                let (physical, logical) = value
+                    .split_once('=')
+                    .ok_or_else(|| Error::Message("--source-identifier=PHYSICAL=LOGICAL".into()))?;
+                source
+                    .source_identifiers
+                    .insert(physical.into(), logical.into());
+            }
             "--trace-output" => trace_output = Some(value),
             "--trace-format" => {
                 trace.format = match value {
@@ -176,10 +197,19 @@ pub fn compile(args: &[String]) -> Result<()> {
         fs::write(path, program)?;
     }
     if let Some(path) = report_output {
+        // Reports and executable companions share the verified cache identity.
         let report = artifact
             .report()
             .ok_or_else(|| Error::Message("compiler emitted no requested report".into()))?;
         fs::write(path, serde_json::to_vec_pretty(report)?)?;
+    }
+    if let Some(path) = listing_output {
+        fs::write(
+            path,
+            artifact
+                .listing()
+                .ok_or_else(|| Error::Unsupported("target has no assembly listing".into()))?,
+        )?;
     }
     println!("{}", artifact.path().display());
     Ok(())

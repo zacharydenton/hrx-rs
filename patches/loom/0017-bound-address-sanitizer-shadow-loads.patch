@@ -1,6 +1,8 @@
+diff --git a/loom/src/loom/target/arch/amdgpu/lower/sanitizer_access.c b/loom/src/loom/target/arch/amdgpu/lower/sanitizer_access.c
+index ebb4870b9f..b84daed4c6 100644
 --- a/loom/src/loom/target/arch/amdgpu/lower/sanitizer_access.c
 +++ b/loom/src/loom/target/arch/amdgpu/lower/sanitizer_access.c
-@@ -23,6 +23,9 @@
+@@ -23,6 +23,9 @@ typedef struct loom_amdgpu_sanitizer_shadow_config_values_t {
    loom_value_id_t address;
    // Device-visible shadow base loaded from loom_amdgpu_asan_config_layout_e.
    loom_value_id_t shadow_base;
@@ -10,7 +12,7 @@
  } loom_amdgpu_sanitizer_shadow_config_values_t;
  
  typedef struct loom_amdgpu_sanitizer_access_packet_check_t {
-@@ -453,9 +456,26 @@
+@@ -453,10 +456,27 @@ static iree_status_t loom_amdgpu_sanitizer_access_build_shadow_config_values(
        /*tied_result_count=*/0, location, &load_op));
    values.shadow_base = loom_value_slice_get(loom_low_op_results(load_op), 0);
  
@@ -29,15 +31,16 @@
    *out_values = values;
    return iree_ok_status();
  }
-+
+ 
 +static iree_status_t loom_amdgpu_sanitizer_access_build_shadow_address(
 +    loom_builder_t* builder, const loom_low_descriptor_set_t* descriptor_set,
 +    loom_value_id_t application_address, loom_value_id_t shadow_base,
 +    loom_location_id_t location, loom_value_id_t* out_shadow_address);
- 
++
  iree_status_t loom_amdgpu_build_sanitizer_access_config(
      loom_builder_t* builder, const loom_low_descriptor_set_t* descriptor_set,
-@@ -470,11 +490,21 @@
+     loom_symbol_ref_t asan_config_symbol, loom_location_id_t location,
+@@ -470,11 +490,21 @@ iree_status_t loom_amdgpu_build_sanitizer_access_config(
  
    loom_amdgpu_sanitizer_access_config_t config = {
        .shadow_base = config_values.shadow_base,
@@ -59,7 +62,7 @@
    *out_config = config;
    return iree_ok_status();
  }
-@@ -537,8 +567,91 @@
+@@ -537,8 +567,91 @@ static iree_status_t loom_amdgpu_sanitizer_access_build_shadow_address(
        loom_low_concat_result(scaled_op), location, out_shadow_address);
  }
  
@@ -151,7 +154,7 @@
      loom_value_id_t shadow_address, uint32_t byte_length,
      loom_location_id_t location, loom_value_id_t* out_shadow_value) {
    *out_shadow_value = LOOM_VALUE_ID_INVALID;
-@@ -581,6 +694,38 @@
+@@ -581,6 +694,38 @@ static iree_status_t loom_amdgpu_sanitizer_access_build_shadow_load(
    loom_amdgpu_filter_descriptor_optional_attrs(builder, descriptor_set,
                                                 descriptor, /*required_count=*/0,
                                                 attrs, &attr_count);
@@ -190,7 +193,7 @@
    const loom_value_id_t operands[] = {shadow_address};
    loom_op_t* load_op = NULL;
    IREE_RETURN_IF_ERROR(loom_low_build_resolved_descriptor_op(
-@@ -589,10 +734,25 @@
+@@ -589,10 +734,25 @@ static iree_status_t loom_amdgpu_sanitizer_access_build_shadow_load(
        &result_type,
        /*result_count=*/1, /*tied_results=*/NULL, /*tied_result_count=*/0,
        location, &load_op));
@@ -220,7 +223,7 @@
  }
  
  static iree_status_t loom_amdgpu_sanitizer_access_build_shadow_failure_mask(
-@@ -764,8 +924,8 @@
+@@ -764,8 +924,8 @@ static iree_status_t loom_amdgpu_sanitizer_access_build_packet_check(
        location, &first_shadow_address));
    loom_value_id_t first_shadow_value = LOOM_VALUE_ID_INVALID;
    IREE_RETURN_IF_ERROR(loom_amdgpu_sanitizer_access_build_shadow_load(
@@ -231,7 +234,7 @@
  
    loom_type_t vgpr_type = loom_type_none();
    IREE_RETURN_IF_ERROR(loom_low_build_register_type(
-@@ -812,8 +972,8 @@
+@@ -812,8 +972,8 @@ static iree_status_t loom_amdgpu_sanitizer_access_build_packet_check(
          &last_shadow_address));
      loom_value_id_t last_shadow_value = LOOM_VALUE_ID_INVALID;
      IREE_RETURN_IF_ERROR(loom_amdgpu_sanitizer_access_build_shadow_load(
@@ -242,7 +245,7 @@
  
      loom_value_id_t last_address_lo = LOOM_VALUE_ID_INVALID;
      IREE_RETURN_IF_ERROR(loom_amdgpu_sanitizer_access_build_register_lane(
-@@ -907,8 +1067,8 @@
+@@ -907,8 +1067,8 @@ loom_amdgpu_sanitizer_access_build_full_granule_failure_mask(
          &shadow_address));
      loom_value_id_t shadow_value = LOOM_VALUE_ID_INVALID;
      IREE_RETURN_IF_ERROR(loom_amdgpu_sanitizer_access_build_shadow_load(
@@ -253,9 +256,11 @@
      loom_value_id_t chunk_failure_mask = LOOM_VALUE_ID_INVALID;
      IREE_RETURN_IF_ERROR(
          loom_amdgpu_sanitizer_access_build_shadow_chunk_failure_mask(
+diff --git a/loom/src/loom/target/arch/amdgpu/lower/sanitizer_access.h b/loom/src/loom/target/arch/amdgpu/lower/sanitizer_access.h
+index 8033bf6b51..2c7a295761 100644
 --- a/loom/src/loom/target/arch/amdgpu/lower/sanitizer_access.h
 +++ b/loom/src/loom/target/arch/amdgpu/lower/sanitizer_access.h
-@@ -26,6 +26,11 @@
+@@ -26,6 +26,11 @@ typedef struct loom_builder_t loom_builder_t;
  typedef struct loom_amdgpu_sanitizer_access_config_t {
    // VGPRx2 device-visible ASAN shadow base loaded from the runtime config.
    loom_value_id_t shadow_base;
@@ -267,9 +272,11 @@
    // VGPRx1 zero constant used by shadow-byte predicates.
    loom_value_id_t zero;
    // VGPRx1 minimum ASAN full-poison shadow byte value.
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer.loom-test
+index dc6d0d9883..f63985caaa 100644
 --- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer.loom-test
 +++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer.loom-test
-@@ -21,74 +21,201 @@
+@@ -21,74 +21,201 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %12 = concat(%8, %10) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %13 = s_load_dwordx2_offset_only %12 {offset = 16}
    %14 = v_mov_b32 0
@@ -528,7 +535,7 @@
  // ====
  
  amdgpu.target<gfx11-generic> @target
-@@ -112,74 +239,201 @@
+@@ -112,74 +239,201 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %12 = concat(%8, %10) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %13 = s_load_dwordx2_offset_only %12 {offset = 16}
    %14 = v_mov_b32 0
@@ -787,7 +794,7 @@
  // ====
  
  amdgpu.target<gfx11-generic> @target
-@@ -205,68 +459,195 @@
+@@ -205,68 +459,195 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %14 = concat(%10, %12) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %15 = s_load_dwordx2_offset_only %14 {offset = 16}
    %16 = v_mov_b32 0
@@ -1034,7 +1041,7 @@
  // ====
  
  amdgpu.target<gfx11-generic> @target
-@@ -290,68 +671,196 @@
+@@ -290,68 +671,196 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %12 = concat(%8, %10) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %13 = s_load_dwordx2_offset_only %12 {offset = 16}
    %14 = v_mov_b32 0
@@ -1282,7 +1289,7 @@
  // ====
  
  amdgpu.target<gfx11-generic> @target
-@@ -376,141 +885,397 @@
+@@ -376,141 +885,397 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %12 = concat(%8, %10) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %13 = s_load_dwordx2_offset_only %12 {offset = 16}
    %14 = v_mov_b32 0
@@ -1797,7 +1804,7 @@
  // ====
  
  amdgpu.target<gfx11-generic> @target
-@@ -534,74 +1299,201 @@
+@@ -534,74 +1299,201 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %16 = concat(%12, %14) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %17 = s_load_dwordx2_offset_only %16 {offset = 16}
    %18 = v_mov_b32 0
@@ -2056,7 +2063,7 @@
  // ====
  
  amdgpu.target<gfx942> @target
-@@ -805,52 +1697,129 @@
+@@ -805,52 +1697,129 @@ low.kernel.def target<amdgpu.gfx11.generic.core>(@target) abi_layout({constant_c
    %17 = concat(%13, %15) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %18 = s_load_dwordx2_offset_only %17 {offset = 16}
    %19 = v_mov_b32 0
@@ -2227,9 +2234,11 @@
    low.br ^_bb3
  ^_bb3:
    s_sethalt {reason = 5}
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_accesses.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_accesses.loom-test
+index e7e5fa6716..b24f1c83bc 100644
 --- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_accesses.loom-test
 +++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_accesses.loom-test
-@@ -21,116 +21,348 @@
+@@ -21,116 +21,348 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %12 = concat(%8, %10) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %13 = s_load_dwordx2_offset_only %12 {offset = 16}
    %14 = v_mov_b32 0
@@ -2675,7 +2684,7 @@
  // ====
  
  amdgpu.target<gfx11-generic> @target
-@@ -155,66 +387,199 @@
+@@ -155,66 +387,199 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %13 = concat(%9, %11) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %14 = s_load_dwordx2_offset_only %13 {offset = 16}
    %15 = v_mov_b32 0
@@ -2924,7 +2933,7 @@
  // ====
  
  amdgpu.target<gfx11-generic> @target
-@@ -239,52 +604,131 @@
+@@ -239,52 +604,131 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %13 = concat(%9, %11) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %14 = s_load_dwordx2_offset_only %13 {offset = 16}
    %15 = v_mov_b32 0
@@ -3092,9 +3101,64 @@
  // ====
  
  amdgpu.target<gfx942> @target
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_address_bounds.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_address_bounds.loom-test
+new file mode 100644
+index 0000000000..5849560012
+--- /dev/null
++++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_address_bounds.loom-test
+@@ -0,0 +1,47 @@
++// RUN: with-checks emit source-low output=low sanitizer=access sanitizer-reporting=trap
++amdgpu.target<gfx11-generic> @target {subgroup_size = 32}
++func.def target(@target) @bounded_access_32(%input: buffer) {
++  %zero = index.constant 0 : offset
++  %global = buffer.assume.memory_space<global> %input : buffer
++  %aligned = buffer.assume.alignment %global {minimum_alignment = 8} : buffer
++  %view = buffer.view %aligned[%zero] : buffer -> view<1xi8>
++  sanitizer.assert.access<read> %view[0] {static_extents = [1]} : view<1xi8>
++  func.return
++}
++// ----
++// Bounds are loaded before the application and physical shadow comparisons.
++// Only included lanes issue the load, then the original EXEC is restored.
++CHECK: *{offset = 24*}
++CHECK: *{offset = 32*}
++CHECK: *{offset = 40*}
++CHECK: * = v_cmp_gt_u32 *
++CHECK: * = v_cmp_lt_u32 *
++CHECK: * = s_and_saveexec_b64 *
++CHECK: * = flat_load_u8 *
++CHECK: s_mov_b64_exec *
++CHECK: * = v_cndmask_b32 *
++
++// ====
++
++// RUN: with-checks emit source-low output=low sanitizer=access sanitizer-reporting=trap
++amdgpu.target<gfx11-generic> @target {subgroup_size = 64}
++func.def target(@target) @bounded_access_64(%input: buffer) {
++  %zero = index.constant 0 : offset
++  %global = buffer.assume.memory_space<global> %input : buffer
++  %aligned = buffer.assume.alignment %global {minimum_alignment = 8} : buffer
++  %view = buffer.view %aligned[%zero] : buffer -> view<64xi8>
++  sanitizer.assert.access<read> %view[0] {static_extents = [64]} : view<64xi8>
++  func.return
++}
++// ----
++// Bounds are loaded before the application and physical shadow comparisons.
++// Only included lanes issue the load, then the original EXEC is restored.
++CHECK: *{offset = 24*}
++CHECK: *{offset = 32*}
++CHECK: *{offset = 40*}
++CHECK: * = v_cmp_gt_u32 *
++CHECK: * = v_cmp_lt_u32 *
++CHECK: * = s_and_saveexec_b64 *
++CHECK: * = flat_load_dwordx2 *
++CHECK: s_mov_b64_exec *
++CHECK: * = v_cndmask_b32 *
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_dynamic_stride.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_dynamic_stride.loom-test
+index c0ca04b0e7..5b7fa8e5a7 100644
 --- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_dynamic_stride.loom-test
 +++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_dynamic_stride.loom-test
-@@ -28,83 +28,210 @@
+@@ -28,83 +28,210 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %25 = concat(%21, %23) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %26 = s_load_dwordx2_offset_only %25 {offset = 16}
    %27 = v_mov_b32 0
@@ -3371,31 +3435,30 @@
  // ====
  
  amdgpu.target<gfx11-generic> @target
-@@ -137,78 +264,205 @@
+@@ -137,71 +264,199 @@ low.kernel.def target<amdgpu.gfx11.generic.core>(@target) abi_layout({constant_c
    %22 = concat(%18, %20) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %23 = s_load_dwordx2_offset_only %22 {offset = 16}
    %24 = v_mov_b32 0
 -  %25 = v_mov_b32 128
--  %26 = v_mov_b32_copy %row_size
--  %27 = v_mul_lo_u32 %row, %26
--  %28 = v_lshlrev_b32_src0_inline %27, 2
--  %30 = slice %output_view[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
--  %31 = slice %output_view[1] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
--  %32, %33 = v_add_co_u32 %30, %28
--  %34 = v_mov_b32_copy %31
--  %35, %36 = v_add_co_ci_u32 %34, %24, %33
--  %38 = slice %23[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
--  %39 = v_mov_b32_copy %38
--  %40 = slice %23[1] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
--  %41 = v_mov_b32_copy %40
--  %45 = v_lshrrev_b32_lit %32, 3
--  %46 = v_lshlrev_b32_lit %35, 29
--  %47 = v_or_b32 %45, %46
--  %48 = v_lshrrev_b32_lit %35, 3
--  %54, %55 = v_add_co_u32 %39, %47
--  %56, %57 = v_add_co_ci_u32 %41, %48, %55
--  %58 = concat(%54, %56) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
--  %59 = flat_load_u8 %58 {glc = 1}
+-  %26 = v_mul_lo_u32 %row_size, %row
+-  %27 = v_lshlrev_b32_src0_inline %26, 2
+-  %29 = slice %output_view[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
+-  %30 = slice %output_view[1] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
+-  %31, %32 = v_add_co_u32 %29, %27
+-  %33 = v_mov_b32_copy %30
+-  %34, %35 = v_add_co_ci_u32 %33, %24, %32
+-  %37 = slice %23[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
+-  %38 = v_mov_b32_copy %37
+-  %39 = slice %23[1] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
+-  %40 = v_mov_b32_copy %39
+-  %44 = v_lshrrev_b32_lit %31, 3
+-  %45 = v_lshlrev_b32_lit %34, 29
+-  %46 = v_or_b32 %44, %45
+-  %47 = v_lshrrev_b32_lit %34, 3
+-  %53, %54 = v_add_co_u32 %38, %46
+-  %55, %56 = v_add_co_ci_u32 %40, %47, %54
+-  %57 = concat(%53, %55) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
+-  %58 = flat_load_u8 %57 {glc = 1}
 +  %25 = global_load_b64_saddr %24, %22 {offset = 24, glc = 1}
 +  %26 = slice %25[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
 +  %27 = slice %25[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
@@ -3435,210 +3498,203 @@
 +  %95 = v_mov_b32_copy %43
 +  %101, %102 = v_add_co_u32 %87, %93
 +  %103, %104 = v_add_co_ci_u32 %89, %95, %102
-+  %106 = v_mov_b32_copy %row_size
-+  %107 = v_mul_lo_u32 %row, %106
-+  %108 = v_lshlrev_b32_src0_inline %107, 2
-+  %110 = slice %output_view[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
-+  %111 = slice %output_view[1] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
-+  %112, %113 = v_add_co_u32 %110, %108
-+  %114 = v_mov_b32_copy %111
-+  %115, %116 = v_add_co_ci_u32 %114, %45, %113
-+  %125 = v_lshrrev_b32_lit %112, 3
-+  %126 = v_lshlrev_b32_lit %115, 29
-+  %127 = v_or_b32 %125, %126
-+  %128 = v_lshrrev_b32_lit %115, 3
-+  %134, %135 = v_add_co_u32 %72, %127
-+  %136, %137 = v_add_co_ci_u32 %74, %128, %135
-+  %138 = concat(%134, %136) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
-+  %139 = v_mov_b32 3
-+  %146, %147 = v_add_co_u32 %112, %139
-+  %148, %149 = v_add_co_ci_u32 %115, %45, %147
-+  %160 = v_cmp_gt_u32 %115, %50
-+  %161 = v_cmp_eq_i32 %115, %50
-+  %162 = v_cmp_ge_u32 %112, %48
-+  %163 = s_and_b64 %161, %162
-+  %164 = s_or_b64 %160, %163
-+  %169 = v_cmp_lt_u32 %148, %63
-+  %170 = v_cmp_eq_i32 %148, %63
-+  %171 = v_cmp_lt_u32 %146, %61
-+  %172 = s_and_b64 %170, %171
-+  %173 = s_or_b64 %169, %172
-+  %178 = v_cmp_gt_u32 %148, %115
-+  %179 = v_cmp_eq_i32 %148, %115
-+  %180 = v_cmp_ge_u32 %146, %112
-+  %181 = s_and_b64 %179, %180
-+  %182 = s_or_b64 %178, %181
-+  %183 = s_and_b64 %164, %173
-+  %184 = s_and_b64 %183, %182
-+  %192, %193 = v_add_co_u32 %134, %45
-+  %194, %195 = v_add_co_ci_u32 %136, %45, %193
-+  %201 = v_cmp_gt_u32 %136, %89
-+  %202 = v_cmp_eq_i32 %136, %89
-+  %203 = v_cmp_ge_u32 %134, %87
-+  %204 = s_and_b64 %202, %203
-+  %205 = s_or_b64 %201, %204
-+  %210 = v_cmp_lt_u32 %194, %103
-+  %211 = v_cmp_eq_i32 %194, %103
-+  %212 = v_cmp_lt_u32 %192, %101
-+  %213 = s_and_b64 %211, %212
-+  %214 = s_or_b64 %210, %213
-+  %219 = v_cmp_gt_u32 %194, %136
-+  %220 = v_cmp_eq_i32 %194, %136
-+  %221 = v_cmp_ge_u32 %192, %134
-+  %222 = s_and_b64 %220, %221
-+  %223 = s_or_b64 %219, %222
-+  %224 = s_and_b64 %205, %214
-+  %225 = s_and_b64 %224, %223
-+  %226 = s_and_b64 %184, %225
-+  %227 = v_mov_b32 4294967295
-+  %228, %229 = s_and_saveexec_b64 %226
-+  %230 = flat_load_u8 %138 {glc = 1}
++  %106 = v_mul_lo_u32 %row_size, %row
++  %107 = v_lshlrev_b32_src0_inline %106, 2
++  %109 = slice %output_view[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
++  %110 = slice %output_view[1] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
++  %111, %112 = v_add_co_u32 %109, %107
++  %113 = v_mov_b32_copy %110
++  %114, %115 = v_add_co_ci_u32 %113, %45, %112
++  %124 = v_lshrrev_b32_lit %111, 3
++  %125 = v_lshlrev_b32_lit %114, 29
++  %126 = v_or_b32 %124, %125
++  %127 = v_lshrrev_b32_lit %114, 3
++  %133, %134 = v_add_co_u32 %72, %126
++  %135, %136 = v_add_co_ci_u32 %74, %127, %134
++  %137 = concat(%133, %135) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
++  %138 = v_mov_b32 3
++  %145, %146 = v_add_co_u32 %111, %138
++  %147, %148 = v_add_co_ci_u32 %114, %45, %146
++  %159 = v_cmp_gt_u32 %114, %50
++  %160 = v_cmp_eq_i32 %114, %50
++  %161 = v_cmp_ge_u32 %111, %48
++  %162 = s_and_b64 %160, %161
++  %163 = s_or_b64 %159, %162
++  %168 = v_cmp_lt_u32 %147, %63
++  %169 = v_cmp_eq_i32 %147, %63
++  %170 = v_cmp_lt_u32 %145, %61
++  %171 = s_and_b64 %169, %170
++  %172 = s_or_b64 %168, %171
++  %177 = v_cmp_gt_u32 %147, %114
++  %178 = v_cmp_eq_i32 %147, %114
++  %179 = v_cmp_ge_u32 %145, %111
++  %180 = s_and_b64 %178, %179
++  %181 = s_or_b64 %177, %180
++  %182 = s_and_b64 %163, %172
++  %183 = s_and_b64 %182, %181
++  %191, %192 = v_add_co_u32 %133, %45
++  %193, %194 = v_add_co_ci_u32 %135, %45, %192
++  %200 = v_cmp_gt_u32 %135, %89
++  %201 = v_cmp_eq_i32 %135, %89
++  %202 = v_cmp_ge_u32 %133, %87
++  %203 = s_and_b64 %201, %202
++  %204 = s_or_b64 %200, %203
++  %209 = v_cmp_lt_u32 %193, %103
++  %210 = v_cmp_eq_i32 %193, %103
++  %211 = v_cmp_lt_u32 %191, %101
++  %212 = s_and_b64 %210, %211
++  %213 = s_or_b64 %209, %212
++  %218 = v_cmp_gt_u32 %193, %135
++  %219 = v_cmp_eq_i32 %193, %135
++  %220 = v_cmp_ge_u32 %191, %133
++  %221 = s_and_b64 %219, %220
++  %222 = s_or_b64 %218, %221
++  %223 = s_and_b64 %204, %213
++  %224 = s_and_b64 %223, %222
++  %225 = s_and_b64 %183, %224
++  %226 = v_mov_b32 4294967295
++  %227, %228 = s_and_saveexec_b64 %225
++  %229 = flat_load_u8 %137 {glc = 1}
    s_waitcnt {vmcnt = 0}
--  %61 = v_and_b32_lit %32, 7
--  %62 = v_add_u32_lit %61, 3
--  %63 = v_cmp_ne_i32 %59, %24
--  %64 = v_cmp_ge_u32 %59, %25
--  %65 = v_cmp_ge_u32 %62, %59
--  %66 = s_and_b64 %63, %65
--  %67 = s_or_b64 %64, %66
--  %68 = v_mov_b32 3
--  %75, %76 = v_add_co_u32 %32, %68
--  %77, %78 = v_add_co_ci_u32 %35, %24, %76
--  %87 = v_lshrrev_b32_lit %75, 3
--  %88 = v_lshlrev_b32_lit %77, 29
--  %89 = v_or_b32 %87, %88
--  %90 = v_lshrrev_b32_lit %77, 3
--  %96, %97 = v_add_co_u32 %39, %89
--  %98, %99 = v_add_co_ci_u32 %41, %90, %97
--  %100 = concat(%96, %98) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
--  %101 = flat_load_u8 %100 {glc = 1}
-+  s_mov_b64_exec %228
-+  %231 = v_cndmask_b32 %227, %230, %226
-+  %233 = v_and_b32_lit %112, 7
-+  %234 = v_add_u32_lit %233, 3
-+  %235 = v_cmp_ne_i32 %231, %45
-+  %236 = v_cmp_ge_u32 %231, %46
-+  %237 = v_cmp_ge_u32 %234, %231
-+  %238 = s_and_b64 %235, %237
-+  %239 = s_or_b64 %236, %238
-+  %240 = v_mov_b32 3
-+  %241 = v_mov_b32 0
-+  %247, %248 = v_add_co_u32 %112, %240
-+  %249, %250 = v_add_co_ci_u32 %115, %241, %248
-+  %252 = slice %23[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
-+  %253 = v_mov_b32_copy %252
-+  %254 = slice %23[1] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
-+  %255 = v_mov_b32_copy %254
-+  %259 = v_lshrrev_b32_lit %247, 3
-+  %260 = v_lshlrev_b32_lit %249, 29
-+  %261 = v_or_b32 %259, %260
-+  %262 = v_lshrrev_b32_lit %249, 3
-+  %268, %269 = v_add_co_u32 %253, %261
-+  %270, %271 = v_add_co_ci_u32 %255, %262, %269
-+  %272 = concat(%268, %270) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
-+  %280, %281 = v_add_co_u32 %247, %241
-+  %282, %283 = v_add_co_ci_u32 %249, %241, %281
-+  %286 = v_mov_b32_copy %28
-+  %288 = v_mov_b32_copy %29
-+  %294 = v_cmp_gt_u32 %249, %288
-+  %295 = v_cmp_eq_i32 %249, %288
-+  %296 = v_cmp_ge_u32 %247, %286
-+  %297 = s_and_b64 %295, %296
-+  %298 = s_or_b64 %294, %297
-+  %303 = v_cmp_lt_u32 %282, %63
-+  %304 = v_cmp_eq_i32 %282, %63
-+  %305 = v_cmp_lt_u32 %280, %61
-+  %306 = s_and_b64 %304, %305
-+  %307 = s_or_b64 %303, %306
-+  %312 = v_cmp_gt_u32 %282, %249
-+  %313 = v_cmp_eq_i32 %282, %249
-+  %314 = v_cmp_ge_u32 %280, %247
-+  %315 = s_and_b64 %313, %314
-+  %316 = s_or_b64 %312, %315
-+  %317 = s_and_b64 %298, %307
-+  %318 = s_and_b64 %317, %316
-+  %326, %327 = v_add_co_u32 %268, %241
-+  %328, %329 = v_add_co_ci_u32 %270, %241, %327
-+  %335 = v_cmp_gt_u32 %270, %89
-+  %336 = v_cmp_eq_i32 %270, %89
-+  %337 = v_cmp_ge_u32 %268, %87
-+  %338 = s_and_b64 %336, %337
-+  %339 = s_or_b64 %335, %338
-+  %344 = v_cmp_lt_u32 %328, %103
-+  %345 = v_cmp_eq_i32 %328, %103
-+  %346 = v_cmp_lt_u32 %326, %101
-+  %347 = s_and_b64 %345, %346
-+  %348 = s_or_b64 %344, %347
-+  %353 = v_cmp_gt_u32 %328, %270
-+  %354 = v_cmp_eq_i32 %328, %270
-+  %355 = v_cmp_ge_u32 %326, %268
-+  %356 = s_and_b64 %354, %355
-+  %357 = s_or_b64 %353, %356
-+  %358 = s_and_b64 %339, %348
-+  %359 = s_and_b64 %358, %357
-+  %360 = s_and_b64 %318, %359
-+  %361 = v_mov_b32 4294967295
-+  %362, %363 = s_and_saveexec_b64 %360
-+  %364 = flat_load_u8 %272 {glc = 1}
+-  %60 = v_and_b32_lit %31, 7
+-  %61 = v_add_u32_lit %60, 3
+-  %62 = v_cmp_ne_i32 %58, %24
+-  %63 = v_cmp_ge_u32 %58, %25
+-  %64 = v_cmp_ge_u32 %61, %58
+-  %65 = s_and_b64 %62, %64
+-  %66 = s_or_b64 %63, %65
+-  %67 = v_mov_b32 3
+-  %74, %75 = v_add_co_u32 %31, %67
+-  %76, %77 = v_add_co_ci_u32 %34, %24, %75
+-  %86 = v_lshrrev_b32_lit %74, 3
+-  %87 = v_lshlrev_b32_lit %76, 29
+-  %88 = v_or_b32 %86, %87
+-  %89 = v_lshrrev_b32_lit %76, 3
+-  %95, %96 = v_add_co_u32 %38, %88
+-  %97, %98 = v_add_co_ci_u32 %40, %89, %96
+-  %99 = concat(%95, %97) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
+-  %100 = flat_load_u8 %99 {glc = 1}
++  s_mov_b64_exec %227
++  %230 = v_cndmask_b32 %226, %229, %225
++  %232 = v_and_b32_lit %111, 7
++  %233 = v_add_u32_lit %232, 3
++  %234 = v_cmp_ne_i32 %230, %45
++  %235 = v_cmp_ge_u32 %230, %46
++  %236 = v_cmp_ge_u32 %233, %230
++  %237 = s_and_b64 %234, %236
++  %238 = s_or_b64 %235, %237
++  %239 = v_mov_b32 3
++  %240 = v_mov_b32 0
++  %246, %247 = v_add_co_u32 %111, %239
++  %248, %249 = v_add_co_ci_u32 %114, %240, %247
++  %251 = slice %23[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
++  %252 = v_mov_b32_copy %251
++  %253 = slice %23[1] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
++  %254 = v_mov_b32_copy %253
++  %258 = v_lshrrev_b32_lit %246, 3
++  %259 = v_lshlrev_b32_lit %248, 29
++  %260 = v_or_b32 %258, %259
++  %261 = v_lshrrev_b32_lit %248, 3
++  %267, %268 = v_add_co_u32 %252, %260
++  %269, %270 = v_add_co_ci_u32 %254, %261, %268
++  %271 = concat(%267, %269) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
++  %279, %280 = v_add_co_u32 %246, %240
++  %281, %282 = v_add_co_ci_u32 %248, %240, %280
++  %285 = v_mov_b32_copy %28
++  %287 = v_mov_b32_copy %29
++  %293 = v_cmp_gt_u32 %248, %287
++  %294 = v_cmp_eq_i32 %248, %287
++  %295 = v_cmp_ge_u32 %246, %285
++  %296 = s_and_b64 %294, %295
++  %297 = s_or_b64 %293, %296
++  %302 = v_cmp_lt_u32 %281, %63
++  %303 = v_cmp_eq_i32 %281, %63
++  %304 = v_cmp_lt_u32 %279, %61
++  %305 = s_and_b64 %303, %304
++  %306 = s_or_b64 %302, %305
++  %311 = v_cmp_gt_u32 %281, %248
++  %312 = v_cmp_eq_i32 %281, %248
++  %313 = v_cmp_ge_u32 %279, %246
++  %314 = s_and_b64 %312, %313
++  %315 = s_or_b64 %311, %314
++  %316 = s_and_b64 %297, %306
++  %317 = s_and_b64 %316, %315
++  %325, %326 = v_add_co_u32 %267, %240
++  %327, %328 = v_add_co_ci_u32 %269, %240, %326
++  %334 = v_cmp_gt_u32 %269, %89
++  %335 = v_cmp_eq_i32 %269, %89
++  %336 = v_cmp_ge_u32 %267, %87
++  %337 = s_and_b64 %335, %336
++  %338 = s_or_b64 %334, %337
++  %343 = v_cmp_lt_u32 %327, %103
++  %344 = v_cmp_eq_i32 %327, %103
++  %345 = v_cmp_lt_u32 %325, %101
++  %346 = s_and_b64 %344, %345
++  %347 = s_or_b64 %343, %346
++  %352 = v_cmp_gt_u32 %327, %269
++  %353 = v_cmp_eq_i32 %327, %269
++  %354 = v_cmp_ge_u32 %325, %267
++  %355 = s_and_b64 %353, %354
++  %356 = s_or_b64 %352, %355
++  %357 = s_and_b64 %338, %347
++  %358 = s_and_b64 %357, %356
++  %359 = s_and_b64 %317, %358
++  %360 = v_mov_b32 4294967295
++  %361, %362 = s_and_saveexec_b64 %359
++  %363 = flat_load_u8 %271 {glc = 1}
    s_waitcnt {vmcnt = 0}
--  %103 = v_and_b32_lit %75, 7
--  %104 = v_cmp_ne_i32 %101, %24
--  %105 = v_cmp_ge_u32 %101, %25
--  %106 = v_cmp_ge_u32 %103, %101
--  %107 = s_and_b64 %104, %106
--  %108 = s_or_b64 %105, %107
--  %109 = s_or_b64 %67, %108
--  %110 = slice %109[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
--  %111 = s_mov_b32 0
--  %112 = concat(%110, %111) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
--  %121 = concat(%111, %111) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
--  %122 = s_cmp_lg_u64 %112, %121
--  low.cond_br %122, ^_bb2, ^_bb1 : reg<amdgpu.scc>
-+  s_mov_b64_exec %362
-+  %365 = v_cndmask_b32 %361, %364, %360
-+  %367 = v_and_b32_lit %247, 7
-+  %368 = v_cmp_ne_i32 %365, %45
-+  %369 = v_cmp_ge_u32 %365, %46
-+  %370 = v_cmp_ge_u32 %367, %365
-+  %371 = s_and_b64 %368, %370
-+  %372 = s_or_b64 %369, %371
-+  %373 = s_or_b64 %239, %372
-+  %374 = slice %373[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
-+  %375 = s_mov_b32 0
-+  %376 = concat(%374, %375) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
-+  %385 = concat(%375, %375) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
-+  %386 = s_cmp_lg_u64 %376, %385
-+  low.cond_br %386, ^_bb2, ^_bb1 : reg<amdgpu.scc>
+-  %102 = v_and_b32_lit %74, 7
+-  %103 = v_cmp_ne_i32 %100, %24
+-  %104 = v_cmp_ge_u32 %100, %25
+-  %105 = v_cmp_ge_u32 %102, %100
+-  %106 = s_and_b64 %103, %105
+-  %107 = s_or_b64 %104, %106
+-  %108 = s_or_b64 %66, %107
+-  %109 = slice %108[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
+-  %110 = s_mov_b32 0
+-  %111 = concat(%109, %110) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
+-  %120 = concat(%110, %110) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
+-  %121 = s_cmp_lg_u64 %111, %120
+-  low.cond_br %121, ^_bb2, ^_bb1 : reg<amdgpu.scc>
++  s_mov_b64_exec %361
++  %364 = v_cndmask_b32 %360, %363, %359
++  %366 = v_and_b32_lit %246, 7
++  %367 = v_cmp_ne_i32 %364, %45
++  %368 = v_cmp_ge_u32 %364, %46
++  %369 = v_cmp_ge_u32 %366, %364
++  %370 = s_and_b64 %367, %369
++  %371 = s_or_b64 %368, %370
++  %372 = s_or_b64 %238, %371
++  %373 = slice %372[0] : reg<amdgpu.sgpr x2> -> reg<amdgpu.sgpr>
++  %374 = s_mov_b32 0
++  %375 = concat(%373, %374) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
++  %384 = concat(%374, %374) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
++  %385 = s_cmp_lg_u64 %375, %384
++  low.cond_br %385, ^_bb2, ^_bb1 : reg<amdgpu.scc>
  ^_bb1:
    return
  ^_bb2:
--  %123, %124 = s_and_saveexec_b64 %112
-+  %387, %388 = s_and_saveexec_b64 %376
+-  %122, %123 = s_and_saveexec_b64 %111
++  %386, %387 = s_and_saveexec_b64 %375
    s_trap {trapid = 2}
--  %113 = s_sendmsg_rtn_b32 {message = 128}
--  %114 = s_mov_b32 1023
--  %115 = s_and_b32 %113, %114
--  %116 = s_mov_b32 1024
--  %117 = s_or_b32 %115, %116
--  %118 = s_mov_b32_m0 %117
--  s_sendmsg %118 {message = 1}
-+  %377 = s_sendmsg_rtn_b32 {message = 128}
-+  %378 = s_mov_b32 1023
-+  %379 = s_and_b32 %377, %378
-+  %380 = s_mov_b32 1024
-+  %381 = s_or_b32 %379, %380
-+  %382 = s_mov_b32_m0 %381
-+  s_sendmsg %382 {message = 1}
+-  %112 = s_sendmsg_rtn_b32 {message = 128}
+-  %113 = s_mov_b32 1023
+-  %114 = s_and_b32 %112, %113
+-  %115 = s_mov_b32 1024
+-  %116 = s_or_b32 %114, %115
+-  %117 = s_mov_b32_m0 %116
+-  s_sendmsg %117 {message = 1}
++  %376 = s_sendmsg_rtn_b32 {message = 128}
++  %377 = s_mov_b32 1023
++  %378 = s_and_b32 %376, %377
++  %379 = s_mov_b32 1024
++  %380 = s_or_b32 %378, %379
++  %381 = s_mov_b32_m0 %380
++  s_sendmsg %381 {message = 1}
    low.br ^_bb3
  ^_bb3:
    s_sethalt {reason = 5}
-   low.br ^_bb3
- }
--
- // ====
- 
- amdgpu.target<gfx11-generic> @target
-@@ -237,77 +491,205 @@
+@@ -236,77 +491,205 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %21 = concat(%17, %19) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %22 = s_load_dwordx2_offset_only %21 {offset = 16}
    %23 = v_mov_b32 0
@@ -3909,9 +3965,11 @@
    low.br ^_bb3
  ^_bb3:
    s_sethalt {reason = 5}
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_wide_offsets.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_wide_offsets.loom-test
+index ca6d4cb1f5..7d1f73ab51 100644
 --- a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_wide_offsets.loom-test
 +++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_wide_offsets.loom-test
-@@ -20,78 +20,205 @@
+@@ -20,78 +20,205 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %13 = concat(%9, %11) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %14 = s_load_dwordx2_offset_only %13 {offset = 16}
    %15 = v_mov_b32 0
@@ -4178,7 +4236,7 @@
  // ====
  
  amdgpu.target<gfx11-generic> @target
-@@ -115,71 +242,200 @@
+@@ -115,71 +242,200 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @sanitiz
    %12 = concat(%8, %10) : (reg<amdgpu.sgpr>, reg<amdgpu.sgpr>) -> reg<amdgpu.sgpr x2>
    %13 = s_load_dwordx2_offset_only %12 {offset = 16}
    %14 = v_mov_b32 0
@@ -4438,53 +4496,3 @@
    low.br ^_bb3
  ^_bb3:
    s_sethalt {reason = 5}
---- /dev/null
-+++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_sanitizer_address_bounds.loom-test
-@@ -0,0 +1,47 @@
-+// RUN: with-checks emit source-low output=low sanitizer=access sanitizer-reporting=trap
-+amdgpu.target<gfx11-generic> @target {subgroup_size = 32}
-+func.def target(@target) @bounded_access_32(%input: buffer) {
-+  %zero = index.constant 0 : offset
-+  %global = buffer.assume.memory_space<global> %input : buffer
-+  %aligned = buffer.assume.alignment %global {minimum_alignment = 8} : buffer
-+  %view = buffer.view %aligned[%zero] : buffer -> view<1xi8>
-+  sanitizer.assert.access<read> %view[0] {static_extents = [1]} : view<1xi8>
-+  func.return
-+}
-+// ----
-+// Bounds are loaded before the application and physical shadow comparisons.
-+// Only included lanes issue the load, then the original EXEC is restored.
-+CHECK: *{offset = 24*}
-+CHECK: *{offset = 32*}
-+CHECK: *{offset = 40*}
-+CHECK: * = v_cmp_gt_u32 *
-+CHECK: * = v_cmp_lt_u32 *
-+CHECK: * = s_and_saveexec_b64 *
-+CHECK: * = flat_load_u8 *
-+CHECK: s_mov_b64_exec *
-+CHECK: * = v_cndmask_b32 *
-+
-+// ====
-+
-+// RUN: with-checks emit source-low output=low sanitizer=access sanitizer-reporting=trap
-+amdgpu.target<gfx11-generic> @target {subgroup_size = 64}
-+func.def target(@target) @bounded_access_64(%input: buffer) {
-+  %zero = index.constant 0 : offset
-+  %global = buffer.assume.memory_space<global> %input : buffer
-+  %aligned = buffer.assume.alignment %global {minimum_alignment = 8} : buffer
-+  %view = buffer.view %aligned[%zero] : buffer -> view<64xi8>
-+  sanitizer.assert.access<read> %view[0] {static_extents = [64]} : view<64xi8>
-+  func.return
-+}
-+// ----
-+// Bounds are loaded before the application and physical shadow comparisons.
-+// Only included lanes issue the load, then the original EXEC is restored.
-+CHECK: *{offset = 24*}
-+CHECK: *{offset = 32*}
-+CHECK: *{offset = 40*}
-+CHECK: * = v_cmp_gt_u32 *
-+CHECK: * = v_cmp_lt_u32 *
-+CHECK: * = s_and_saveexec_b64 *
-+CHECK: * = flat_load_dwordx2 *
-+CHECK: s_mov_b64_exec *
-+CHECK: * = v_cndmask_b32 *

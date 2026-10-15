@@ -6,11 +6,144 @@
 #include <string.h>
 #include "amdf/amdf.h"
 #include "amdf/xdna.h"
-#include "experimental/xdna/amdf_status.h"
-#include "experimental/xdna/executable.h"
+#include "iree/hal/drivers/amd/status.h"
+#include "iree/hal/drivers/amd/xdna/executable_storage.h"
 #include "iree/base/byte_sequence.h"
 #include "iree/hal/drivers/amd/xdna/image/aie2p/npu2.h"
 extern int hrx_fabric_status(iree_status_t value);
+static iree_hal_memory_access_t iree_hal_amd_xdna_executable_required_access(
+    iree_xdna_elf_binding_access_t access) {
+  iree_hal_memory_access_t required_access = IREE_HAL_MEMORY_ACCESS_NONE;
+  if (iree_any_bit_set(access, IREE_XDNA_ELF_BINDING_ACCESS_READ)) {
+    required_access |= IREE_HAL_MEMORY_ACCESS_READ;
+  }
+  if (iree_any_bit_set(access, IREE_XDNA_ELF_BINDING_ACCESS_WRITE)) {
+    required_access |= IREE_HAL_MEMORY_ACCESS_WRITE;
+  }
+  return required_access;
+}
+
+static iree_hal_buffer_usage_t iree_hal_amd_xdna_executable_required_usage(
+    iree_xdna_elf_binding_access_t access) {
+  iree_hal_buffer_usage_t required_usage = IREE_HAL_BUFFER_USAGE_NONE;
+  if (iree_any_bit_set(access, IREE_XDNA_ELF_BINDING_ACCESS_READ)) {
+    required_usage |= IREE_HAL_BUFFER_USAGE_STORAGE_READ;
+  }
+  if (iree_any_bit_set(access, IREE_XDNA_ELF_BINDING_ACCESS_WRITE)) {
+    required_usage |= IREE_HAL_BUFFER_USAGE_STORAGE_WRITE;
+  }
+  return required_usage;
+}
+
+static iree_hal_memory_type_t iree_hal_amd_xdna_executable_required_memory_type(
+    const iree_xdna_elf_binding_record_t* contract) {
+  iree_hal_memory_type_t required_memory_type = IREE_HAL_MEMORY_TYPE_NONE;
+  if (iree_any_bit_set(contract->usage,
+                       IREE_XDNA_ELF_BINDING_USAGE_DEVICE_VISIBLE)) {
+    required_memory_type |= IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE;
+  }
+  const bool requires_host_visibility =
+      contract->address_space == IREE_XDNA_ELF_BINDING_ADDRESS_SPACE_HOST ||
+      iree_any_bit_set(contract->usage,
+                       IREE_XDNA_ELF_BINDING_USAGE_HOST_VISIBLE);
+  if (requires_host_visibility) {
+    required_memory_type |= IREE_HAL_MEMORY_TYPE_HOST_VISIBLE;
+    if (iree_any_bit_set(contract->usage,
+                         IREE_XDNA_ELF_BINDING_USAGE_COHERENT)) {
+      required_memory_type |= IREE_HAL_MEMORY_TYPE_HOST_COHERENT;
+    }
+    if (iree_any_bit_set(contract->usage, IREE_XDNA_ELF_BINDING_USAGE_CACHED)) {
+      required_memory_type |= IREE_HAL_MEMORY_TYPE_HOST_CACHED;
+    }
+  }
+  return required_memory_type;
+}
+
+static iree_status_t iree_hal_amd_xdna_executable_validate_binding(
+    uint32_t binding_ordinal, const iree_xdna_elf_binding_record_t* contract,
+    const iree_hal_amd_xdna_executable_binding_t* binding) {
+  if (binding->buffer_ref.buffer == NULL) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "XDNA binding %u is not fully resolved",
+                            binding_ordinal);
+  }
+
+  iree_device_size_t resource_byte_offset = 0;
+  iree_device_size_t resource_byte_length = 0;
+  IREE_RETURN_IF_ERROR(iree_hal_buffer_calculate_range(
+      /*base_offset=*/0,
+      iree_hal_buffer_byte_length(binding->buffer_ref.buffer),
+      binding->buffer_ref.offset, binding->buffer_ref.length,
+      &resource_byte_offset, &resource_byte_length));
+  IREE_RETURN_IF_ERROR(iree_hal_buffer_validate_access(
+      iree_hal_buffer_allowed_access(binding->buffer_ref.buffer),
+      iree_hal_amd_xdna_executable_required_access(contract->access)));
+  IREE_RETURN_IF_ERROR(iree_hal_buffer_validate_usage(
+      iree_hal_buffer_allowed_usage(binding->buffer_ref.buffer),
+      iree_hal_amd_xdna_executable_required_usage(contract->access)));
+  IREE_RETURN_IF_ERROR(iree_hal_buffer_validate_memory_type(
+      iree_hal_buffer_memory_type(binding->buffer_ref.buffer),
+      iree_hal_amd_xdna_executable_required_memory_type(contract)));
+
+  if (resource_byte_offset < contract->minimum_byte_offset ||
+      resource_byte_offset > contract->maximum_byte_offset) {
+    return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
+                            "XDNA binding %u offset %" PRIu64
+                            " is outside [%" PRIu64 ", %" PRIu64 "]",
+                            binding_ordinal, (uint64_t)resource_byte_offset,
+                            contract->minimum_byte_offset,
+                            contract->maximum_byte_offset);
+  }
+  if (resource_byte_length < contract->minimum_byte_length) {
+    return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
+                            "XDNA binding %u length %" PRIu64
+                            " is smaller than required %" PRIu64,
+                            binding_ordinal, (uint64_t)resource_byte_length,
+                            contract->minimum_byte_length);
+  }
+  if ((binding->device_address & (contract->minimum_alignment - 1)) != 0) {
+    return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
+                            "XDNA binding %u device address 0x%" PRIx64
+                            " does not satisfy %" PRIu64 "-byte alignment",
+                            binding_ordinal, binding->device_address,
+                            contract->minimum_alignment);
+  }
+  if ((resource_byte_length != 0 &&
+       binding->device_address > UINT64_MAX - (resource_byte_length - 1))) {
+    return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
+                            "XDNA binding %u native range overflows",
+                            binding_ordinal);
+  }
+  return iree_ok_status();
+}
+
+// The upstream storage patcher requires validated external ranges and addresses.
+static iree_status_t hrx_xdna_bind(
+    const iree_hal_amd_xdna_image_t* image, uint32_t entry_ordinal,
+    const iree_hal_amd_xdna_executable_storage_t* storage,
+    uint32_t binding_count, const iree_hal_amd_xdna_executable_binding_t* bindings) {
+  const iree_hal_amd_xdna_image_tables_t* tables = iree_hal_amd_xdna_image_tables(image);
+  const iree_xdna_elf_entry_record_t entry =
+      iree_hal_amd_xdna_image_tables_entry(tables, entry_ordinal);
+  if (binding_count != entry.binding_count)
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT, "XDNA binding count mismatch");
+  for (uint32_t i = 0; i < binding_count; ++i) {
+    const iree_xdna_elf_binding_record_t contract =
+        iree_hal_amd_xdna_image_tables_binding(tables, entry.first_binding + i);
+    if (contract.kind != IREE_XDNA_ELF_BINDING_KIND_NONE) {
+      IREE_RETURN_IF_ERROR(iree_hal_amd_xdna_executable_validate_binding(i, &contract, &bindings[i]));
+    }
+  }
+  for (uint32_t i = 0; i < entry.dynamic_relocation_count; ++i) {
+    const iree_xdna_elf_relocation_record_t relocation =
+        iree_hal_amd_xdna_image_tables_relocation(tables, entry.first_dynamic_relocation + i);
+    IREE_RETURN_IF_ERROR(iree_hal_amd_xdna_executable_storage_validate_relocation(
+        &relocation, bindings[relocation.source_ordinal].device_address));
+  }
+  iree_hal_amd_xdna_executable_storage_patch(image, entry_ordinal, storage, bindings);
+  return iree_ok_status();
+}
+
 struct hrx_fabric_xdna_program {
   iree_allocator_t host_allocator;
   const amdf_api_t* api;
@@ -204,7 +337,7 @@ static iree_status_t iree_xdna_run_prepare_storage(
   if (!iree_status_is_ok(status)) {
     return status;
   }
-  IREE_RETURN_IF_ERROR(iree_hal_amd_xdna_executable_load(
+  IREE_RETURN_IF_ERROR(iree_hal_amd_xdna_executable_storage_load(
       run->image, run->entry_ordinal, run->storage.count, run->storage.values));
   return iree_ok_status();
 }
@@ -254,7 +387,7 @@ static iree_status_t prepare(iree_xdna_run_t* run, const uint8_t* bytes,
     &span, run->host_allocator, &sequence);
   iree_allocator_free(run->host_allocator, span.data);
   if (!iree_status_is_ok(status)) return status;
-  status = iree_hal_amd_xdna_image_create(sequence, &target, run->host_allocator, &run->image);
+  status = iree_hal_amd_xdna_image_allocate(sequence, &target, run->host_allocator, &run->image);
   iree_byte_sequence_release(sequence);
   IREE_RETURN_IF_ERROR(status);
   IREE_RETURN_IF_ERROR(iree_hal_amd_xdna_image_find_entry(
@@ -286,17 +419,17 @@ static iree_status_t prepare(iree_xdna_run_t* run, const uint8_t* bytes,
     status = iree_hal_heap_buffer_wrap(iree_hal_buffer_placement_undefined(),
       IREE_HAL_MEMORY_TYPE_HOST_LOCAL | IREE_HAL_MEMORY_TYPE_HOST_VISIBLE |
       IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE, IREE_HAL_MEMORY_ACCESS_READ |
-      IREE_HAL_MEMORY_ACCESS_WRITE | IREE_HAL_MEMORY_ACCESS_UNALIGNED,
+      IREE_HAL_MEMORY_ACCESS_WRITE,
       IREE_HAL_BUFFER_USAGE_STORAGE, binding->allocation_length,
       iree_make_byte_span(binding->host_pointer, binding->allocation_length),
       iree_hal_buffer_release_callback_null(), run->host_allocator, &buffer);
     if (iree_status_is_ok(status)) resolved[i] = (iree_hal_amd_xdna_executable_binding_t){
       .buffer_ref = iree_hal_make_buffer_ref(buffer, binding->offset, binding->length),
-      .memory = binding->memory, .memory_byte_offset = binding->offset,
+      .byte_length = binding->length,
       .device_address = binding->address};
   }
-  if (iree_status_is_ok(status)) status = iree_hal_amd_xdna_executable_bind(
-    run->image, run->entry_ordinal, run->storage.count, run->storage.values,
+  if (iree_status_is_ok(status)) status = hrx_xdna_bind(
+    run->image, run->entry_ordinal, run->storage.values,
     binding_count, resolved);
   for (uint32_t i = 0; i < binding_count; ++i)
     iree_hal_buffer_release(resolved[i].buffer_ref.buffer);
@@ -308,7 +441,7 @@ static iree_status_t prepare(iree_xdna_run_t* run, const uint8_t* bytes,
         AMDF_HOST_CACHE_OPERATION_FLUSH, 0, run->storage.values[i].mapping.data_length),
       "storage flush"));
   }
-  IREE_RETURN_IF_ERROR(iree_hal_amd_xdna_executable_query_invocation(
+  IREE_RETURN_IF_ERROR(iree_hal_amd_xdna_executable_storage_query_invocation(
     run->image, run->entry_ordinal, run->storage.count, run->storage.values, &run->command));
   const amdf_xdna_kernel_queue_create_info_t queue = {
     .type = AMDF_STRUCTURE_TYPE_XDNA_KERNEL_QUEUE_CREATE_INFO, .structure_size = sizeof(queue),
@@ -357,7 +490,7 @@ static iree_status_t close_program(hrx_fabric_xdna_program* run) {
       run->xdna_api->context_destroy(run->context), "context destroy"));
     run->context = NULL;
   }
-  iree_hal_amd_xdna_image_destroy(run->image);
+  iree_hal_amd_xdna_image_free(run->image);
   free(run);
   return iree_ok_status();
 }

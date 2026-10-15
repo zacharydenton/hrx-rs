@@ -1,5 +1,18 @@
 use super::*;
 
+/// Hardware family, independent of admitted execution/memory services.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuArchitecture {
+    /// Architecture outside the pinned native classifier's known IP versions.
+    Unknown,
+    /// Graphics Core Next, including pre-CDNA GFX9 parts.
+    Gcn,
+    /// Radeon DNA.
+    Rdna,
+    /// Compute DNA.
+    Cdna,
+}
+
 /// Native packet representation accepted by one queue family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueCommand {
@@ -31,6 +44,12 @@ pub struct QueueCapabilities {
     pub user_publication: bool,
     /// Kernel-mediated publication is available.
     pub kernel_publication: bool,
+    /// Kernel submissions can order virtual-address replacement.
+    pub virtual_memory: bool,
+    /// Kernel submissions accept multiple ordered command descriptors.
+    pub vector_submit: bool,
+    /// AQL creation accepts optional automatic dispatch timestamps.
+    pub dispatch_timestamps: bool,
     /// Minimum ring length in bytes.
     pub minimum_ring_bytes: u64,
     /// Maximum ring length in bytes.
@@ -43,6 +62,26 @@ pub struct QueueCapabilities {
     pub system_acquire: bool,
 }
 impl Endpoint {
+    /// Classify hardware identity without opening a device. Queue and memory
+    /// support must still be queried independently. GFX9 includes GCN and CDNA.
+    pub fn gpu_architecture(&self) -> Result<GpuArchitecture> {
+        let mut info = amdf_gpu_endpoint_info_t {
+            type_: HRX_AMDF_STRUCTURE_TYPE_GPU_ENDPOINT_INFO,
+            structure_size: size_of::<amdf_gpu_endpoint_info_t>() as u32,
+            ..Default::default()
+        };
+        check("GPU architecture", unsafe {
+            entry!(self.0.instance.api.gpu, endpoint_query_info)(self.0.raw, &mut info)
+        })?;
+        let ip = info.gfx_ip;
+        Ok(match (ip.major, ip.minor, ip.stepping) {
+            (6..=8, _, _) => GpuArchitecture::Gcn,
+            (9, 0, 8 | 10) | (9, 4 | 5, _) => GpuArchitecture::Cdna,
+            (9, 0, _) => GpuArchitecture::Gcn,
+            (10..=12, _, _) => GpuArchitecture::Rdna,
+            _ => GpuArchitecture::Unknown,
+        })
+    }
     /// Inspect all native queue families without opening a device or queue.
     pub fn queue_capabilities(&self) -> Result<Vec<QueueCapabilities>> {
         let api = self.0.instance.api.core;
@@ -81,6 +120,16 @@ impl Endpoint {
                     kernel_publication: family.publication_modes
                         & AMDF_QUEUE_PUBLICATION_MODE_KERNEL
                         != 0,
+                    virtual_memory: family.kernel_queue_capabilities
+                        & AMDF_KERNEL_QUEUE_CAPABILITY_VIRTUAL_MEMORY as u64
+                        != 0,
+                    vector_submit: family.kernel_queue_capabilities
+                        & AMDF_KERNEL_QUEUE_CAPABILITY_VECTOR_SUBMIT as u64
+                        != 0,
+                    dispatch_timestamps: family.command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_AQL
+                        && family.format_features
+                            & AMDF_GPU_AQL_FORMAT_FEATURE_DISPATCH_TIMESTAMPS as u64
+                            != 0,
                     minimum_ring_bytes: family.minimum_ring_byte_length,
                     maximum_ring_bytes: family.maximum_ring_byte_length,
                     ring_alignment: family.ring_byte_length_alignment,

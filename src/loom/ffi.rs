@@ -1171,6 +1171,8 @@ impl Default for loomc_target_pipeline_options_t {
 pub type loomc_emit_artifact_flags_t = u32;
 #[doc = " Request the primary loadable artifact. A zero flag value also requests\n the primary artifact."]
 pub const LOOMC_EMIT_ARTIFACT_FLAG_PRIMARY: loomc_emit_artifact_flag_bits_e = 1;
+#[doc = " Request a target-owned textual listing when the emitter supports one.\n\n A produced listing is returned as `LOOMC_ARTIFACT_KIND_TEXT`. Its format\n identifies the target syntax, such as `amdgpu-assembly`, and its\n identifier is derived from the primary artifact identifier by appending\n `.listing`. Emitters without a listing return no listing artifact."]
+pub const LOOMC_EMIT_ARTIFACT_FLAG_TARGET_LISTING: loomc_emit_artifact_flag_bits_e = 2;
 #[doc = " Emit artifact request flag bits."]
 pub type loomc_emit_artifact_flag_bits_e = ::std::os::raw::c_uint;
 #[doc = " Target emission options.\n\n Callers zero-initialize this descriptor, set `type` to\n `LOOMC_STRUCTURE_TYPE_EMIT_OPTIONS`, set `structure_size` to\n `sizeof(loomc_emit_options_t)`, and fill the requested fields. Attach\n `loomc_artifact_manifest_options_t`, `loomc_compile_report_options_t`,\n `loomc_option_dict_t`, and target-specific descriptors through `next`."]
@@ -1828,7 +1830,40 @@ pub const LOOMC_LINK_MODE_LINK: loomc_link_mode_e = 1;
 pub type loomc_link_mode_e = ::std::os::raw::c_uint;
 #[doc = " Link product selection mode."]
 pub use self::loomc_link_mode_e as loomc_link_mode_t;
-#[doc = " Link invocation options.\n\n A link invocation consumes a frozen index and returns either a retained\n module or a failed result with diagnostics. Merge mode materializes only\n primary INPUT providers and preserves unresolved contracts. Link mode\n selects a dependency closure from explicit roots or exported primary roots\n plus the exports of selected root providers across the complete supplied\n library universe. Linking preserves every target carried by the selected\n symbols. Target-specialization extensions participate in template-provider\n selection and project exact target facts into the standalone linked output.\n Config options materialize on the linked output for this invocation; frozen\n indexes and reusable input/library modules are never mutated by link-time\n specialization.\n Template choices that depend on unavailable caller or target facts retain\n their viable providers until compilation. A closed library universe does\n not require template applicability to be resolved at the link boundary."]
+#[doc = " Invocation-local materialized module provider.\n\n Materialized providers let same-version producers link an existing\n `loomc_module_t` directly without serializing it into a source first. They\n participate in the same provider order and linkage-role rules as sources in\n a frozen index.\n\n @lifetime\n The module and provider name are borrowed for the duration of\n `loomc_link_module`. The module is neither retained nor mutated. The caller\n must keep it alive and must not mutate it concurrently with linking."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct loomc_link_module_provider_t {
+    #[doc = " Immutable module to index and materialize for this invocation."]
+    pub module: *const loomc_module_t,
+    #[doc = " Stable provider label for diagnostics and private-name determinism. Empty\n uses the module name."]
+    pub provider_name: loomc_string_view_t,
+    #[doc = " Provider linkage role."]
+    pub role: loomc_link_provider_role_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of loomc_link_module_provider_t"]
+        [::std::mem::size_of::<loomc_link_module_provider_t>() - 32usize];
+    ["Alignment of loomc_link_module_provider_t"]
+        [::std::mem::align_of::<loomc_link_module_provider_t>() - 8usize];
+    ["Offset of field: loomc_link_module_provider_t::module"]
+        [::std::mem::offset_of!(loomc_link_module_provider_t, module) - 0usize];
+    ["Offset of field: loomc_link_module_provider_t::provider_name"]
+        [::std::mem::offset_of!(loomc_link_module_provider_t, provider_name) - 8usize];
+    ["Offset of field: loomc_link_module_provider_t::role"]
+        [::std::mem::offset_of!(loomc_link_module_provider_t, role) - 24usize];
+};
+impl Default for loomc_link_module_provider_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Link invocation options.\n\n A link invocation consumes a frozen index, invocation-local materialized\n modules, or both and returns either a retained module or a failed result\n with diagnostics. Merge mode materializes only primary INPUT providers and\n preserves unresolved contracts. Link mode selects a dependency closure from\n explicit roots or exported primary roots plus the exports of selected root\n providers across the complete supplied library universe. Linking preserves\n every target carried by the selected symbols. Target-specialization\n extensions participate in template-provider selection and project exact\n target facts into the standalone linked output. Config options materialize\n on the linked output for this invocation; frozen indexes and reusable\n input/library modules are never mutated by link-time specialization.\n Template choices that depend on unavailable caller or target facts retain\n their viable providers until compilation. A closed library universe does\n not require template applicability to be resolved at the link boundary."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct loomc_link_options_t {
@@ -1838,7 +1873,7 @@ pub struct loomc_link_options_t {
     pub structure_size: loomc_host_size_t,
     #[doc = " Optional invocation extensions such as\n `loomc_target_specialization_options_t`."]
     pub next: *const ::std::os::raw::c_void,
-    #[doc = " Frozen provider index to link."]
+    #[doc = " Frozen provider index to link. Required when `module_provider_count` is\n zero. When materialized module providers are present this may be `NULL` or\n a library-only index used as the immutable provider prefix."]
     pub link_index: *mut loomc_link_index_t,
     #[doc = " Output module name for this invocation. Empty uses the linker's default."]
     pub module_name: loomc_string_view_t,
@@ -1856,10 +1891,14 @@ pub struct loomc_link_options_t {
     pub root_provider_ordinals: *const loomc_host_size_t,
     #[doc = " Number of entries in `root_provider_ordinals`."]
     pub root_provider_count: loomc_host_size_t,
+    #[doc = " Invocation-local materialized module providers appended after the\n optional frozen library prefix. Provider ordinals in this combined index\n retain the frozen prefix ordinals and then follow this array order."]
+    pub module_providers: *const loomc_link_module_provider_t,
+    #[doc = " Number of entries in `module_providers`."]
+    pub module_provider_count: loomc_host_size_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of loomc_link_options_t"][::std::mem::size_of::<loomc_link_options_t>() - 136usize];
+    ["Size of loomc_link_options_t"][::std::mem::size_of::<loomc_link_options_t>() - 152usize];
     ["Alignment of loomc_link_options_t"][::std::mem::align_of::<loomc_link_options_t>() - 8usize];
     ["Offset of field: loomc_link_options_t::type_"]
         [::std::mem::offset_of!(loomc_link_options_t, type_) - 0usize];
@@ -1885,6 +1924,10 @@ const _: () = {
         [::std::mem::offset_of!(loomc_link_options_t, root_provider_ordinals) - 120usize];
     ["Offset of field: loomc_link_options_t::root_provider_count"]
         [::std::mem::offset_of!(loomc_link_options_t, root_provider_count) - 128usize];
+    ["Offset of field: loomc_link_options_t::module_providers"]
+        [::std::mem::offset_of!(loomc_link_options_t, module_providers) - 136usize];
+    ["Offset of field: loomc_link_options_t::module_provider_count"]
+        [::std::mem::offset_of!(loomc_link_options_t, module_provider_count) - 144usize];
 };
 impl Default for loomc_link_options_t {
     fn default() -> Self {
@@ -2066,11 +2109,17 @@ pub const LOOMC_CXX_DATA_MODEL_ILP32: loomc_cxx_data_model_e = 2;
 pub type loomc_cxx_data_model_e = ::std::os::raw::c_uint;
 #[doc = " Source integer and pointer layout, independent of the importing process."]
 pub use self::loomc_cxx_data_model_e as loomc_cxx_data_model_t;
-#[doc = " Permit approximate mathematical functions (Loom's AFN contract)."]
-pub const LOOMC_CXX_IMPORT_FLAG_APPROXIMATE_FUNCTIONS: loomc_cxx_import_flag_bits_e = 1;
+#[doc = " Preserve floating-point value and evaluation-order semantics."]
+pub const LOOMC_CXX_FP_MODEL_PRECISE: loomc_cxx_fp_model_e = 0;
+#[doc = " Permit the complete Loom fast-math contract."]
+pub const LOOMC_CXX_FP_MODEL_FAST: loomc_cxx_fp_model_e = 1;
+#[doc = " Translation-unit floating-point transformation policy.\n\n Source fastmath attributes may replace this default for individual\n functions or statements."]
+pub type loomc_cxx_fp_model_e = ::std::os::raw::c_uint;
+#[doc = " Translation-unit floating-point transformation policy.\n\n Source fastmath attributes may replace this default for individual\n functions or statements."]
+pub use self::loomc_cxx_fp_model_e as loomc_cxx_fp_model_t;
 #[doc = " Omit the embedded system include root; use caller paths/providers only."]
-pub const LOOMC_CXX_IMPORT_FLAG_NO_BUILTIN_INCLUDES: loomc_cxx_import_flag_bits_e = 2;
-#[doc = " Explicit source permissions and include delivery policy."]
+pub const LOOMC_CXX_IMPORT_FLAG_NO_BUILTIN_INCLUDES: loomc_cxx_import_flag_bits_e = 1;
+#[doc = " Include delivery policy."]
 pub type loomc_cxx_import_flag_bits_e = ::std::os::raw::c_uint;
 #[doc = " Bitmask of loomc_cxx_import_flag_bits_t values."]
 pub type loomc_cxx_import_flags_t = u32;
@@ -2111,6 +2160,43 @@ impl Default for loomc_cxx_source_provider_t {
         }
     }
 }
+#[doc = " Maps a physical frontend path to the logical source identifier retained in\n diagnostics and imported modules.\n\n The physical path remains the identity used for include lookup. Returning\n the same logical identifier for distinct physical sources is invalid.\n\n @param user_data Caller state from the mapper descriptor.\n @param path Physical frontend path borrowed for this callback.\n @param out_identifier Receives the logical diagnostic/module identity.\n @return OK when the path was mapped, or a mapping failure status.\n\n @lifetime\n The returned identifier must remain valid until the next mapper callback.\n The importer copies it before another callback can occur.\n\n @thread_safety\n Calls are synchronous and sequential within one import. A mapper shared by\n concurrent imports must synchronize its own mutable state."]
+pub type loomc_cxx_source_path_mapper_fn_t = ::std::option::Option<
+    unsafe extern "C" fn(
+        user_data: *mut ::std::os::raw::c_void,
+        path: loomc_string_view_t,
+        out_identifier: *mut loomc_string_view_t,
+    ) -> loomc_status_t,
+>;
+#[doc = " Optional logical-identity mapper for retained frontend source paths."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct loomc_cxx_source_path_mapper_t {
+    #[doc = " Callback, or NULL to retain physical frontend paths unchanged."]
+    pub fn_: loomc_cxx_source_path_mapper_fn_t,
+    #[doc = " Caller-owned state borrowed until import returns."]
+    pub user_data: *mut ::std::os::raw::c_void,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of loomc_cxx_source_path_mapper_t"]
+        [::std::mem::size_of::<loomc_cxx_source_path_mapper_t>() - 16usize];
+    ["Alignment of loomc_cxx_source_path_mapper_t"]
+        [::std::mem::align_of::<loomc_cxx_source_path_mapper_t>() - 8usize];
+    ["Offset of field: loomc_cxx_source_path_mapper_t::fn_"]
+        [::std::mem::offset_of!(loomc_cxx_source_path_mapper_t, fn_) - 0usize];
+    ["Offset of field: loomc_cxx_source_path_mapper_t::user_data"]
+        [::std::mem::offset_of!(loomc_cxx_source_path_mapper_t, user_data) - 8usize];
+};
+impl Default for loomc_cxx_source_path_mapper_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
 #[doc = " Preprocessor definition applied after the frontend's predefined macros."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -2138,7 +2224,13 @@ impl Default for loomc_cxx_define_t {
         }
     }
 }
-#[doc = " Configuration for one source translation unit.\n\n Zero initialization selects C++26, LP64, strict math, visible definitions\n as roots, and the embedded facade system root when built into the library.\n All strings, arrays, and callback state are borrowed until import returns."]
+#[doc = " Immutable process-local C/C++ semantic preamble.\n\n A preamble owns the parsed state and exact source snapshot of one leading\n include prefix. It does not retain the source, context, import options, or\n callback state used to create it. Retained handles may be shared by\n concurrent imports; each import restores into a fresh translation unit."]
+#[repr(C)]
+#[derive(Debug)]
+pub struct loomc_cxx_preamble_t {
+    _unused: [u8; 0],
+}
+#[doc = " Configuration for one source translation unit.\n\n Zero initialization selects C++26, LP64, precise math, visible definitions\n as roots, and the embedded facade system root when built into the library.\n All strings, arrays, and callback state are borrowed until import returns."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct loomc_cxx_import_options_t {
@@ -2154,10 +2246,14 @@ pub struct loomc_cxx_import_options_t {
     pub triple: loomc_string_view_t,
     #[doc = " Source integer and pointer layout."]
     pub data_model: loomc_cxx_data_model_t,
-    #[doc = " Source permissions and include delivery flags."]
+    #[doc = " Default floating-point transformation policy."]
+    pub fp_model: loomc_cxx_fp_model_t,
+    #[doc = " Include delivery flags."]
     pub flags: loomc_cxx_import_flags_t,
     #[doc = " Optional include provider; embedded headers are resolved separately."]
     pub source_provider: loomc_cxx_source_provider_t,
+    #[doc = " Optional mapping from physical paths to retained logical identities."]
+    pub source_path_mapper: loomc_cxx_source_path_mapper_t,
     #[doc = " User include directories, searched after quoted local includes."]
     pub include_paths: *const loomc_string_view_t,
     #[doc = " Number of user include directories."]
@@ -2174,11 +2270,13 @@ pub struct loomc_cxx_import_options_t {
     pub roots: *const loomc_string_view_t,
     #[doc = " Number of explicitly selected roots."]
     pub root_count: loomc_host_size_t,
+    #[doc = " Optional immutable preamble borrowed until import returns. An exact source\n prefix or frontend-configuration mismatch uses ordinary cold parsing."]
+    pub preamble: *const loomc_cxx_preamble_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of loomc_cxx_import_options_t"]
-        [::std::mem::size_of::<loomc_cxx_import_options_t>() - 144usize];
+        [::std::mem::size_of::<loomc_cxx_import_options_t>() - 176usize];
     ["Alignment of loomc_cxx_import_options_t"]
         [::std::mem::align_of::<loomc_cxx_import_options_t>() - 8usize];
     ["Offset of field: loomc_cxx_import_options_t::type_"]
@@ -2193,26 +2291,32 @@ const _: () = {
         [::std::mem::offset_of!(loomc_cxx_import_options_t, triple) - 40usize];
     ["Offset of field: loomc_cxx_import_options_t::data_model"]
         [::std::mem::offset_of!(loomc_cxx_import_options_t, data_model) - 56usize];
+    ["Offset of field: loomc_cxx_import_options_t::fp_model"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, fp_model) - 60usize];
     ["Offset of field: loomc_cxx_import_options_t::flags"]
-        [::std::mem::offset_of!(loomc_cxx_import_options_t, flags) - 60usize];
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, flags) - 64usize];
     ["Offset of field: loomc_cxx_import_options_t::source_provider"]
-        [::std::mem::offset_of!(loomc_cxx_import_options_t, source_provider) - 64usize];
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, source_provider) - 72usize];
+    ["Offset of field: loomc_cxx_import_options_t::source_path_mapper"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, source_path_mapper) - 88usize];
     ["Offset of field: loomc_cxx_import_options_t::include_paths"]
-        [::std::mem::offset_of!(loomc_cxx_import_options_t, include_paths) - 80usize];
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, include_paths) - 104usize];
     ["Offset of field: loomc_cxx_import_options_t::include_path_count"]
-        [::std::mem::offset_of!(loomc_cxx_import_options_t, include_path_count) - 88usize];
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, include_path_count) - 112usize];
     ["Offset of field: loomc_cxx_import_options_t::system_include_paths"]
-        [::std::mem::offset_of!(loomc_cxx_import_options_t, system_include_paths) - 96usize];
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, system_include_paths) - 120usize];
     ["Offset of field: loomc_cxx_import_options_t::system_include_path_count"]
-        [::std::mem::offset_of!(loomc_cxx_import_options_t, system_include_path_count) - 104usize];
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, system_include_path_count) - 128usize];
     ["Offset of field: loomc_cxx_import_options_t::defines"]
-        [::std::mem::offset_of!(loomc_cxx_import_options_t, defines) - 112usize];
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, defines) - 136usize];
     ["Offset of field: loomc_cxx_import_options_t::define_count"]
-        [::std::mem::offset_of!(loomc_cxx_import_options_t, define_count) - 120usize];
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, define_count) - 144usize];
     ["Offset of field: loomc_cxx_import_options_t::roots"]
-        [::std::mem::offset_of!(loomc_cxx_import_options_t, roots) - 128usize];
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, roots) - 152usize];
     ["Offset of field: loomc_cxx_import_options_t::root_count"]
-        [::std::mem::offset_of!(loomc_cxx_import_options_t, root_count) - 136usize];
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, root_count) - 160usize];
+    ["Offset of field: loomc_cxx_import_options_t::preamble"]
+        [::std::mem::offset_of!(loomc_cxx_import_options_t, preamble) - 168usize];
 };
 impl Default for loomc_cxx_import_options_t {
     fn default() -> Self {
@@ -2342,13 +2446,13 @@ pub struct Loomc {
         workload_argument_count: loomc_host_size_t,
         out_config: *mut loomc_launch_config_t,
     ) -> loomc_status_t,
-    pub loomc_link_index_builder_create: unsafe extern "C" fn(
+    pub loomc_link_index_builder_allocate: unsafe extern "C" fn(
         context: *mut loomc_context_t,
         options: *const loomc_link_index_builder_options_t,
         allocator: loomc_allocator_t,
         out_builder: *mut *mut loomc_link_index_builder_t,
     ) -> loomc_status_t,
-    pub loomc_link_index_builder_release:
+    pub loomc_link_index_builder_free:
         unsafe extern "C" fn(builder: *mut loomc_link_index_builder_t),
     pub loomc_link_index_builder_add_source: unsafe extern "C" fn(
         builder: *mut loomc_link_index_builder_t,
@@ -2396,6 +2500,15 @@ pub struct Loomc {
         allocator: loomc_allocator_t,
         out_profile: *mut *mut loomc_target_profile_t,
     ) -> loomc_status_t,
+    pub loomc_cxx_preamble_create: unsafe extern "C" fn(
+        context: *mut loomc_context_t,
+        source: *const loomc_source_t,
+        options: *const loomc_cxx_import_options_t,
+        allocator: loomc_allocator_t,
+        out_preamble: *mut *mut loomc_cxx_preamble_t,
+        out_result: *mut *mut loomc_result_t,
+    ) -> loomc_status_t,
+    pub loomc_cxx_preamble_release: unsafe extern "C" fn(preamble: *mut loomc_cxx_preamble_t),
     pub loomc_module_import_cxx: unsafe extern "C" fn(
         context: *mut loomc_context_t,
         workspace: *mut loomc_workspace_t,
@@ -2494,11 +2607,11 @@ impl Loomc {
         let loomc_launch_config_program_invoke = __library
             .get(b"loomc_launch_config_program_invoke\0")
             .map(|sym| *sym)?;
-        let loomc_link_index_builder_create = __library
-            .get(b"loomc_link_index_builder_create\0")
+        let loomc_link_index_builder_allocate = __library
+            .get(b"loomc_link_index_builder_allocate\0")
             .map(|sym| *sym)?;
-        let loomc_link_index_builder_release = __library
-            .get(b"loomc_link_index_builder_release\0")
+        let loomc_link_index_builder_free = __library
+            .get(b"loomc_link_index_builder_free\0")
             .map(|sym| *sym)?;
         let loomc_link_index_builder_add_source = __library
             .get(b"loomc_link_index_builder_add_source\0")
@@ -2523,6 +2636,12 @@ impl Loomc {
             .map(|sym| *sym)?;
         let loomc_target_profile_create_xdna = __library
             .get(b"loomc_target_profile_create_xdna\0")
+            .map(|sym| *sym)?;
+        let loomc_cxx_preamble_create = __library
+            .get(b"loomc_cxx_preamble_create\0")
+            .map(|sym| *sym)?;
+        let loomc_cxx_preamble_release = __library
+            .get(b"loomc_cxx_preamble_release\0")
             .map(|sym| *sym)?;
         let loomc_module_import_cxx = __library
             .get(b"loomc_module_import_cxx\0")
@@ -2565,8 +2684,8 @@ impl Loomc {
             loomc_launch_config_program_release,
             loomc_launch_config_program_lookup_function,
             loomc_launch_config_program_invoke,
-            loomc_link_index_builder_create,
-            loomc_link_index_builder_release,
+            loomc_link_index_builder_allocate,
+            loomc_link_index_builder_free,
             loomc_link_index_builder_add_source,
             loomc_link_index_builder_finish,
             loomc_link_index_release,
@@ -2577,6 +2696,8 @@ impl Loomc {
             loomc_target_profile_create_amdgpu,
             loomc_target_environment_create_xdna,
             loomc_target_profile_create_xdna,
+            loomc_cxx_preamble_create,
+            loomc_cxx_preamble_release,
             loomc_module_import_cxx,
         })
     }
@@ -2853,22 +2974,19 @@ impl Loomc {
             out_config,
         )
     }
-    #[doc = " Creates an empty link-index builder.\n\n @param context Reusable Loom API context retained by the builder.\n @param options Builder options, or `NULL` for defaults.\n @param allocator Host allocator used for builder and frozen-index storage.\n @param out_builder Receives the mutable builder on success.\n @return OK when the builder was created.\n\n @ownership\n The caller owns the returned builder and releases it with\n `loomc_link_index_builder_release`."]
-    pub unsafe fn loomc_link_index_builder_create(
+    #[doc = " Allocates an exclusively owned empty link-index builder.\n\n @param context Reusable Loom API context retained by the builder.\n @param options Builder options, or `NULL` for defaults.\n @param allocator Host allocator used for builder and frozen-index storage.\n @param out_builder Receives the mutable builder on success.\n @return OK when the builder was allocated.\n\n @ownership\n The caller owns the returned builder and frees it with\n `loomc_link_index_builder_free`."]
+    pub unsafe fn loomc_link_index_builder_allocate(
         &self,
         context: *mut loomc_context_t,
         options: *const loomc_link_index_builder_options_t,
         allocator: loomc_allocator_t,
         out_builder: *mut *mut loomc_link_index_builder_t,
     ) -> loomc_status_t {
-        (self.loomc_link_index_builder_create)(context, options, allocator, out_builder)
+        (self.loomc_link_index_builder_allocate)(context, options, allocator, out_builder)
     }
-    #[doc = " Releases a link-index builder.\n\n @param builder Builder to release. Passing `NULL` is allowed.\n\n @thread_safety\n No other thread may be reserving, filling, or finishing `builder`."]
-    pub unsafe fn loomc_link_index_builder_release(
-        &self,
-        builder: *mut loomc_link_index_builder_t,
-    ) {
-        (self.loomc_link_index_builder_release)(builder)
+    #[doc = " Frees a link-index builder.\n\n @param builder Builder to free. Passing `NULL` is allowed.\n\n @thread_safety\n No other thread may be reserving, filling, or finishing `builder`."]
+    pub unsafe fn loomc_link_index_builder_free(&self, builder: *mut loomc_link_index_builder_t) {
+        (self.loomc_link_index_builder_free)(builder)
     }
     #[doc = " Reserves and fills the next source slot.\n\n @param builder Builder to mutate.\n @param source Source retained by the builder on success.\n @param options Provider options copied by this call, or `NULL` for defaults.\n @param out_slot Receives the source slot, or `NULL` if not needed.\n @return OK when the source was queued for indexing."]
     pub unsafe fn loomc_link_index_builder_add_source(
@@ -2880,7 +2998,7 @@ impl Loomc {
     ) -> loomc_status_t {
         (self.loomc_link_index_builder_add_source)(builder, source, options, out_slot)
     }
-    #[doc = " Finishes a builder into a frozen immutable link index.\n\n @param builder Builder to finish. The builder becomes finished after this\n call returns OK, whether the operation result succeeded or failed.\n @param out_link_index Receives one retained frozen index when the result\n state is succeeded.\n @param out_result Receives one retained result describing indexing outcome.\n @return OK when a result was produced. Non-OK status means API or\n infrastructure failure prevented result production.\n\n @ownership\n Finishing does not consume `builder`; the caller still releases it with\n `loomc_link_index_builder_release` after the call returns. The caller owns\n `out_link_index` on successful result state and releases it with\n `loomc_link_index_release`. The caller owns `out_result` and releases it\n with `loomc_result_release`.\n\n @error_contract\n Invalid Loom text, malformed bytecode, empty reserved slots, and unsupported\n source formats produce OK status plus a failed result with diagnostics."]
+    #[doc = " Finishes a builder into a frozen immutable link index.\n\n @param builder Builder to finish. The builder becomes finished after this\n call returns OK, whether the operation result succeeded or failed.\n @param out_link_index Receives one retained frozen index when the result\n state is succeeded.\n @param out_result Receives one retained result describing indexing outcome.\n @return OK when a result was produced. Non-OK status means API or\n infrastructure failure prevented result production.\n\n @ownership\n Finishing does not consume `builder`; the caller still frees it with\n `loomc_link_index_builder_free` after the call returns. The caller owns\n `out_link_index` on successful result state and releases it with\n `loomc_link_index_release`. The caller owns `out_result` and releases it\n with `loomc_result_release`.\n\n @error_contract\n Invalid Loom text, malformed bytecode, empty reserved slots, and unsupported\n source formats produce OK status plus a failed result with diagnostics."]
     pub unsafe fn loomc_link_index_builder_finish(
         &self,
         builder: *mut loomc_link_index_builder_t,
@@ -2903,7 +3021,7 @@ impl Loomc {
     ) -> loomc_status_t {
         (self.loomc_linker_create)(context, options, allocator, out_linker)
     }
-    #[doc = " Links a frozen index into an opaque module.\n\n @param linker Prepared linker.\n @param workspace Invocation-local scratch workspace.\n @param options Link invocation options.\n @param out_module Receives a retained linked module when the result\n succeeds. Receives `NULL` when the result fails.\n @param out_result Receives a retained result for the operation.\n @return OK when the invocation ran to a result. Non-OK statuses represent\n API misuse or infrastructure failures before a result could be produced.\n\n @ownership\n The caller owns `out_module` when non-NULL and releases it with\n `loomc_module_release`. The caller always owns `out_result` on an OK return\n and releases it with `loomc_result_release`.\n\n @lifetime\n Returned results do not borrow from `workspace` and remain valid after\n `loomc_workspace_trim`. Returned modules retain `workspace` and keep their\n arena blocks live until released.\n\n @thread_safety\n Calls using the same linker may run concurrently when each call uses a\n distinct workspace. The same workspace requires external synchronization.\n"]
+    #[doc = " Links frozen and invocation-local providers into an opaque module.\n\n @param linker Prepared linker.\n @param workspace Invocation-local scratch workspace.\n @param options Link invocation options.\n @param out_module Receives a retained linked module when the result\n succeeds. Receives `NULL` when the result fails.\n @param out_result Receives a retained result for the operation.\n @return OK when the invocation ran to a result. Non-OK statuses represent\n API misuse or infrastructure failures before a result could be produced.\n\n @ownership\n The caller owns `out_module` when non-NULL and releases it with\n `loomc_module_release`. The caller always owns `out_result` on an OK return\n and releases it with `loomc_result_release`.\n\n @lifetime\n Returned results do not borrow from `workspace` and remain valid after\n `loomc_workspace_trim`. Returned modules retain `workspace` and keep their\n arena blocks live until released.\n\n @thread_safety\n Calls using the same linker may run concurrently when each call uses a\n distinct workspace. The same workspace requires external synchronization.\n"]
     pub unsafe fn loomc_link_module(
         &self,
         linker: *mut loomc_linker_t,
@@ -2963,6 +3081,29 @@ impl Loomc {
             allocator,
             out_profile,
         )
+    }
+    #[doc = " Creates an immutable semantic preamble from leading include directives.\n\n The representative source must begin with at least one reusable include.\n The handle copies its matching source prefix, resolved headers, retained\n misses, and serialized frontend state. Later imports can vary source text\n after that prefix and import-only policy such as roots or floating-point\n lowering while retaining the same language, ABI, include-search, define,\n and embedded-header configuration.\n\n @param context Immutable context defining diagnostic source retention.\n @param source Representative source with UNKNOWN format.\n @param options Source configuration, or NULL for defaults.\n @param allocator Host allocator owning the returned handle and result.\n @param out_preamble Receives one owned preamble after successful admission.\n @param out_result Receives one owned result with retained diagnostics.\n @return OK for successful creation or diagnosed source rejection. Rejection\n returns a failed result and NULL preamble. A source without a leading\n include returns FAILED_PRECONDITION with NULL outputs.\n\n @ownership\n Release outputs with loomc_cxx_preamble_release and loomc_result_release.\n The caller owns catalog lookup, caching, and eviction policy.\n\n @lifetime\n Source/include bytes, options, and callback state may be released on return.\n The returned handle is process-local and has no persisted wire format.\n\n @thread_safety\n The immutable handle may be retained, released, and used by concurrent\n imports. The source provider and path mapper follow their documented\n per-invocation synchronization requirements during creation."]
+    pub unsafe fn loomc_cxx_preamble_create(
+        &self,
+        context: *mut loomc_context_t,
+        source: *const loomc_source_t,
+        options: *const loomc_cxx_import_options_t,
+        allocator: loomc_allocator_t,
+        out_preamble: *mut *mut loomc_cxx_preamble_t,
+        out_result: *mut *mut loomc_result_t,
+    ) -> loomc_status_t {
+        (self.loomc_cxx_preamble_create)(
+            context,
+            source,
+            options,
+            allocator,
+            out_preamble,
+            out_result,
+        )
+    }
+    #[doc = " Releases `preamble` from one owner. Passing NULL is allowed.\n\n @param preamble Preamble to release, or NULL.\n\n The immutable preamble is destroyed after its final reference is released."]
+    pub unsafe fn loomc_cxx_preamble_release(&self, preamble: *mut loomc_cxx_preamble_t) {
+        (self.loomc_cxx_preamble_release)(preamble)
     }
     #[doc = " Imports C/C++ source into a verified High IR module, without cleanup passes.\n\n @param context Immutable context containing the core dialects.\n @param workspace Workspace backing the returned module's arena storage.\n @param source Source with UNKNOWN format. Its identifier labels diagnostics\n and supplies the main file's path for quoted include lookup.\n @param options Source configuration, or NULL for defaults.\n @param allocator Host allocator for public handles and temporary adapters.\n @param out_module Receives one owned module on successful source admission.\n @param out_result Receives one owned result with retained diagnostics.\n @return OK for successful import or diagnosed source rejection. Rejection\n returns a failed result and NULL module. Infrastructure/API failures return\n non-OK status and NULL outputs. C++ exceptions never cross this boundary.\n\n @ownership\n Release outputs with loomc_module_release and loomc_result_release. The\n module retains its context/workspace. The result owns diagnostic contents.\n\n @lifetime\n Source/include bytes, options, and callback state may be released on return.\n Neither the module nor the result retains borrowed frontend or AST storage.\n\n @thread_safety\n Each import requires exclusive access to its workspace. Concurrent imports\n may share an immutable context and immutable source handles."]
     pub unsafe fn loomc_module_import_cxx(

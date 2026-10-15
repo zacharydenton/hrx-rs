@@ -1,29 +1,60 @@
 aie2p.target<array> @array_target
 aie2p.target<core> @core_target
 config.decl @copy.packets : %value: index where [range(%value, 1, 16384)]
-pipeline.def<kernel> public retain target(@array_target) @copy() launch(%input: buffer, %output: buffer) {
-  %packets = config.get @copy.packets : index
-  %one = index.constant 1 : index
-  %base = index.constant 0 : offset
-  %workers = group.create %one : index -> group
-  %input_view = buffer.view %input[%base] : buffer -> view<[%packets]x1024xi32>
-  %output_view = buffer.view %output[%base] : buffer -> view<[%packets]x1024xi32>
-  %records = pipeline.read %input_view on %workers : view<[%packets]x1024xi32>, group -> pipeline.flow<tile<1024xi32>>
-  %copies = pipeline.stage @copy_record on %workers(%records) : (group, pipeline.flow<tile<1024xi32>>) -> (pipeline.flow<tile<1024xi32>>)
-  pipeline.write %copies to %output_view : pipeline.flow<tile<1024xi32>>, view<[%packets]x1024xi32>
-  pipeline.return
-}
-func.def target(@core_target) @copy_record(%input: buffer, %output: buffer) {
-  %source, %destination = buffer.assume.alignment %input, %output {minimum_alignment = 64} : buffer, buffer
-  %base = index.constant 0 : offset
-  %input_view = buffer.view %source[%base] : buffer -> view<1024xi32>
-  %output_view = buffer.view %destination[%base] : buffer -> view<1024xi32>
-  %zero = index.constant 0 : index
-  %step = index.constant 16 : index
-  %count = index.constant 1024 : index
-  scf.for %i = [%zero to %count step %step] {
-    %value = vector.load %input_view[%i] : view<1024xi32> -> vector<16xi32>
-    vector.store %value, %output_view[%i] : vector<16xi32>, view<1024xi32>
+
+// Two rotating slots connect a DMA service strand to one compute strand.
+pipeline.def<kernel> public retain target(@array_target) @copy() run(%input: buffer, %output: buffer) {
+  %memory = pipeline.memory<workgroup>[0, 3] : pool
+  %origin = index.constant 0 : offset
+  %slots = index.constant 2 : index
+  %begin = index.constant 0 : index
+  %step = index.constant 1 : index
+  %records = config.get @copy.packets : index
+  %input_aligned = buffer.assume.alignment %input {minimum_alignment = 64} : buffer
+  %input_storage_bytes = index.constant 8192 : offset
+  %input_record_bytes = index.constant 4096 : index
+  %input_storage = buffer.alloca<workgroup> pool(%memory) align(64) %input_storage_bytes : buffer
+  %input_slots = buffer.view %input_storage[%origin] : buffer -> view<2x1024xi32>
+  %input_channel = channel.bind<fifo> %input_slots, %slots : view<2x1024xi32>, index -> channel<tile<1024xi32>>
+  %output_aligned = buffer.assume.alignment %output {minimum_alignment = 64} : buffer
+  %output_storage_bytes = index.constant 8192 : offset
+  %output_record_bytes = index.constant 4096 : index
+  %output_storage = buffer.alloca<workgroup> pool(%memory) align(64) %output_storage_bytes : buffer
+  %output_slots = buffer.view %output_storage[%origin] : buffer -> view<2x1024xi32>
+  %output_channel = channel.bind<fifo> %output_slots, %slots : view<2x1024xi32>, index -> channel<tile<1024xi32>>
+  pipeline.strand workers([0, 2], [1, 1], [1, 1]) {
+    scf.for %record = [%begin to %records step %step] {
+      %input_byte_index = index.mul %record, %input_record_bytes : index
+      %input_offset = index.cast %input_byte_index : index to offset
+      %input_external = buffer.view %input_aligned[%input_offset] : buffer -> view<1024xi32>
+      %input_write, %input_local = channel.reserve %input_channel : channel<tile<1024xi32>> -> (write<tile<1024xi32>>, view<1024xi32>)
+      %input_transfer = kernel.async.copy %input_external to %input_local {cache_scope = workgroup, cache_temporal = regular, direction = global_to_workgroup} : view<1024xi32> to view<1024xi32> -> kernel.async.token
+      %input_transfer_group = kernel.async.group %input_transfer : kernel.async.token -> kernel.async.group
+      kernel.async.wait %input_transfer_group {newer_groups = 0} : kernel.async.group
+      channel.publish %input_write : write<tile<1024xi32>>
+      %output_byte_index = index.mul %record, %output_record_bytes : index
+      %output_offset = index.cast %output_byte_index : index to offset
+      %output_external = buffer.view %output_aligned[%output_offset] : buffer -> view<1024xi32>
+      %output_read, %output_local = channel.acquire %output_channel : channel<tile<1024xi32>> -> (read<tile<1024xi32>>, view<1024xi32>)
+      %output_transfer = kernel.async.copy %output_local to %output_external {cache_scope = workgroup, cache_temporal = regular, direction = workgroup_to_global} : view<1024xi32> to view<1024xi32> -> kernel.async.token
+      %output_transfer_group = kernel.async.group %output_transfer : kernel.async.token -> kernel.async.group
+      kernel.async.wait %output_transfer_group {newer_groups = 0} : kernel.async.group
+      channel.release %output_read : read<tile<1024xi32>>
+    }
   }
-  func.return
+  pipeline.strand workers([0, 3], [1, 1], [1, 1]) {
+    scf.for %record = [%begin to %records step %step] {
+      %input_read, %input_view = channel.acquire %input_channel : channel<tile<1024xi32>> -> (read<tile<1024xi32>>, view<1024xi32>)
+      %output_write, %output_view = channel.reserve %output_channel : channel<tile<1024xi32>> -> (write<tile<1024xi32>>, view<1024xi32>)
+      %zero = index.constant 0 : index
+      %step = index.constant 16 : index
+      %count = index.constant 1024 : index
+      scf.for %i = [%zero to %count step %step] {
+        %value = vector.load %input_view[%i] : view<1024xi32> -> vector<16xi32>
+        vector.store %value, %output_view[%i] : vector<16xi32>, view<1024xi32>
+      }
+      channel.publish %output_write : write<tile<1024xi32>>
+      channel.release %input_read : read<tile<1024xi32>>
+    }
+  }
 }

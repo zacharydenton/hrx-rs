@@ -1,7 +1,7 @@
 # Runtime setup
 
 ```sh
-cargo install hrx-rs --version 0.10.1 --locked --features npu
+cargo install hrx-rs --version 0.11.0 --locked --features npu
 hrx prepare
 hrx doctor
 ```

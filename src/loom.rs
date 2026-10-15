@@ -21,7 +21,7 @@ pub use report::{
     WaitCounts, WaitReason, WaitReasonChange,
 };
 use serde::{Deserialize, Serialize};
-pub use source::{CxxSource, CxxStandard, Source};
+pub use source::{CxxFpModel, CxxPreamble, CxxSource, CxxStandard, Source};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
@@ -420,6 +420,13 @@ impl Compiler {
     pub fn import_cxx(&self, source: CxxSource) -> Result<Module> {
         self.sources(vec![Source::Cxx(source)])
     }
+    /// Parse and retain a representative source's leading includes for reuse.
+    /// Sources without a reusable leading include return an error. Import roots
+    /// and floating-point policy can vary while using the same preamble.
+    pub fn cxx_preamble(&self, mut source: CxxSource) -> Result<CxxPreamble> {
+        source.normalize()?;
+        self.0.native.preamble(&source)
+    }
     fn source_module(&self, sources: Vec<Source>) -> Module {
         let digest = bundle::digest(
             &serde_json::to_vec(&sources).expect("source inputs contain only JSON-safe values"),
@@ -620,8 +627,16 @@ pub struct Specialization {
     config: BTreeMap<String, String>,
     /// Select compiler analysis collected beside the executable.
     report: ReportMode,
+    listing: bool,
 }
 impl Specialization {
+    /// Request target assembly alongside the executable. Unsupported targets
+    /// report a compiler error instead of silently omitting the listing.
+    #[must_use]
+    pub fn with_listing(mut self, enabled: bool) -> Self {
+        self.listing = enabled;
+        self
+    }
     /// Select an export with no configuration overrides.
     pub fn new(symbol: impl Into<String>) -> Self {
         Self {
@@ -703,17 +718,24 @@ struct Record {
     report: Option<CompileReport>,
     manifest: Option<serde_json::Value>,
     launch_sha256: Option<String>,
+    #[serde(default)]
+    listing_sha256: Option<String>,
 }
 /// Owned native executable bytes and their verified compilation metadata.
 #[derive(Clone, Debug)]
 pub struct Artifact {
     bytes: Arc<[u8]>,
     launch_bytes: Option<Arc<[u8]>>,
+    listing: Option<Arc<str>>,
     launch_loader: native::LaunchLoader,
     path: PathBuf,
     record: Record,
 }
 impl Artifact {
+    /// Compiler-produced target assembly, when requested with `with_listing`.
+    pub fn listing(&self) -> Option<&str> {
+        self.listing.as_deref()
+    }
     /// Native executable bytes, independent of compiler/result lifetimes.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
@@ -797,6 +819,7 @@ struct Compiled {
     report: Option<serde_json::Value>,
     manifest: Option<serde_json::Value>,
     launch_bytes: Option<Arc<[u8]>>,
+    listing: Option<Arc<str>>,
 }
 impl Module {
     /// Identity of the exact source bytes.
@@ -816,6 +839,11 @@ impl Module {
             &spec.config,
             spec.report,
         ))?);
+        let base = if spec.listing {
+            bundle::digest(&serde_json::to_vec(&("loomc-target-listing-v1", base))?)
+        } else {
+            base
+        };
         // Retain existing default artifacts; explicit execution modes own a
         // separate namespace even if their output bytes happen to match.
         if self.compiler.0.processor_mode == ProcessorMode::Default {
@@ -893,6 +921,10 @@ impl Module {
             symbol: spec.symbol.clone(),
             sha256: bundle::digest(&compiled.bytes),
             launch_sha256: compiled.launch_bytes.as_deref().map(bundle::digest),
+            listing_sha256: compiled
+                .listing
+                .as_deref()
+                .map(|s| bundle::digest(s.as_bytes())),
             manifest: compiled.manifest,
             diagnostics,
             report: compiled
@@ -911,6 +943,10 @@ impl Module {
         let filename = self.compiler.target().artifact_filename();
         let output = staging.path().join(filename);
         fs::write(&output, &compiled.bytes)?;
+        if let Some(listing) = &compiled.listing {
+            fs::write(staging.path().join("target.listing"), listing.as_bytes())?;
+            fs::File::open(staging.path().join("target.listing"))?.sync_all()?;
+        }
         if let Some(bytes) = &compiled.launch_bytes {
             fs::write(staging.path().join("launch.loombc"), bytes)?;
             fs::File::open(staging.path().join("launch.loombc"))?.sync_all()?;
@@ -932,6 +968,7 @@ impl Module {
         fs::File::open(cache)?.sync_all()?;
         Ok(Artifact {
             bytes: compiled.bytes,
+            listing: compiled.listing,
             launch_bytes: compiled.launch_bytes,
             launch_loader: self.compiler.0.native.launch_loader(),
             path: dir.join(filename),
@@ -972,6 +1009,16 @@ fn cached(dir: &Path, key: &str, native: &native::Prepared) -> Option<Artifact> 
     };
     Some(Artifact {
         bytes: bytes.into(),
+        listing: match &record.listing_sha256 {
+            Some(hash) => {
+                let listing = fs::read_to_string(dir.join("target.listing")).ok()?;
+                if &bundle::digest(listing.as_bytes()) != hash {
+                    return None;
+                }
+                Some(listing.into())
+            }
+            None => None,
+        },
         launch_bytes,
         launch_loader: native.launch_loader(),
         path,

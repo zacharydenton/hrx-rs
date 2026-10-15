@@ -28,11 +28,11 @@ python3 scripts/fetch-native-inputs.py --work artifacts/native-release
 CONTAINER_ENGINE=podman HRX_BUILD_JOBS=2 HRX_BUILD_MEMORY=8g \
   bash scripts/rebuild-hrx.sh artifacts/native-release
 python3 scripts/stage-native-release.py --work artifacts/native-release \
-  --release-tag native-20261008-7e9c7bbd5e
+  --release-tag native-20261015-61c152ac4b
 cargo run --release --bin hrx -- pack artifacts/native-release/stage-amdf \
   artifacts/native-release/output \
-  https://github.com/zacharydenton/hrx-rs/releases/download/native-20261008-7e9c7bbd5e/hrx-linux-x86_64-gfx1151.tar.gz \
-  'HRX 7e9c7bbd5e; Ubuntu 26.04' gfx1151
+  https://github.com/zacharydenton/hrx-rs/releases/download/native-20261015-61c152ac4b/hrx-linux-x86_64-gfx1151.tar.gz \
+  'HRX 61c152ac4b; Ubuntu 26.04' gfx1151
 ```
 
 The container build defaults to two jobs and an 8 GiB memory limit, with no
@@ -41,7 +41,10 @@ limits. The job count is passed into the container. Direct `build-amdf.sh` build
 also default to two jobs; apply an external memory limit when building on the host.
 
 The build enables task driver declarations needed by the compiler ABI-layout
-libraries. The bridge uses libamdf for GPU and XDNA execution.
+libraries. VM target declarations satisfy upstream serving-library dependencies
+even though this bundle builds only the compiler and native bridge targets.
+The bridge uses libamdf ABI 10 for GPU and XDNA execution and the runtime XDNA
+executable-storage helpers for loading, relocation and invocation.
 
 The source archive contains upstream inputs, local patches, the native bridge,
 license texts, and rebuild scripts. To rebuild from the archive, extract it,

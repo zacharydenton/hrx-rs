@@ -57,7 +57,7 @@ kernel.def export("resident_exchange") @resident_exchange() {
   %credit_limit = index.assume %credit_limit_input [range(%credit_limit_input, 1, 2)] : index
   %credits = index.cast %credit_limit : index to i32
   %slot_stride_input = index.cast %slot_byte_stride : i32 to offset
-  %slot_stride = index.assume %slot_stride_input [range(%slot_stride_input, 64, 4160), mul(%slot_stride_input, 64)] : offset
+  %slot_stride = index.assume %slot_stride_input [range(%slot_stride_input, 64, 4160), multiple_of(%slot_stride_input, 64)] : offset
   %startup_word = buffer.view %startup_aligned[%origin] : buffer -> view<1xi32>
   %control_words = buffer.view %control_aligned[%origin] : buffer -> view<64xi32>
   %c0 = scalar.constant 0 : i32

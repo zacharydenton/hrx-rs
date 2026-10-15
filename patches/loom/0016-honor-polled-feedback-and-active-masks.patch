@@ -1,11 +1,11 @@
+diff --git a/loom/src/loom/target/arch/amdgpu/lower/feedback.c b/loom/src/loom/target/arch/amdgpu/lower/feedback.c
+index d36be4d040..7e3984308b 100644
 --- a/loom/src/loom/target/arch/amdgpu/lower/feedback.c
 +++ b/loom/src/loom/target/arch/amdgpu/lower/feedback.c
-@@ -440,6 +440,33 @@
-       location, &compare_op));
-   *out_scc = loom_value_slice_get(loom_low_op_results(compare_op), 0);
+@@ -442,6 +442,33 @@ static iree_status_t loom_amdgpu_feedback_build_sgpr64_nonzero_scc(
    return iree_ok_status();
-+}
-+
+ }
+ 
 +// Test only participating lanes. In wave32, a native vector comparison
 +// writes one SGPR while the logical mask carrier has two; its unused high
 +// word must not make an empty mask look nonempty to a scalar 64-bit test.
@@ -31,10 +31,12 @@
 +  return loom_amdgpu_feedback_build_sgpr64_nonzero_scc(
 +      builder, descriptor_set, loom_value_slice_get(loom_low_op_results(and_op), 0),
 +      zero64, location, out_scc);
- }
- 
++}
++
  static iree_status_t loom_amdgpu_feedback_build_sgpr32_nonzero_scc(
-@@ -753,7 +780,7 @@
+     loom_builder_t* builder, const loom_low_descriptor_set_t* descriptor_set,
+     loom_value_id_t value, loom_value_id_t zero32, loom_location_id_t location,
+@@ -753,7 +780,7 @@ static iree_status_t loom_amdgpu_feedback_build_capacity_available_scc(
    loom_value_id_t zero64 = LOOM_VALUE_ID_INVALID;
    IREE_RETURN_IF_ERROR(loom_amdgpu_feedback_build_sgpr_u64_const(
        builder, descriptor_set, 0, location, &zero64));
@@ -43,7 +45,7 @@
        builder, descriptor_set, available_mask, zero64, location, out_scc);
  }
  
-@@ -1377,7 +1404,7 @@
+@@ -1377,7 +1404,7 @@ iree_status_t loom_amdgpu_build_feedback_reservation(
    IREE_RETURN_IF_ERROR(loom_amdgpu_feedback_build_sgpr_u64_const(
        builder, descriptor_set, 0, location, &zero_mask));
    loom_value_id_t cas_succeeded = LOOM_VALUE_ID_INVALID;
@@ -52,7 +54,7 @@
        builder, descriptor_set, attempt.cas_succeeded, zero_mask, location,
        &cas_succeeded));
    loom_op_t* attempt_branch_op = NULL;
-@@ -1445,7 +1472,7 @@
+@@ -1445,7 +1472,7 @@ iree_status_t loom_amdgpu_build_feedback_reservation_succeeded_scc(
    loom_value_id_t zero_mask = LOOM_VALUE_ID_INVALID;
    IREE_RETURN_IF_ERROR(loom_amdgpu_feedback_build_sgpr_u64_const(
        builder, descriptor_set, 0, location, &zero_mask));
@@ -61,7 +63,7 @@
        builder, descriptor_set, reservation_mask, zero_mask, location, out_scc);
  }
  
-@@ -1551,14 +1578,32 @@
+@@ -1551,14 +1578,32 @@ iree_status_t loom_amdgpu_build_feedback_publish_packet_state(
  iree_status_t loom_amdgpu_build_feedback_notify_host(
      loom_builder_t* builder, const loom_low_descriptor_set_t* descriptor_set,
      loom_value_id_t notify_signal, loom_location_id_t location) {
@@ -96,6 +98,9 @@
  }
  
  iree_status_t loom_amdgpu_build_feedback_publish_packet(
+diff --git a/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_feedback_polling.loom-test b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_feedback_polling.loom-test
+new file mode 100644
+index 0000000000..d51bd1e495
 --- /dev/null
 +++ b/loom/src/loom/target/arch/amdgpu/test/source_low/source_low_feedback_polling.loom-test
 @@ -0,0 +1,59 @@

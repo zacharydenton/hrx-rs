@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.11.0 — 2026-10-15
+
+- Add optional automatic idle model unloading through
+  `ResidencyManager::with_idle_timeout`, with leases and native drain checks
+  protecting in-use models.
+- Expose stable host/device virtual reservations, checked remapping/detachment,
+  prepared mapping sources, explicit host NUMA placement and externally managed
+  GPU pointer arguments. Retain proposed and replaced backing through removal.
+- Add shared host/GPU clock queries, owned AQL dispatch timestamp samples, NPU
+  firmware trace controls/decoded reads and NPU timer-rate queries. Publish the
+  full versioned native ABI for queue-ordered remapping, NPU command arrays and
+  caller-owned firmware result buffers; expose matching queue capability flags.
+- Add cached target assembly listings and `hrx compile --listing-output`, reusable
+  C++ preambles, diagnostic source-identity mappings and CLI math-policy selection.
+  Qualify the newly embedded workgroup scan/reduction facade through C++ import.
+- Update the native source pin to HRX `61c152ac4b`, regenerate the libamdf ABI 10
+  and Loom bindings, and adapt host visibility and link-index ownership calls.
+  Retire the upstreamed VOPD and value-domain arena patches and rebase the
+  remaining compiler and native runtime fixes.
+- Replace `CxxSource::approximate_functions` with `fp_model`, matching upstream's
+  precise/fast translation-unit policy. `CxxFpModel::Precise` remains the default;
+  `Fast` permits the full fast-math contract. Use source-level approximate math
+  operations when only approximate functions are intended.
+- Migrate bundled Loom predicates to `multiple_of` and XDNA examples to
+  explicit channels and strands, preserving their input/output contracts.
+
 ## 0.10.1 — 2026-10-09
 
 - Split large copies and fills inside HRX, using SDMA ring capacity and compute

@@ -13,22 +13,38 @@ pub const AMDF_MEMORY_PROFILE_EXTERNAL_SUPPORT_CAPACITY: u32 = 5;
 pub const AMDF_MEMORY_PROFILE_ORDINAL_UNKNOWN: u32 = 4294967295;
 #[doc = " Indicates that a profile or attachment has no ordinary address domain."]
 pub const AMDF_ADDRESS_DOMAIN_ORDINAL_NONE: u32 = 4294967295;
+#[doc = " First version exposing the shared profiling host clock."]
+pub const AMDF_OBSERVATION_EXTENSION_VERSION_1: u32 = 1;
+#[doc = " Most recent observation extension described by this header."]
+pub const AMDF_OBSERVATION_EXTENSION_VERSION_LATEST: u32 = 1;
 #[doc = " The first supported GPU extension version."]
 pub const AMDF_GPU_EXTENSION_VERSION_1: u32 = 1;
+#[doc = " First version exposing nominal queue-clock units and native clock samples."]
+pub const AMDF_GPU_EXTENSION_VERSION_2: u32 = 2;
 #[doc = " The most recent GPU extension version described by this header."]
-pub const AMDF_GPU_EXTENSION_VERSION_LATEST: u32 = 1;
-#[doc = " First directly published PM4 queue format.\n\n The primary ring contains native type-3 PM4 packets. Transfer commands use\n six-dword COPY_DATA and WRITE_DATA with a four-dword prefix and payload.\n GFX11.5.1 MEC also supports seven-dword DMA_DATA incrementing L2 copies\n between owned coherent SYSTEM ranges, with a direct byte count and write\n confirmation. The caller follows each\n copy sequence with the zero-byte DMA_DATA drain, explicit cache work and\n a completion marker before releasing its operands; ring consumption alone\n does not complete a transfer. This does not admit PFP controls, other DMA\n selectors or DMA_DATA on kernel-publication or AQL-carried PM4 transports.\n Cache-control encoding is described by the reported PM4 format features.\n Indices occupy naturally aligned 64-bit storage. The write index is a\n monotonic dword count; the native read index wraps at the ring capacity\n `ring_byte_length / 4`. The producer always leaves at least one dword free:\n fewer than that capacity may remain unconsumed, including reserved storage.\n Given a stable published write index W and acquired native read index R,\n the consumed frontier is W - ((W - R) & (capacity - 1)). Status and wait\n operations expand the native counter to this monotonic frontier; the raw\n mapping continues to expose the native ring-relative read index.\n After storing complete commands, the producer release-stores the new write\n index followed by the same value to the 64-bit doorbell. Consumption proves\n ring storage can be reused; command completion requires a separate fence.\n Each publication ends on an eight-dword boundary, padded with type-3 NOP\n packets when necessary; packets never straddle ring wrap.\n Kernel publication accepts an immutable dword-aligned first-level IB.\n A USER primary ring can call a first-level IB and resume after it. KERNEL\n submits that IB directly; placing the ring's call inside a KERNEL buffer\n would request unsupported compute IB2 nesting."]
+pub const AMDF_GPU_EXTENSION_VERSION_LATEST: u32 = 2;
+#[doc = " First directly published PM4 queue format.\n\n The primary ring contains native type-3 PM4 packets. Transfer commands use\n six-dword COPY_DATA and WRITE_DATA with a four-dword prefix and payload.\n Seven-dword MEC DMA_DATA copies use incrementing byte addresses, a direct\n byte count, TC_L2 source/destination selectors, RAW_WAIT and enabled write\n confirmation. TC_L2 routes through MALL on GFX12; the caller applies the\n reported cache-control encoding for the actual producer/consumer edge.\n Immediate-source DMA_DATA repeats a DWORD pattern over a DWORD-aligned\n destination and byte count, using the same destination and ordering\n controls. The pattern occupies source-low and source-high remains zero.\n Transfer sequences end with the zero-byte MEC DMA_DATA drain, explicit cache\n work and a completion marker before releasing their operands. Ring\n consumption alone does not complete a transfer. PFP-only controls and\n reserved MEC fields remain zero. AQL-carried PM4 uses a separate format.\n Cache-control encoding is described by the reported PM4 format features.\n Indices occupy naturally aligned 64-bit storage. The write index is a\n monotonic dword count; the native read index wraps at the ring capacity\n `ring_byte_length / 4`. The producer always leaves at least one dword free:\n fewer than that capacity may remain unconsumed, including reserved storage.\n Given a stable published write index W and acquired native read index R,\n the consumed frontier is W - ((W - R) & (capacity - 1)). Status and wait\n operations expand the native counter to this monotonic frontier; the raw\n mapping continues to expose the native ring-relative read index.\n After storing complete commands, the producer release-stores the new write\n index, executes a host-to-device store fence (SFENCE on x86-64), then stores\n the same value to the write-only 64-bit MMIO doorbell. A C/C++ release store\n alone does not supply that fence. Consumption proves ring storage can be\n reused; command completion requires a separate fence.\n Each publication ends on an eight-dword boundary, padded with type-3 NOP\n packets when necessary; packets never straddle ring wrap.\n Kernel publication accepts an immutable dword-aligned first-level IB.\n A USER primary ring can call a first-level IB and resume after it. KERNEL\n submits that IB directly; placing the ring's call inside a KERNEL buffer\n would request unsupported compute IB2 nesting."]
 pub const AMDF_GPU_PM4_QUEUE_FORMAT_VERSION_1: u32 = 1;
-#[doc = " First native SDMA command-stream format.\n\n The primary ring contains native SDMA dwords. COPY_LINEAR uses seven dwords\n with a byte-count-minus-one field and full 64-bit source/destination\n addresses. FENCE uses four dwords with a 32-bit value. Read and\n write indices are naturally aligned 64-bit monotonic byte counts; each\n index selects storage modulo `ring_byte_length`. A producer never advances\n more than that capacity beyond the acquired read index. After storing\n complete packets into the ring, the producer performs a release store of\n the new write index followed by a release store of the same value to the\n 64-bit doorbell. An acquire load of a read index at least that value proves\n the corresponding ring bytes are no longer in use by the queue. Packets\n are dword-aligned and never straddle ring wrap. NOP dwords have value zero.\n Optional commands and field layouts use the reported format features.\n Kernel publication accepts an immutable dword-aligned command stream."]
+#[doc = " First native SDMA command-stream format.\n\n The primary ring contains native SDMA dwords. COPY_LINEAR uses seven dwords\n with a byte-count-minus-one field and full 64-bit source/destination\n addresses. FENCE uses four dwords with a 32-bit value. Read and\n write indices are naturally aligned 64-bit monotonic byte counts; each\n index selects storage modulo `ring_byte_length`. A producer never advances\n more than that capacity beyond the acquired read index. After storing\n complete packets into the ring, the producer performs a release store of\n the new write index. A host producer then executes a host-to-device store\n fence (SFENCE on x86-64) before storing the same value to the write-only\n 64-bit MMIO doorbell; a C/C++ release store alone does not supply that\n fence. An acquire load of a read index at least that value proves the\n corresponding ring bytes are no longer in use by the queue. Packets are\n dword-aligned and never straddle ring wrap. NOP dwords have value zero.\n Optional commands and field layouts use the reported format features.\n Kernel publication accepts an immutable dword-aligned command stream.\n TIMESTAMP_GET_GLOBAL uses three dwords: opcode 13/suboperation 2 followed\n by the low and high halves of a 32-byte-aligned destination address. It\n writes eight raw GPU-clock bytes after preceding commands complete. The\n optional MEMORY_SCOPE feature places SYS (3) at header bits 25:24; other\n policy bits remain zero. A separate completion after the sample and the\n memory edge's cache actions establish result visibility. Sampling neither\n returns a host-correlated time nor supplies a slot-reuse notification.\n Device publication requires command stores to be visible at system scope\n before the write index is published; a device-scope release alone does not\n establish SDMA fetch visibility. The write index and doorbell use aligned\n 64-bit system-scope release stores. The doorbell is write-only and never\n accessed with a load or read-modify-write. Acquiring the read index at\n system scope permits command storage reuse, not payload reuse or copy\n completion. Payload release/acquire and its completion signal remain\n separate edges."]
 pub const AMDF_GPU_SDMA_QUEUE_FORMAT_VERSION_1: u32 = 1;
-#[doc = " First directly published AQL queue format.\n\n The ring contains native 64-byte AMD HSA packets, initially INVALID (type\n 1). Both 64-bit indices count packets monotonically. Producers reserve\n through the write index (atomic fetch-add for MULTI), wait until the\n reserved slot is below acquired read_index + ring_byte_length / 64, and\n write the packet body before release-storing its header/setup dword. A\n release store of the packet's reservation index to the 64-bit doorbell\n notifies firmware. MULTI producers may notify out of order; an unpublished\n earlier slot blocks later consumption. SINGLE producers notify\n monotonically. Firmware invalidates retired packet slots. Consumption\n releases ring storage, not code, kernargs, scratch, or kernel data: those\n require native execution completion.\n\n Dispatches use AMD kernel descriptors and caller-owned kernargs. Completion\n and barrier dependencies use native 64-byte AMD signal blocks, not bare\n counters or handles created by libamdf. Callers initialize USER kind (1), a\n signed 64-bit value at byte offset 8, and zero unused fields; the packet\n carries the block's GPU address. Firmware decrements dispatch completion\n once after all workgroups complete. System acquire/release fence scopes\n provide the advertised global cache transitions. This contract does not\n enable HSA runtime services, dynamic scratch growth, or device enqueue.\n\n AMD vendor format 1 carries a four-dword INDIRECT_BUFFER at packet byte 4,\n remaining-dword count 10 at byte 20, zero reserved words, and the native\n completion signal address at byte 56. The jump uses a dword-aligned 48-bit\n byte address, a positive 20-bit dword count and VALID at bit 23. Its entire\n extent fits the executable backing and address field. The caller keeps\n that extent immutable until execution completes on every participating XCC.\n\n TRANSFER permits confirmed WRITE_DATA and COPY_DATA in that vendor buffer.\n The caller selects the target's PM4 field encodings, including transfer\n width, address alignment, and cache policy. Memory-pair queries describe\n the required payload visibility; SYSTEM packet fences implement the\n advertised global actions. With multiple XCCs, a two-dword PRED_EXEC\n prefix selects virtual XCC 0 for a body that must execute once: mask 1 at\n bit 24 and a positive 14-bit body dword count excluding the prefix. A\n single-XCC buffer needs no such prefix. Confirmed GPU-clock COPY_DATA\n observes command-processor progress and does not complete shader work."]
+#[doc = " First directly published AQL queue format.\n\n The ring contains native 64-byte AMD HSA packets, initially INVALID (type\n 1). Both 64-bit indices count packets monotonically. Producers reserve\n through the write index (atomic fetch-add for MULTI), wait until the\n reserved slot is below acquired read_index + ring_byte_length / 64, and\n write the packet body before release-storing its header/setup dword. A host\n producer then executes a host-to-device store fence (SFENCE on x86-64)\n before storing the packet's reservation index to the write-only 64-bit\n MMIO doorbell. A C/C++ release store alone does not supply that fence.\n MULTI producers may notify out of order; an unpublished earlier slot blocks\n later consumption. SINGLE producers notify monotonically. Firmware\n invalidates retired packet slots. Consumption\n releases ring storage, not code, kernargs, scratch, or kernel data: those\n require native execution completion.\n\n Dispatches use AMD kernel descriptors and caller-owned kernargs. Completion\n and barrier dependencies use native 64-byte AMD signal blocks, not bare\n counters or handles created by libamdf. Callers initialize USER kind (1), a\n signed 64-bit value at byte offset 8, and zero unused fields; the packet\n carries the block's GPU address. Firmware decrements dispatch completion\n once after all workgroups complete. System acquire/release fence scopes\n provide the advertised global cache transitions. This contract does not\n enable HSA runtime services, dynamic scratch growth, or device enqueue.\n\n AMD vendor format 1 carries a four-dword INDIRECT_BUFFER at packet byte 4,\n remaining-dword count 10 at byte 20, zero reserved words, and the native\n completion signal address at byte 56. The jump uses a dword-aligned 48-bit\n byte address, a positive 20-bit dword count and VALID at bit 23. Its entire\n extent fits the executable backing and address field. The caller keeps\n that extent immutable until execution completes on every participating XCC.\n\n TRANSFER permits confirmed WRITE_DATA and COPY_DATA in that vendor buffer.\n The caller selects the target's PM4 field encodings, including transfer\n width, address alignment, and cache policy. Memory-pair queries describe\n the required payload visibility; SYSTEM packet fences implement the\n advertised global actions. With multiple XCCs, a two-dword PRED_EXEC\n prefix selects virtual XCC 0 for a body that must execute once: mask 1 at\n bit 24 and a positive 14-bit body dword count excluding the prefix. A\n single-XCC buffer needs no such prefix. Confirmed GPU-clock COPY_DATA\n observes command-processor progress and does not complete shader work."]
 pub const AMDF_GPU_AQL_QUEUE_FORMAT_VERSION_1: u32 = 1;
 #[doc = " Default pending capacity for kernel-mediated GPU queues."]
 pub const AMDF_GPU_KERNEL_QUEUE_DEFAULT_PENDING_SUBMISSION_COUNT: u32 = 4096;
+#[doc = " Format-2 application message start event."]
+pub const AMDF_XDNA_FIRMWARE_TRACE_EVENT_COMMAND_BEGIN: u32 = 0;
+#[doc = " Format-2 application message completion event."]
+pub const AMDF_XDNA_FIRMWARE_TRACE_EVENT_COMMAND_END: u32 = 1;
+#[doc = " Format-2 native context creation event."]
+pub const AMDF_XDNA_FIRMWARE_TRACE_EVENT_CONTEXT_CREATE: u32 = 2;
+#[doc = " Format-2 native context deletion event."]
+pub const AMDF_XDNA_FIRMWARE_TRACE_EVENT_CONTEXT_DELETE: u32 = 3;
 #[doc = " The first supported XDNA extension version."]
 pub const AMDF_XDNA_EXTENSION_VERSION_1: u32 = 1;
+#[doc = " Device-wide firmware tracing and context firmware-result services."]
+pub const AMDF_XDNA_EXTENSION_VERSION_2: u32 = 2;
 #[doc = " The most recent XDNA extension version described by this header."]
-pub const AMDF_XDNA_EXTENSION_VERSION_LATEST: u32 = 1;
+pub const AMDF_XDNA_EXTENSION_VERSION_LATEST: u32 = 2;
 #[doc = " Lets the provider select the physical origin of an XDNA context."]
 pub const AMDF_XDNA_PHYSICAL_COLUMN_ORIGIN_ANY: u32 = 4294967295;
 #[doc = " Capacity in bytes of a NUL-terminated canonical XDNA target identifier."]
@@ -135,6 +151,12 @@ pub const AMDF_STRUCTURE_TYPE_MEMORY_SCOPE_INFO: amdf_structure_type_e = 19;
 pub const AMDF_STRUCTURE_TYPE_MEMORY_ACCESS_CAPABILITIES: amdf_structure_type_e = 20;
 #[doc = " An `amdf_memory_profile_pair_query_t` input structure."]
 pub const AMDF_STRUCTURE_TYPE_MEMORY_PROFILE_PAIR_QUERY: amdf_structure_type_e = 21;
+#[doc = " Live address-domain reservation and mapping limits."]
+pub const AMDF_STRUCTURE_TYPE_MEMORY_RESERVATION_CAPABILITIES: amdf_structure_type_e = 22;
+#[doc = " Explicit live consumers and geometry for a stable reservation."]
+pub const AMDF_STRUCTURE_TYPE_MEMORY_RESERVATION_CREATE_INFO: amdf_structure_type_e = 23;
+#[doc = " Cached stable address and alias-domain facts for one consumer."]
+pub const AMDF_STRUCTURE_TYPE_MEMORY_RESERVATION_ACCESS_INFO: amdf_structure_type_e = 24;
 pub type amdf_structure_type_e = ::std::os::raw::c_uint;
 #[doc = " Identifier of an optional API table compiled into the providing library."]
 pub type amdf_extension_id_t = u32;
@@ -142,6 +164,8 @@ pub type amdf_extension_id_t = u32;
 pub const AMDF_EXTENSION_XDNA: amdf_extension_id_e = 1;
 #[doc = " GPU endpoint qualification and execution services."]
 pub const AMDF_EXTENSION_GPU: amdf_extension_id_e = 2;
+#[doc = " Portable timing and observation services, independent of device families."]
+pub const AMDF_EXTENSION_OBSERVATION: amdf_extension_id_e = 3;
 pub type amdf_extension_id_e = ::std::os::raw::c_uint;
 #[doc = " Common prefix of every extensible input structure."]
 #[repr(C)]
@@ -714,6 +738,34 @@ pub const AMDF_MEMORY_CLASS_LOCAL: amdf_memory_class_e = 2;
 #[doc = " Native-private storage qualified by its live scope owner."]
 pub const AMDF_MEMORY_CLASS_PRIVATE: amdf_memory_class_e = 3;
 pub type amdf_memory_class_e = ::std::os::raw::c_uint;
+#[doc = " Additional physical placement required from an allocating profile.\n Scope selection already establishes SYSTEM or device-local storage. These\n constraints refine that choice without selecting device consumers."]
+pub type amdf_memory_placement_kind_t = u32;
+#[doc = " No additional placement beyond the selected scope and profile."]
+pub const AMDF_MEMORY_PLACEMENT_KIND_NONE: amdf_memory_placement_kind_e = 0;
+#[doc = " Fresh host pages reside on one operating-system NUMA node. Construction\n fails instead of allocating on another node. This does not move borrowed\n or imported pages and does not change the allocating thread's policy."]
+pub const AMDF_MEMORY_PLACEMENT_KIND_HOST_NUMA: amdf_memory_placement_kind_e = 1;
+pub type amdf_memory_placement_kind_e = ::std::os::raw::c_uint;
+#[doc = " Set of supported explicit placement kinds, with bit 1 << kind set. NONE\n needs no capability bit and is always valid for an allocating profile."]
+pub type amdf_memory_placement_kinds_t = u32;
+#[doc = " Required or achieved refinement of an allocation's physical placement."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct amdf_memory_placement_t {
+    #[doc = " Placement constraint; NONE is the zero-initialized default."]
+    pub kind: amdf_memory_placement_kind_t,
+    #[doc = " Operating-system NUMA node number for HOST_NUMA; zero for NONE. This is\n an OS topology coordinate, not a GPU endpoint or a scope ordinal. Native\n allocation can fail if the node is unavailable or disallowed by policy."]
+    pub node: u32,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_memory_placement_t"][::std::mem::size_of::<amdf_memory_placement_t>() - 8usize];
+    ["Alignment of amdf_memory_placement_t"]
+        [::std::mem::align_of::<amdf_memory_placement_t>() - 4usize];
+    ["Offset of field: amdf_memory_placement_t::kind"]
+        [::std::mem::offset_of!(amdf_memory_placement_t, kind) - 0usize];
+    ["Offset of field: amdf_memory_placement_t::node"]
+        [::std::mem::offset_of!(amdf_memory_placement_t, node) - 4usize];
+};
 #[doc = " Required or achieved properties of a memory attachment."]
 pub type amdf_memory_flags_t = u64;
 #[doc = " The allocation can be explicitly mapped for host access."]
@@ -728,14 +780,18 @@ pub const AMDF_MEMORY_FLAG_QUEUE_STORAGE: amdf_memory_flag_bits_e = 8;
 pub const AMDF_MEMORY_FLAG_HOST_COHERENT: amdf_memory_flag_bits_e = 16;
 #[doc = " A stable device address is established before creation returns."]
 pub const AMDF_MEMORY_FLAG_DEVICE_ADDRESS: amdf_memory_flag_bits_e = 32;
+#[doc = " Native mapping-source handles are prepared before construction returns.\n This access may supply ordinary backing to stable address reservations.\n It does not transfer backing ownership or track installed aliases."]
+pub const AMDF_MEMORY_FLAG_MAPPING_SOURCE: amdf_memory_flag_bits_e = 64;
+#[doc = " Backing can supply independently replaceable WRITE_BACK host aliases.\n Native source handles are prepared during construction. This property\n does not follow from HOST_VISIBLE or a device's MAPPING_SOURCE access."]
+pub const AMDF_MEMORY_FLAG_HOST_MAPPING_SOURCE: amdf_memory_flag_bits_e = 128;
 pub type amdf_memory_flag_bits_e = ::std::os::raw::c_uint;
-#[doc = " Exact device page-table access granted to one memory attachment."]
+#[doc = " Exact page-table access granted to one memory attachment or projection."]
 pub type amdf_memory_access_t = u32;
-#[doc = " Device loads are permitted from the attachment."]
+#[doc = " Loads are permitted from the attachment or projection."]
 pub const AMDF_MEMORY_ACCESS_READ: amdf_memory_access_bit_e = 1;
-#[doc = " Device stores are permitted to the attachment."]
+#[doc = " Stores are permitted to the attachment or projection."]
 pub const AMDF_MEMORY_ACCESS_WRITE: amdf_memory_access_bit_e = 2;
-#[doc = " Device instruction fetches are permitted from the attachment."]
+#[doc = " Instruction fetches are permitted from the attachment or projection."]
 pub const AMDF_MEMORY_ACCESS_EXECUTE: amdf_memory_access_bit_e = 4;
 pub type amdf_memory_access_bit_e = ::std::os::raw::c_uint;
 #[doc = " Interface consuming a numeric memory address, not an address-space owner."]
@@ -746,6 +802,8 @@ pub const AMDF_MEMORY_ADDRESS_GPU: amdf_memory_address_kind_e = 0;
 pub const AMDF_MEMORY_ADDRESS_XDNA_DMA: amdf_memory_address_kind_e = 1;
 #[doc = " XDNA firmware buffer arguments or scoped instruction-storage addresses.\n This is not an address to place directly in a shim DMA descriptor."]
 pub const AMDF_MEMORY_ADDRESS_XDNA_FIRMWARE: amdf_memory_address_kind_e = 2;
+#[doc = " A process host pointer, returned by a host reservation projection."]
+pub const AMDF_MEMORY_ADDRESS_HOST: amdf_memory_address_kind_e = 3;
 pub type amdf_memory_address_kind_e = ::std::os::raw::c_uint;
 #[doc = " Set of address kinds, with bit `1 << amdf_memory_address_kind_t` set for\n each supported kind. Support describes usable addresses, not ownership."]
 pub type amdf_memory_address_kinds_t = u64;
@@ -1075,8 +1133,8 @@ pub struct amdf_memory_construction_capabilities_t {
     pub registered_host_pointer_alignment: u64,
     #[doc = " Required cache class of caller-owned pages for REGISTER, or UNKNOWN\n when this operation consumes no caller pages. This is a caller-established\n property of the source mapping, not inferred from its pointer value."]
     pub registered_host_cacheability: amdf_host_cacheability_t,
-    #[doc = " Reserved for compatible growth and always zero."]
-    pub reserved: u32,
+    #[doc = " Explicit placement constraints supported by CREATE; zero for REGISTER\n and IMPORT. No bit promises that a node remains online or has capacity."]
+    pub placement_kinds: amdf_memory_placement_kinds_t,
     #[doc = " Power-of-two base alignment guaranteed when callers request no stronger\n alignment."]
     pub minimum_alignment: u64,
     #[doc = " Strongest power-of-two minimum alignment callers may request."]
@@ -1111,8 +1169,10 @@ const _: () = {
         registered_host_cacheability
     )
         - 24usize];
-    ["Offset of field: amdf_memory_construction_capabilities_t::reserved"]
-        [::std::mem::offset_of!(amdf_memory_construction_capabilities_t, reserved) - 28usize];
+    ["Offset of field: amdf_memory_construction_capabilities_t::placement_kinds"][::std::mem::offset_of!(
+        amdf_memory_construction_capabilities_t,
+        placement_kinds
+    ) - 28usize];
     ["Offset of field: amdf_memory_construction_capabilities_t::minimum_alignment"][::std::mem::offset_of!(
         amdf_memory_construction_capabilities_t,
         minimum_alignment
@@ -1174,7 +1234,7 @@ pub struct amdf_memory_access_requirements_t {
     pub access: amdf_memory_access_t,
     #[doc = " Reserved for compatible growth; must be zero."]
     pub reserved: u32,
-    #[doc = " Required access properties: QUEUE_STORAGE, HOST_COHERENT, DEVICE_ADDRESS."]
+    #[doc = " Required access properties: QUEUE_STORAGE, HOST_COHERENT, DEVICE_ADDRESS,\n MAPPING_SOURCE."]
     pub flags: amdf_memory_flags_t,
     #[doc = " Interfaces whose complete logical-range addresses must be established."]
     pub address_kinds: amdf_memory_address_kinds_t,
@@ -1472,13 +1532,13 @@ pub struct amdf_memory_create_info_t {
     pub memory_profile_ordinal: u32,
     #[doc = " Number of entries in accesses; zero requests CPU-only system memory."]
     pub access_count: u32,
-    #[doc = " Required backing properties: HOST_VISIBLE, DEVICE_LOCAL and SHAREABLE."]
+    #[doc = " Required backing properties: HOST_VISIBLE, DEVICE_LOCAL, SHAREABLE and\n HOST_MAPPING_SOURCE."]
     pub required_flags: amdf_memory_flags_t,
     #[doc = " Logical byte length established for every requested consumer. Native\n allocation rounding is reported separately and grants no additional\n access."]
     pub byte_length: u64,
     #[doc = " Minimum power-of-two allocation-base alignment in every supported address\n space, or zero for provider policy."]
     pub minimum_alignment: u64,
-    #[doc = " Borrowed host base for a REGISTER profile, otherwise `NULL`. The caller\n keeps this address range backed by the same live pages through\n `memory_destroy`. A failed native detach can leave registrations live;\n that error does not authorize recycling the source. Registration does\n not take ownership."]
+    #[doc = " Borrowed host base for a REGISTER profile, otherwise `NULL`. The caller\n keeps this address range backed by the same live pages through\n `memory_destroy`. A failed native detach can leave registrations live;\n that error does not authorize recycling the source. Registration does\n not take ownership. Construction may maintain every CPU cache line\n intersecting this logical range; the caller excludes concurrent access\n to those lines until construction returns, including through aliases."]
     pub registered_host_pointer: *mut ::std::os::raw::c_void,
     #[doc = " Caller-ordered consumers, consumed during the call and not retained.\n Devices must be unique and belong to the scope's instance. NULL at zero\n count. Each device remains a caller-enforced lifetime dependency."]
     pub accesses: *const amdf_memory_device_access_t,
@@ -1486,11 +1546,13 @@ pub struct amdf_memory_create_info_t {
     pub registered_host_cacheability: amdf_host_cacheability_t,
     #[doc = " Reserved for compatible growth; must be zero."]
     pub reserved: u32,
+    #[doc = " Additional required placement for CREATE. NONE preserves the selected\n profile's ordinary policy. REGISTER requires NONE because the caller\n already owns the pages; this operation never relocates them."]
+    pub placement: amdf_memory_placement_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of amdf_memory_create_info_t"]
-        [::std::mem::size_of::<amdf_memory_create_info_t>() - 72usize];
+        [::std::mem::size_of::<amdf_memory_create_info_t>() - 80usize];
     ["Alignment of amdf_memory_create_info_t"]
         [::std::mem::align_of::<amdf_memory_create_info_t>() - 8usize];
     ["Offset of field: amdf_memory_create_info_t::type_"]
@@ -1517,6 +1579,8 @@ const _: () = {
         [::std::mem::offset_of!(amdf_memory_create_info_t, registered_host_cacheability) - 64usize];
     ["Offset of field: amdf_memory_create_info_t::reserved"]
         [::std::mem::offset_of!(amdf_memory_create_info_t, reserved) - 68usize];
+    ["Offset of field: amdf_memory_create_info_t::placement"]
+        [::std::mem::offset_of!(amdf_memory_create_info_t, placement) - 72usize];
 };
 impl Default for amdf_memory_create_info_t {
     fn default() -> Self {
@@ -1545,7 +1609,7 @@ pub struct amdf_memory_info_t {
     pub access_count: u32,
     #[doc = " Reserved for compatible growth; always zero."]
     pub reserved: u32,
-    #[doc = " Achieved backing properties: HOST_VISIBLE, DEVICE_LOCAL and SHAREABLE."]
+    #[doc = " Achieved backing properties: HOST_VISIBLE, DEVICE_LOCAL, SHAREABLE and\n HOST_MAPPING_SOURCE."]
     pub flags: amdf_memory_flags_t,
     #[doc = " Byte offset of logical byte zero in the physical backing."]
     pub source_byte_offset: u64,
@@ -1559,10 +1623,12 @@ pub struct amdf_memory_info_t {
     pub native_allocation_granularity: u64,
     #[doc = " Identity shared by attachments to the same physical backing, when known."]
     pub physical_backing_id: amdf_physical_memory_id_t,
+    #[doc = " Enforced placement of owned backing. NONE makes no additional guarantee\n about registered/imported pages, even when their source has placement."]
+    pub placement: amdf_memory_placement_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of amdf_memory_info_t"][::std::mem::size_of::<amdf_memory_info_t>() - 96usize];
+    ["Size of amdf_memory_info_t"][::std::mem::size_of::<amdf_memory_info_t>() - 104usize];
     ["Alignment of amdf_memory_info_t"][::std::mem::align_of::<amdf_memory_info_t>() - 8usize];
     ["Offset of field: amdf_memory_info_t::type_"]
         [::std::mem::offset_of!(amdf_memory_info_t, type_) - 0usize];
@@ -1592,6 +1658,8 @@ const _: () = {
         [::std::mem::offset_of!(amdf_memory_info_t, native_allocation_granularity) - 72usize];
     ["Offset of field: amdf_memory_info_t::physical_backing_id"]
         [::std::mem::offset_of!(amdf_memory_info_t, physical_backing_id) - 80usize];
+    ["Offset of field: amdf_memory_info_t::placement"]
+        [::std::mem::offset_of!(amdf_memory_info_t, placement) - 96usize];
 };
 impl Default for amdf_memory_info_t {
     fn default() -> Self {
@@ -1689,7 +1757,7 @@ pub struct amdf_memory_import_info_t {
     pub memory_profile_ordinal: u32,
     #[doc = " Number of entries in accesses."]
     pub access_count: u32,
-    #[doc = " Required backing properties: HOST_VISIBLE, DEVICE_LOCAL and SHAREABLE."]
+    #[doc = " Required backing properties: HOST_VISIBLE, DEVICE_LOCAL, SHAREABLE and\n HOST_MAPPING_SOURCE."]
     pub required_flags: amdf_memory_flags_t,
     #[doc = " Minimum power-of-two destination device-address alignment, or zero for\n profile policy. A nonzero external source offset must be divisible by\n this value."]
     pub minimum_alignment: u64,
@@ -1956,7 +2024,7 @@ pub struct amdf_host_mapping_info_t {
     pub cacheability: amdf_host_cacheability_t,
     #[doc = " First mapped byte borrowed until `host_mapping_destroy` is called."]
     pub pointer: *mut ::std::os::raw::c_void,
-    #[doc = " Byte offset of `pointer` within the logical memory attachment."]
+    #[doc = " Byte offset of `pointer` within its memory or reservation owner."]
     pub memory_byte_offset: u64,
     #[doc = " Mapped byte length."]
     pub byte_length: u64,
@@ -2045,8 +2113,7 @@ pub struct amdf_memory_site_t {
 #[derive(Copy, Clone)]
 pub union amdf_memory_site_t__bindgen_ty_1 {
     pub device: amdf_memory_site_t__bindgen_ty_1__bindgen_ty_1,
-    #[doc = " Host mapping supplying memory identity, range and cache behavior."]
-    pub host_mapping: *mut amdf_host_mapping_t,
+    pub host: amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2,
 }
 #[doc = " Exact initialized device access and execution family."]
 #[repr(C)]
@@ -2086,6 +2153,37 @@ impl Default for amdf_memory_site_t__bindgen_ty_1__bindgen_ty_1 {
         }
     }
 }
+#[doc = " Host view and the backing being qualified for that view."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2 {
+    #[doc = " Live mapping supplying the address range and immutable cache policy."]
+    pub mapping: *mut amdf_host_mapping_t,
+    #[doc = " Backing to qualify for a reservation view. Required for a reservation\n view; NULL for a view created by memory_map, which knows its backing.\n The query is conditional on corresponding bytes being installed. It\n neither inspects current bindings nor retains this memory."]
+    pub source_memory: *mut amdf_memory_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2"]
+        [::std::mem::size_of::<amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2>() - 16usize];
+    ["Alignment of amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2"]
+        [::std::mem::align_of::<amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2>() - 8usize];
+    ["Offset of field: amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2::mapping"]
+        [::std::mem::offset_of!(amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2, mapping) - 0usize];
+    ["Offset of field: amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2::source_memory"][::std::mem::offset_of!(
+        amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2,
+        source_memory
+    ) - 8usize];
+};
+impl Default for amdf_memory_site_t__bindgen_ty_1__bindgen_ty_2 {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of amdf_memory_site_t__bindgen_ty_1"]
@@ -2094,8 +2192,8 @@ const _: () = {
         [::std::mem::align_of::<amdf_memory_site_t__bindgen_ty_1>() - 8usize];
     ["Offset of field: amdf_memory_site_t__bindgen_ty_1::device"]
         [::std::mem::offset_of!(amdf_memory_site_t__bindgen_ty_1, device) - 0usize];
-    ["Offset of field: amdf_memory_site_t__bindgen_ty_1::host_mapping"]
-        [::std::mem::offset_of!(amdf_memory_site_t__bindgen_ty_1, host_mapping) - 0usize];
+    ["Offset of field: amdf_memory_site_t__bindgen_ty_1::host"]
+        [::std::mem::offset_of!(amdf_memory_site_t__bindgen_ty_1, host) - 0usize];
 };
 impl Default for amdf_memory_site_t__bindgen_ty_1 {
     fn default() -> Self {
@@ -2361,6 +2459,325 @@ const _: () = {
     ) - 112usize];
 };
 impl Default for amdf_memory_pair_info_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Stable host or device addresses with independently replaceable backing.\n The reservation borrows its live devices and owns no application backing."]
+#[repr(C)]
+#[derive(Debug)]
+pub struct amdf_memory_reservation_t {
+    _unused: [u8; 0],
+}
+#[doc = " Live-domain limits for host-completed virtual-memory updates."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct amdf_memory_reservation_capabilities_t {
+    #[doc = " Must be AMDF_STRUCTURE_TYPE_MEMORY_RESERVATION_CAPABILITIES."]
+    pub type_: amdf_structure_type_t,
+    #[doc = " Must be at least sizeof(amdf_memory_reservation_capabilities_t)."]
+    pub structure_size: u32,
+    #[doc = " Optional output extension chain. No extensions are defined."]
+    pub next: *mut ::std::os::raw::c_void,
+    #[doc = " Exact permissions accepted by mapping updates in this domain."]
+    pub supported_access: amdf_memory_access_t,
+    #[doc = " Permissions that every nonempty mapping must include on this domain."]
+    pub required_access: amdf_memory_access_t,
+    #[doc = " Consumer-local address domain described by these limits."]
+    pub address_domain_ordinal: u32,
+    #[doc = " Reserved for compatible growth; zero."]
+    pub reserved: u32,
+    #[doc = " Largest reservation length in bytes."]
+    pub maximum_byte_length: u64,
+    #[doc = " Required reservation length and minimum base alignment in bytes."]
+    pub reservation_granularity: u64,
+    #[doc = " Strongest power-of-two minimum base alignment accepted by creation."]
+    pub maximum_alignment: u64,
+    #[doc = " Required destination offset, native source offset and length alignment."]
+    pub mapping_granularity: u64,
+    #[doc = " Inclusive lower bound of a complete reservation's address interval."]
+    pub minimum_address: u64,
+    #[doc = " Inclusive upper bound of a complete reservation's address interval."]
+    pub maximum_address: u64,
+    #[doc = " Whole-backing flags required of every nonempty mapping source. Request\n these in memory_create.required_flags, in addition to preparing each\n device's MAPPING_SOURCE access and required_access permissions. Zero means\n no additional whole-backing requirement, not that preparation is optional."]
+    pub required_source_flags: amdf_memory_flags_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_memory_reservation_capabilities_t"]
+        [::std::mem::size_of::<amdf_memory_reservation_capabilities_t>() - 88usize];
+    ["Alignment of amdf_memory_reservation_capabilities_t"]
+        [::std::mem::align_of::<amdf_memory_reservation_capabilities_t>() - 8usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::type_"]
+        [::std::mem::offset_of!(amdf_memory_reservation_capabilities_t, type_) - 0usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::structure_size"]
+        [::std::mem::offset_of!(amdf_memory_reservation_capabilities_t, structure_size) - 4usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::next"]
+        [::std::mem::offset_of!(amdf_memory_reservation_capabilities_t, next) - 8usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::supported_access"][::std::mem::offset_of!(
+        amdf_memory_reservation_capabilities_t,
+        supported_access
+    ) - 16usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::required_access"]
+        [::std::mem::offset_of!(amdf_memory_reservation_capabilities_t, required_access) - 20usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::address_domain_ordinal"][::std::mem::offset_of!(
+        amdf_memory_reservation_capabilities_t,
+        address_domain_ordinal
+    )
+        - 24usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::reserved"]
+        [::std::mem::offset_of!(amdf_memory_reservation_capabilities_t, reserved) - 28usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::maximum_byte_length"][::std::mem::offset_of!(
+        amdf_memory_reservation_capabilities_t,
+        maximum_byte_length
+    ) - 32usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::reservation_granularity"][::std::mem::offset_of!(
+        amdf_memory_reservation_capabilities_t,
+        reservation_granularity
+    )
+        - 40usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::maximum_alignment"][::std::mem::offset_of!(
+        amdf_memory_reservation_capabilities_t,
+        maximum_alignment
+    ) - 48usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::mapping_granularity"][::std::mem::offset_of!(
+        amdf_memory_reservation_capabilities_t,
+        mapping_granularity
+    ) - 56usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::minimum_address"]
+        [::std::mem::offset_of!(amdf_memory_reservation_capabilities_t, minimum_address) - 64usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::maximum_address"]
+        [::std::mem::offset_of!(amdf_memory_reservation_capabilities_t, maximum_address) - 72usize];
+    ["Offset of field: amdf_memory_reservation_capabilities_t::required_source_flags"][::std::mem::offset_of!(
+        amdf_memory_reservation_capabilities_t,
+        required_source_flags
+    ) - 80usize];
+};
+impl Default for amdf_memory_reservation_capabilities_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " One explicitly initialized consumer of a reservation."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct amdf_memory_reservation_access_t {
+    #[doc = " Borrowed live device, or NULL for the process host address space.\n The caller keeps a live device alive through reservation destruction."]
+    pub device: *mut amdf_device_t,
+    #[doc = " Consumer-local address domain, or ADDRESS_DOMAIN_ORDINAL_NONE for host."]
+    pub address_domain_ordinal: u32,
+    #[doc = " Maximum permissions that updates may establish for this consumer.\n Consumers sharing host/SVA translations require identical envelopes."]
+    pub access: amdf_memory_access_t,
+    #[doc = " Minimum mapping offset/length unit, or zero for provider policy.\n Must be a power-of-two multiple of the native mapping granularity and\n divide the reservation length. The returned geometry also satisfies any\n consumers sharing this native mapping group. Independently owned native\n views use these units on platforms requiring whole-view removal."]
+    pub mapping_granularity: u64,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_memory_reservation_access_t"]
+        [::std::mem::size_of::<amdf_memory_reservation_access_t>() - 24usize];
+    ["Alignment of amdf_memory_reservation_access_t"]
+        [::std::mem::align_of::<amdf_memory_reservation_access_t>() - 8usize];
+    ["Offset of field: amdf_memory_reservation_access_t::device"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_t, device) - 0usize];
+    ["Offset of field: amdf_memory_reservation_access_t::address_domain_ordinal"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_t, address_domain_ordinal) - 8usize];
+    ["Offset of field: amdf_memory_reservation_access_t::access"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_t, access) - 12usize];
+    ["Offset of field: amdf_memory_reservation_access_t::mapping_granularity"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_t, mapping_granularity) - 16usize];
+};
+impl Default for amdf_memory_reservation_access_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Parameters for reserving addresses without allocating application backing."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct amdf_memory_reservation_create_info_t {
+    #[doc = " Must be AMDF_STRUCTURE_TYPE_MEMORY_RESERVATION_CREATE_INFO."]
+    pub type_: amdf_structure_type_t,
+    #[doc = " Must be at least sizeof(amdf_memory_reservation_create_info_t)."]
+    pub structure_size: u32,
+    #[doc = " Optional input extension chain. No extensions are defined."]
+    pub next: *const ::std::os::raw::c_void,
+    #[doc = " Nonzero length shared by all requested consumers."]
+    pub byte_length: u64,
+    #[doc = " Minimum power-of-two base alignment, or zero for provider policy."]
+    pub minimum_alignment: u64,
+    #[doc = " Nonzero number of caller-ordered, unique host/live-device consumers."]
+    pub access_count: u32,
+    #[doc = " Reserved for compatible growth; must be zero."]
+    pub reserved: u32,
+    #[doc = " Consumers borrowed only for this call; live devices belong to instance."]
+    pub accesses: *const amdf_memory_reservation_access_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_memory_reservation_create_info_t"]
+        [::std::mem::size_of::<amdf_memory_reservation_create_info_t>() - 48usize];
+    ["Alignment of amdf_memory_reservation_create_info_t"]
+        [::std::mem::align_of::<amdf_memory_reservation_create_info_t>() - 8usize];
+    ["Offset of field: amdf_memory_reservation_create_info_t::type_"]
+        [::std::mem::offset_of!(amdf_memory_reservation_create_info_t, type_) - 0usize];
+    ["Offset of field: amdf_memory_reservation_create_info_t::structure_size"]
+        [::std::mem::offset_of!(amdf_memory_reservation_create_info_t, structure_size) - 4usize];
+    ["Offset of field: amdf_memory_reservation_create_info_t::next"]
+        [::std::mem::offset_of!(amdf_memory_reservation_create_info_t, next) - 8usize];
+    ["Offset of field: amdf_memory_reservation_create_info_t::byte_length"]
+        [::std::mem::offset_of!(amdf_memory_reservation_create_info_t, byte_length) - 16usize];
+    ["Offset of field: amdf_memory_reservation_create_info_t::minimum_alignment"][::std::mem::offset_of!(
+        amdf_memory_reservation_create_info_t,
+        minimum_alignment
+    ) - 24usize];
+    ["Offset of field: amdf_memory_reservation_create_info_t::access_count"]
+        [::std::mem::offset_of!(amdf_memory_reservation_create_info_t, access_count) - 32usize];
+    ["Offset of field: amdf_memory_reservation_create_info_t::reserved"]
+        [::std::mem::offset_of!(amdf_memory_reservation_create_info_t, reserved) - 36usize];
+    ["Offset of field: amdf_memory_reservation_create_info_t::accesses"]
+        [::std::mem::offset_of!(amdf_memory_reservation_create_info_t, accesses) - 40usize];
+};
+impl Default for amdf_memory_reservation_create_info_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Immutable facts of one reservation's consumer projection."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct amdf_memory_reservation_access_info_t {
+    #[doc = " Must be AMDF_STRUCTURE_TYPE_MEMORY_RESERVATION_ACCESS_INFO."]
+    pub type_: amdf_structure_type_t,
+    #[doc = " Must be at least sizeof(amdf_memory_reservation_access_info_t)."]
+    pub structure_size: u32,
+    #[doc = " Optional output extension chain. No extensions are defined."]
+    pub next: *mut ::std::os::raw::c_void,
+    #[doc = " Exact live consumer, or all-zero for the host projection."]
+    pub device_id: amdf_device_id_t,
+    #[doc = " Resource-local ordinal identifying this projection."]
+    pub ordinal: u32,
+    #[doc = " First ordinal sharing this native mapping state. Updates through any of\n these aliases affect all of them; they are not independent address spaces."]
+    pub mapping_access_ordinal: u32,
+    #[doc = " Consumer-local address domain of the stable address."]
+    pub address_domain_ordinal: u32,
+    #[doc = " Maximum permissions admitted by this reservation projection."]
+    pub access: amdf_memory_access_t,
+    #[doc = " Interpretation of address; HOST for a process pointer."]
+    pub address_kind: amdf_memory_address_kind_t,
+    #[doc = " Reserved for compatible growth; zero."]
+    pub reserved: u32,
+    #[doc = " Stable base, queryable even when none of the range is backed."]
+    pub address: u64,
+    #[doc = " Complete reserved length in bytes."]
+    pub byte_length: u64,
+    #[doc = " Required native mapping offset and length alignment in bytes."]
+    pub mapping_granularity: u64,
+    #[doc = " Device reset epoch, or zero for a host projection."]
+    pub reset_epoch: u64,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_memory_reservation_access_info_t"]
+        [::std::mem::size_of::<amdf_memory_reservation_access_info_t>() - 88usize];
+    ["Alignment of amdf_memory_reservation_access_info_t"]
+        [::std::mem::align_of::<amdf_memory_reservation_access_info_t>() - 8usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::type_"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, type_) - 0usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::structure_size"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, structure_size) - 4usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::next"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, next) - 8usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::device_id"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, device_id) - 16usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::ordinal"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, ordinal) - 32usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::mapping_access_ordinal"][::std::mem::offset_of!(
+        amdf_memory_reservation_access_info_t,
+        mapping_access_ordinal
+    ) - 36usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::address_domain_ordinal"][::std::mem::offset_of!(
+        amdf_memory_reservation_access_info_t,
+        address_domain_ordinal
+    ) - 40usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::access"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, access) - 44usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::address_kind"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, address_kind) - 48usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::reserved"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, reserved) - 52usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::address"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, address) - 56usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::byte_length"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, byte_length) - 64usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::mapping_granularity"][::std::mem::offset_of!(
+        amdf_memory_reservation_access_info_t,
+        mapping_granularity
+    ) - 72usize];
+    ["Offset of field: amdf_memory_reservation_access_info_t::reset_epoch"]
+        [::std::mem::offset_of!(amdf_memory_reservation_access_info_t, reset_epoch) - 80usize];
+};
+impl Default for amdf_memory_reservation_access_info_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " One replacement or detach within a stable reservation.\n Destination ranges in a batch must not overlap. Source ranges may repeat."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct amdf_memory_mapping_update_t {
+    #[doc = " Byte offset in the destination reservation."]
+    pub target_byte_offset: u64,
+    #[doc = " Nonzero length wholly contained by the destination and any source."]
+    pub byte_length: u64,
+    #[doc = " Ordinary prepared backing, or NULL to detach the destination range.\n The caller keeps backing alive through its last installed alias and user.\n Host/SVA groups require HOST_MAPPING_SOURCE backing with prepared\n MAPPING_SOURCE access for every device sharing their translations."]
+    pub memory: *mut amdf_memory_t,
+    #[doc = " Source access prepared for this exact live device. Must be zero for a\n host projection (which uses backing, not a device access) or detach."]
+    pub memory_access_ordinal: u32,
+    #[doc = " Exact installed permissions, or zero for detach."]
+    pub access: amdf_memory_access_t,
+    #[doc = " Offset from the source's logical byte zero, or zero for detach."]
+    pub source_byte_offset: u64,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_memory_mapping_update_t"]
+        [::std::mem::size_of::<amdf_memory_mapping_update_t>() - 40usize];
+    ["Alignment of amdf_memory_mapping_update_t"]
+        [::std::mem::align_of::<amdf_memory_mapping_update_t>() - 8usize];
+    ["Offset of field: amdf_memory_mapping_update_t::target_byte_offset"]
+        [::std::mem::offset_of!(amdf_memory_mapping_update_t, target_byte_offset) - 0usize];
+    ["Offset of field: amdf_memory_mapping_update_t::byte_length"]
+        [::std::mem::offset_of!(amdf_memory_mapping_update_t, byte_length) - 8usize];
+    ["Offset of field: amdf_memory_mapping_update_t::memory"]
+        [::std::mem::offset_of!(amdf_memory_mapping_update_t, memory) - 16usize];
+    ["Offset of field: amdf_memory_mapping_update_t::memory_access_ordinal"]
+        [::std::mem::offset_of!(amdf_memory_mapping_update_t, memory_access_ordinal) - 24usize];
+    ["Offset of field: amdf_memory_mapping_update_t::access"]
+        [::std::mem::offset_of!(amdf_memory_mapping_update_t, access) - 28usize];
+    ["Offset of field: amdf_memory_mapping_update_t::source_byte_offset"]
+        [::std::mem::offset_of!(amdf_memory_mapping_update_t, source_byte_offset) - 32usize];
+};
+impl Default for amdf_memory_mapping_update_t {
     fn default() -> Self {
         let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
         unsafe {
@@ -2945,11 +3362,13 @@ pub struct amdf_kernel_queue_info_t {
     pub maximum_command_count: u32,
     #[doc = " Native wake destinations accepted by kernel_queue_request_notification.\n Zero means notification is unavailable; all bits are resolved at creation."]
     pub notification_types: amdf_native_event_types_t,
+    #[doc = " Optional operations resolved for this live queue without lazy setup."]
+    pub capabilities: amdf_kernel_queue_capabilities_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of amdf_kernel_queue_info_t"]
-        [::std::mem::size_of::<amdf_kernel_queue_info_t>() - 64usize];
+        [::std::mem::size_of::<amdf_kernel_queue_info_t>() - 72usize];
     ["Alignment of amdf_kernel_queue_info_t"]
         [::std::mem::align_of::<amdf_kernel_queue_info_t>() - 8usize];
     ["Offset of field: amdf_kernel_queue_info_t::type_"]
@@ -2974,6 +3393,8 @@ const _: () = {
         [::std::mem::offset_of!(amdf_kernel_queue_info_t, maximum_command_count) - 52usize];
     ["Offset of field: amdf_kernel_queue_info_t::notification_types"]
         [::std::mem::offset_of!(amdf_kernel_queue_info_t, notification_types) - 56usize];
+    ["Offset of field: amdf_kernel_queue_info_t::capabilities"]
+        [::std::mem::offset_of!(amdf_kernel_queue_info_t, capabilities) - 64usize];
 };
 impl Default for amdf_kernel_queue_info_t {
     fn default() -> Self {
@@ -3136,7 +3557,7 @@ pub struct amdf_api_t {
             out_access_capabilities: *mut amdf_memory_access_capabilities_t,
         ) -> amdf_status_t,
     >,
-    #[doc = " Creates one backing with every requested live-device access established.\n\n The selected profile exposes exactly one of CREATE and REGISTER, with\n registered_host_pointer present exactly for REGISTER. The resource\n borrows the scope and all requested devices, which the caller keeps live\n through memory release without hidden retention or lifetime tracking.\n Access ordinals preserve request order. Exact permissions, required\n properties, mapping and residency are established before publication.\n No device is implicitly activated and no access is deferred to first use.\n\n Registered pages remain caller-owned and backed by the same live pages\n through memory release. A native release failure can leave registrations\n live and does not permit recycling those pages. If they came from a host\n mapping, that mapping and its backing obey the same requirement.\n Construction performs no command inspection, queue submission or\n device-wide synchronization. Failure leaves out_memory unchanged and\n creates no public cleanup owner."]
+    #[doc = " Creates one backing with every requested live-device access established.\n\n The selected profile exposes exactly one of CREATE and REGISTER, with\n registered_host_pointer present exactly for REGISTER. The resource\n borrows the scope and all requested devices, which the caller keeps live\n through memory release without hidden retention or lifetime tracking.\n Access ordinals preserve request order. Exact permissions, required\n properties, mapping and residency are established before publication.\n No device is implicitly activated and no access is deferred to first use.\n\n Preparation establishes initial cache readiness for a first device\n writer. An output-only range needs no preparatory host access, clear or\n cache operation solely because its storage is new. This cold operation\n may perform cache maintenance proportional to the constructed range;\n later CPU writes still require the queried release before device access,\n and device writes require completion and the queried host acquisition.\n\n Registered pages remain caller-owned and backed by the same live pages\n through memory release. A native release failure can leave registrations\n live and does not permit recycling those pages. If they came from a host\n mapping, that mapping and its backing obey the same requirement.\n During registration the caller excludes other access to every cache line\n intersecting the logical range, including through aliases. Initial cache\n preparation preserves contents; it does not initialize caller storage.\n Construction performs no command inspection, queue submission or\n device-wide synchronization. Failure leaves out_memory unchanged and\n creates no public cleanup owner."]
     pub memory_create: ::std::option::Option<
         unsafe extern "C" fn(
             scope: *mut amdf_memory_scope_t,
@@ -3144,7 +3565,7 @@ pub struct amdf_api_t {
             out_memory: *mut *mut amdf_memory_t,
         ) -> amdf_status_t,
     >,
-    #[doc = " Acquires external backing and establishes the requested live access set.\n\n The selected scope profile exposes IMPORT and accepts the transport and\n all requirements. The same caller-enforced lifetime and readiness rules\n as memory_create apply. Complete success acquires the native backing\n references, consumes and zeros inout_external_memory, and publishes one\n memory handle. Every failure leaves both caller values byte-for-byte\n unchanged. This cold operation performs no queue submission or\n device-wide wait."]
+    #[doc = " Acquires external backing and establishes the requested live access set.\n\n The selected scope profile exposes IMPORT and accepts the transport and\n all requirements. The same caller-enforced lifetime and readiness rules\n as memory_create apply. Complete success acquires the native backing\n references, consumes and zeros inout_external_memory, and publishes one\n memory handle. Every failure leaves both caller values byte-for-byte\n unchanged. This cold operation performs no queue submission or\n device-wide wait. Import does not release a foreign producer's cache\n ownership: the caller completes the external transport's publication and\n synchronization protocol before native use."]
     pub memory_import: ::std::option::Option<
         unsafe extern "C" fn(
             scope: *mut amdf_memory_scope_t,
@@ -3179,7 +3600,7 @@ pub struct amdf_api_t {
     #[doc = " Releases one move-owned external-memory value and zeros it.\n\n An empty value and a null pointer are no-ops. A nonempty value invokes its\n release callback exactly once when one is present. The caller must have\n exclusive access to the value."]
     pub external_memory_release:
         ::std::option::Option<unsafe extern "C" fn(value: *mut amdf_external_memory_t)>,
-    #[doc = " Copies the exact directional relation between two concrete access sites.\n\n Each site names either a device access and queue family or a host mapping.\n An out-of-range access ordinal returns OUT_OF_RANGE. Sites on one memory\n handle share backing directly, including CPU-only memory without a\n physical identity. Different memory handles must belong to one provider\n instance and have equal valid physical identities. A scope or identity\n mismatch returns\n `AMDF_STATUS_CODE_FAILED_PRECONDITION`; an unavailable identity returns\n `AMDF_STATUS_CODE_UNSUPPORTED`. Equal addresses or physical identities do\n not imply reach, visibility, or atomics. Common code composes\n independently reported local facts and gives neither implementation the\n other one's object. Host transitions account for the mapping's available\n operations and the selected peer's coherence, not other device accesses\n in the resource. The result describes visibility over corresponding bytes\n reachable by both sites; callers select those ranges and provide ordering.\n It does not establish synchronization or report host atomic capabilities.\n The operation performs no allocation, native query, import, mapping,\n cache transition, locking, lazy initialization or wait. It composes the\n two sites' retained facts without scanning other allocations or consumers.\n Failure leaves `out_info` byte-for-byte unchanged."]
+    #[doc = " Copies the exact directional relation between two concrete access sites.\n\n Each site names either a device access and queue family or a host mapping.\n An out-of-range access ordinal returns OUT_OF_RANGE. Sites on one memory\n handle share backing directly, including CPU-only memory without a\n physical identity. Different memory handles must belong to one provider\n instance and have equal valid physical identities. A scope or identity\n mismatch returns\n `AMDF_STATUS_CODE_FAILED_PRECONDITION`; an unavailable identity returns\n `AMDF_STATUS_CODE_UNSUPPORTED`. Equal addresses or physical identities do\n not imply reach, visibility, or atomics. Common code composes\n independently reported local facts and gives neither implementation the\n other one's object. Host transitions account for the mapping's available\n operations and the selected peer's coherence, not other device accesses\n in the resource. The result describes visibility over corresponding bytes\n reachable by both sites; callers select those ranges and provide ordering.\n It does not establish synchronization or report host atomic capabilities.\n A reservation host site supplies source_memory explicitly. Its answer is\n conditional on the caller installing corresponding bytes of that backing;\n the query neither checks current bindings nor discovers a source by VA.\n The operation performs no allocation, native query, import, mapping,\n cache transition, locking, lazy initialization or wait. It composes the\n two sites' retained facts without scanning other allocations or consumers.\n Failure leaves `out_info` byte-for-byte unchanged."]
     pub memory_query_pair_info: ::std::option::Option<
         unsafe extern "C" fn(
             producer_site: *const amdf_memory_site_t,
@@ -3202,7 +3623,7 @@ pub struct amdf_api_t {
             out_info: *mut amdf_host_mapping_info_t,
         ) -> amdf_status_t,
     >,
-    #[doc = " Performs one explicit host cache ownership transition over a mapped range.\n\n `byte_offset` is relative to the mapping. The implementation may touch\n every cache line intersecting the range; callers externally synchronize\n the complete intersected lines. A non-empty flush requires write access\n and a non-empty invalidate requires read access; otherwise the operation\n returns `AMDF_STATUS_CODE_FAILED_PRECONDITION`. An empty range is a no-op.\n A nonempty request executes the advertised operation even when the\n memory's attached device is host-coherent. It never waits for device\n execution or supplies an execution dependency.\n The mapping's cache recipe and native entry points are prepared before\n this call. No allocation, locking or lazy initialization occurs. Work\n scales with the affected cache lines or native allocation spans. A recipe\n requiring HOST_API execution may enter the driver; this is not a blanket\n syscall-free operation."]
+    #[doc = " Performs one explicit host cache ownership transition over a mapped range.\n\n `byte_offset` is relative to the mapping. The implementation may touch\n every cache line intersecting the range; callers externally synchronize\n the complete intersected lines. A non-empty flush requires write access\n and a non-empty invalidate requires read access; otherwise the operation\n returns `AMDF_STATUS_CODE_FAILED_PRECONDITION`. An empty range is a no-op.\n A nonempty request executes the advertised operation even when the\n memory's attached device is host-coherent. It never waits for device\n execution or supplies an execution dependency.\n For a reservation view, callers ensure the complete range is backed with\n the required permissions and is not concurrently replaced. There is no\n mapping-table lookup or per-slab work on this path.\n The mapping's cache recipe and native entry points are prepared before\n this call. No allocation, locking or lazy initialization occurs. Work\n scales with the affected cache lines or native allocation spans. A recipe\n requiring HOST_API execution may enter the driver; this is not a blanket\n syscall-free operation."]
     pub host_mapping_cache_control: ::std::option::Option<
         unsafe extern "C" fn(
             mapping: *mut amdf_host_mapping_t,
@@ -3211,7 +3632,7 @@ pub struct amdf_api_t {
             byte_length: u64,
         ) -> amdf_status_t,
     >,
-    #[doc = " Destroys one mapping after all host access to its pointer has stopped.\n\n The caller must have exclusive access. A valid mapping is consumed and\n returns OK; NULL returns INVALID_ARGUMENT. The view borrows the memory's\n persistent native mapping, whose unmapping occurs at memory destruction.\n No execution wait or cache transition is implied."]
+    #[doc = " Destroys one mapping after all host access to its pointer has stopped.\n\n The caller must have exclusive access. A valid mapping is consumed and\n returns OK; NULL returns INVALID_ARGUMENT. The view borrows its memory's\n persistent mapping or its reservation's addresses. Destroying the view\n does not change reservation mappings or release their backing.\n No execution wait or cache transition is implied."]
     pub host_mapping_destroy: ::std::option::Option<
         unsafe extern "C" fn(mapping: *mut amdf_host_mapping_t) -> amdf_status_t,
     >,
@@ -3322,10 +3743,81 @@ pub struct amdf_api_t {
             event: *const amdf_native_event_t,
         ) -> amdf_status_t,
     >,
+    #[doc = " Queries reservation support for an already-live device address domain.\n Unsupported domains return UNSUPPORTED with output unchanged. This cached\n query performs no allocation, lock, native call or lazy initialization."]
+    pub device_query_memory_reservation_capabilities: ::std::option::Option<
+        unsafe extern "C" fn(
+            device: *mut amdf_device_t,
+            address_domain_ordinal: u32,
+            out_capabilities: *mut amdf_memory_reservation_capabilities_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Queries host reservation geometry without activating an accelerator.\n This cold query may read native OS address limits and page geometry. It\n allocates no backing and leaves output unchanged on failure. The host\n address domain is ADDRESS_DOMAIN_ORDINAL_NONE."]
+    pub instance_query_host_memory_reservation_capabilities: ::std::option::Option<
+        unsafe extern "C" fn(
+            instance: *mut amdf_instance_t,
+            out_capabilities: *mut amdf_memory_reservation_capabilities_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Reserves stable addresses for explicit host/live-device consumers without\n allocating application backing. A request may combine host, GPU and NPU\n consumers. GPUs share a common GPU address. Host/SVA consumers share\n native translations, require equal permission envelopes and can have\n different address encodings; each projection reports its address_kind. An\n unsupported native combination fails as a whole. Distinct mapping groups\n update independently, not as one cross-domain transaction. Devices and\n instance are borrowed, with no retention or lifetime tracking. This cold\n operation may allocate, lock and enter the native driver. Providers that\n need independently removable native view registrations pre-size their\n handle storage here from the reservation length and chosen mapping unit.\n No backing or native view registration is allocated for empty slots.\n Failure leaves out_reservation unchanged and creates no cleanup\n obligation."]
+    pub memory_reservation_create: ::std::option::Option<
+        unsafe extern "C" fn(
+            instance: *mut amdf_instance_t,
+            create_info: *const amdf_memory_reservation_create_info_t,
+            out_reservation: *mut *mut amdf_memory_reservation_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Creates a lightweight host view of a reservation's host projection.\n The view borrows the reservation, which must outlive it. It may cover\n holes; creation does not install backing or make the range accessible.\n The requested permissions must be available on the projection. Actual\n accesses and cache operations require installed backing with those\n permissions and external ordering against replacement. The immutable\n WRITE_BACK recipe remains valid across every admitted replacement.\n This cold operation allocates view metadata, not another native mapping.\n Failure leaves out_mapping unchanged."]
+    pub memory_reservation_map: ::std::option::Option<
+        unsafe extern "C" fn(
+            reservation: *mut amdf_memory_reservation_t,
+            access_ordinal: u32,
+            map_info: *const amdf_memory_map_info_t,
+            out_mapping: *mut *mut amdf_host_mapping_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Copies a stable address and native alias-domain facts for one consumer.\n An unbacked address is queryable but not dereferenceable. This thread-safe\n query performs no allocation, locking, syscall or lazy initialization.\n Failure leaves out_info unchanged."]
+    pub memory_reservation_query_access_info: ::std::option::Option<
+        unsafe extern "C" fn(
+            reservation: *mut amdf_memory_reservation_t,
+            access_ordinal: u32,
+            out_info: *mut amdf_memory_reservation_access_info_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Replaces or removes mappings after the caller completes affected users.\n Success establishes translation readiness for subsequent device accesses;\n successful detach permits releasing the removed backing after its other\n users and aliases finish. No execution dependencies are inferred or\n waited. The caller serializes mutation/destruction of the same\n reservation. Device sources require MAPPING_SOURCE access; host sources\n require HOST_MAPPING_SOURCE backing. A shared host/SVA group requires\n both: the backing must have prepared MAPPING_SOURCE access for every\n device in that group, even for an update issued through its host\n projection. All descriptors are validated before native mutation.\n Validation failure changes nothing. A native failure can leave partial\n mappings and makes the affected native mapping group unusable except for\n full-group detach or terminal destruction. Old and proposed backing stay\n alive until checked removal succeeds. The library retains no source\n objects or backing identities. A provider may retain native view handles\n in pre-sized reservation-local storage to support independent removal.\n This cold operation may allocate temporary descriptors, register native\n views, lock native VM mutation and wait for mapping readiness. None of\n this work occurs on dispatch. Zero updates is empty on a healthy\n projection.\n\n Linux PROCESS lifetime can share its native context with foreign KFD\n clients. The caller serializes those clients' VM mutations against these\n updates, detach and destruction; an instance's mutation lock cannot order\n calls made outside that instance."]
+    pub memory_reservation_update: ::std::option::Option<
+        unsafe extern "C" fn(
+            reservation: *mut amdf_memory_reservation_t,
+            access_ordinal: u32,
+            update_count: u32,
+            updates: *const amdf_memory_mapping_update_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Removes all mappings in one native mapping group, including holes, without\n releasing addresses or consuming the reservation. access_ordinal selects\n the group shared by accesses with the same mapping_access_ordinal.\n The caller serializes mutation/destruction and completes all affected\n execution and accepted queue-ordered mapping work before entering.\n The provider orders removal after its own pending host-update prefix;\n no application execution dependencies are inferred or waited.\n\n Success certifies complete translation removal before backing may be\n reused, subject to its other aliases and users. Failure grants no reuse.\n The handle, addresses and queryable access facts remain owned on every\n result. Detach is admitted after a native mapping failure but does not\n reset it: the group remains unusable for updates or execution. A healthy\n group stays usable after successful detach. Native detach failure poisons\n a healthy group; a previously failed group retains its original error.\n This call reports the detach result, not the prior mapping error.\n\n This cold operation allocates no library metadata, retains no backing,\n and uses no backing lookup. It may scan pre-sized native view handles,\n lock native VM mutation, enter the driver and wait for translation removal\n readiness. It does not bypass native device failure or create a retry\n owner or worker."]
+    pub memory_reservation_detach: ::std::option::Option<
+        unsafe extern "C" fn(
+            reservation: *mut amdf_memory_reservation_t,
+            access_ordinal: u32,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Clears the complete reservation, including holes, and releases its VA.\n The caller has completed all affected execution and owns exclusive access.\n Success certifies removal before backing may be reused. Native failure\n consumes this handle but preserves unsafe native resources; it does not\n authorize recycling backing that might still be mapped. No retry owner,\n source registry or implicit device-execution wait is created."]
+    pub memory_reservation_destroy: ::std::option::Option<
+        unsafe extern "C" fn(reservation: *mut amdf_memory_reservation_t) -> amdf_status_t,
+    >,
+    #[doc = " Enqueues mapping replacement or detach between commands on one queue.\n Requires VIRTUAL_MEMORY in the live queue's capabilities and a reservation\n access belonging to that exact device. Unsupported queues return\n UNSUPPORTED; this call never substitutes a host wait. The nonempty vector\n has the same range, source and permission rules as reservation_update.\n Descriptors are borrowed only during the call. The caller serializes\n reservation mutation and keeps the reservation and old/proposed backing\n alive until checked retirement and successful removal permit reuse.\n\n Earlier commands on this queue finish before mutation; later commands see\n the new translations. The caller separately orders other queues and native\n aliases. The returned point uses ordinary kernel_queue_wait/status: there\n is no separate mapping completion object. Success means acceptance, not\n completed mutation. A failure after native acceptance still returns OK\n and the accepted point, latches terminal queue failure, and prevents\n subsequent publication. Checked retirement and terminal status must both\n be observed.\n Rejection leaves out_submission unchanged; a native mutation failure can\n poison the reservation as with reservation_update. Failed queues and\n projections never authorize recycling backing merely because they failed.\n\n This cold path may allocate descriptor arrays and enter the driver, but\n performs no execution wait, creates no worker, and retains no sources.\n Concurrent publication or full native capacity returns BUSY. Mapping\n admission may be tighter than the configured command capacity."]
+    pub kernel_queue_update_memory: ::std::option::Option<
+        unsafe extern "C" fn(
+            queue: *mut amdf_kernel_queue_t,
+            reservation: *mut amdf_memory_reservation_t,
+            access_ordinal: u32,
+            update_count: u32,
+            updates: *const amdf_memory_mapping_update_t,
+            out_submission: *mut u64,
+        ) -> amdf_status_t,
+    >,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of amdf_api_t"][::std::mem::size_of::<amdf_api_t>() - 328usize];
+    ["Size of amdf_api_t"][::std::mem::size_of::<amdf_api_t>() - 400usize];
     ["Alignment of amdf_api_t"][::std::mem::align_of::<amdf_api_t>() - 8usize];
     ["Offset of field: amdf_api_t::structure_size"]
         [::std::mem::offset_of!(amdf_api_t, structure_size) - 0usize];
@@ -3411,6 +3903,29 @@ const _: () = {
         [::std::mem::offset_of!(amdf_api_t, kernel_queue_refresh_status) - 312usize];
     ["Offset of field: amdf_api_t::kernel_queue_request_notification"]
         [::std::mem::offset_of!(amdf_api_t, kernel_queue_request_notification) - 320usize];
+    ["Offset of field: amdf_api_t::device_query_memory_reservation_capabilities"][::std::mem::offset_of!(
+        amdf_api_t,
+        device_query_memory_reservation_capabilities
+    ) - 328usize];
+    ["Offset of field: amdf_api_t::instance_query_host_memory_reservation_capabilities"][::std::mem::offset_of!(
+        amdf_api_t,
+        instance_query_host_memory_reservation_capabilities
+    )
+        - 336usize];
+    ["Offset of field: amdf_api_t::memory_reservation_create"]
+        [::std::mem::offset_of!(amdf_api_t, memory_reservation_create) - 344usize];
+    ["Offset of field: amdf_api_t::memory_reservation_map"]
+        [::std::mem::offset_of!(amdf_api_t, memory_reservation_map) - 352usize];
+    ["Offset of field: amdf_api_t::memory_reservation_query_access_info"]
+        [::std::mem::offset_of!(amdf_api_t, memory_reservation_query_access_info) - 360usize];
+    ["Offset of field: amdf_api_t::memory_reservation_update"]
+        [::std::mem::offset_of!(amdf_api_t, memory_reservation_update) - 368usize];
+    ["Offset of field: amdf_api_t::memory_reservation_detach"]
+        [::std::mem::offset_of!(amdf_api_t, memory_reservation_detach) - 376usize];
+    ["Offset of field: amdf_api_t::memory_reservation_destroy"]
+        [::std::mem::offset_of!(amdf_api_t, memory_reservation_destroy) - 384usize];
+    ["Offset of field: amdf_api_t::kernel_queue_update_memory"]
+        [::std::mem::offset_of!(amdf_api_t, kernel_queue_update_memory) - 392usize];
 };
 #[doc = " Function type used to acquire the immutable API table."]
 pub type amdf_query_api_fn_t = ::std::option::Option<
@@ -3420,6 +3935,177 @@ pub type amdf_query_api_fn_t = ::std::option::Option<
         out_api: *mut *const amdf_api_t,
     ) -> amdf_status_t,
 >;
+#[doc = " Representation of one observation source's timestamps.\n\n The source and its capture lifetime identify the clock. Equal rates or a\n shared physical device establish neither a shared epoch nor correlation\n with a host clock. Rate describes units, not resolution or accuracy."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct amdf_observation_clock_info_t {
+    #[doc = " Represented ticks per second, or zero when the rate is not established."]
+    pub frequency_hz: u64,
+    #[doc = " Number of meaningful counter bits, or zero when unspecified."]
+    pub counter_bit_count: u32,
+    #[doc = " Reserved; zero."]
+    pub reserved: u32,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_observation_clock_info_t"]
+        [::std::mem::size_of::<amdf_observation_clock_info_t>() - 16usize];
+    ["Alignment of amdf_observation_clock_info_t"]
+        [::std::mem::align_of::<amdf_observation_clock_info_t>() - 8usize];
+    ["Offset of field: amdf_observation_clock_info_t::frequency_hz"]
+        [::std::mem::offset_of!(amdf_observation_clock_info_t, frequency_hz) - 0usize];
+    ["Offset of field: amdf_observation_clock_info_t::counter_bit_count"]
+        [::std::mem::offset_of!(amdf_observation_clock_info_t, counter_bit_count) - 8usize];
+    ["Offset of field: amdf_observation_clock_info_t::reserved"]
+        [::std::mem::offset_of!(amdf_observation_clock_info_t, reserved) - 12usize];
+};
+#[doc = " One native device/host correlation sample, without retained calibration.\n All primary host values use the observation extension's profiling clock.\n The native device source is identified by the operation returning this\n record; frequency equality alone does not identify a queue timestamp epoch."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct amdf_observation_clock_sample_t {
+    #[doc = " Native device clock units, sampled or queried with this observation."]
+    pub clock: amdf_observation_clock_info_t,
+    #[doc = " Device counter value in clock's units."]
+    pub timestamp: u64,
+    pub host: amdf_observation_clock_sample_t__bindgen_ty_1,
+    pub system: amdf_observation_clock_sample_t__bindgen_ty_2,
+}
+#[doc = " Host observations surrounding and returned by the native sampling call."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct amdf_observation_clock_sample_t__bindgen_ty_1 {
+    #[doc = " Host read before entering the native sampling call."]
+    pub before: u64,
+    #[doc = " Host sample returned alongside the device value by the native service."]
+    pub timestamp: u64,
+    #[doc = " Host read after the native sampling call returns."]
+    pub after: u64,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_observation_clock_sample_t__bindgen_ty_1"]
+        [::std::mem::size_of::<amdf_observation_clock_sample_t__bindgen_ty_1>() - 24usize];
+    ["Alignment of amdf_observation_clock_sample_t__bindgen_ty_1"]
+        [::std::mem::align_of::<amdf_observation_clock_sample_t__bindgen_ty_1>() - 8usize];
+    ["Offset of field: amdf_observation_clock_sample_t__bindgen_ty_1::before"]
+        [::std::mem::offset_of!(amdf_observation_clock_sample_t__bindgen_ty_1, before) - 0usize];
+    ["Offset of field: amdf_observation_clock_sample_t__bindgen_ty_1::timestamp"]
+        [::std::mem::offset_of!(amdf_observation_clock_sample_t__bindgen_ty_1, timestamp) - 8usize];
+    ["Offset of field: amdf_observation_clock_sample_t__bindgen_ty_1::after"]
+        [::std::mem::offset_of!(amdf_observation_clock_sample_t__bindgen_ty_1, after) - 16usize];
+};
+#[doc = " Additional native system-clock observation, absent when frequency is zero.\n Linux KFD supplies CLOCK_BOOTTIME nanoseconds. Windows KMT has no second\n host sample. These values are auxiliary; ordinary CPU/device correlation\n uses host, which is directly readable through the observation extension."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct amdf_observation_clock_sample_t__bindgen_ty_2 {
+    #[doc = " Additional native clock value, or zero when absent."]
+    pub timestamp: u64,
+    #[doc = " Units per second for timestamp, or zero when absent."]
+    pub frequency_hz: u64,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_observation_clock_sample_t__bindgen_ty_2"]
+        [::std::mem::size_of::<amdf_observation_clock_sample_t__bindgen_ty_2>() - 16usize];
+    ["Alignment of amdf_observation_clock_sample_t__bindgen_ty_2"]
+        [::std::mem::align_of::<amdf_observation_clock_sample_t__bindgen_ty_2>() - 8usize];
+    ["Offset of field: amdf_observation_clock_sample_t__bindgen_ty_2::timestamp"]
+        [::std::mem::offset_of!(amdf_observation_clock_sample_t__bindgen_ty_2, timestamp) - 0usize];
+    ["Offset of field: amdf_observation_clock_sample_t__bindgen_ty_2::frequency_hz"][::std::mem::offset_of!(
+        amdf_observation_clock_sample_t__bindgen_ty_2,
+        frequency_hz
+    ) - 8usize];
+};
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_observation_clock_sample_t"]
+        [::std::mem::size_of::<amdf_observation_clock_sample_t>() - 64usize];
+    ["Alignment of amdf_observation_clock_sample_t"]
+        [::std::mem::align_of::<amdf_observation_clock_sample_t>() - 8usize];
+    ["Offset of field: amdf_observation_clock_sample_t::clock"]
+        [::std::mem::offset_of!(amdf_observation_clock_sample_t, clock) - 0usize];
+    ["Offset of field: amdf_observation_clock_sample_t::timestamp"]
+        [::std::mem::offset_of!(amdf_observation_clock_sample_t, timestamp) - 16usize];
+    ["Offset of field: amdf_observation_clock_sample_t::host"]
+        [::std::mem::offset_of!(amdf_observation_clock_sample_t, host) - 24usize];
+    ["Offset of field: amdf_observation_clock_sample_t::system"]
+        [::std::mem::offset_of!(amdf_observation_clock_sample_t, system) - 48usize];
+};
+#[doc = " Discontinuities accompanying an otherwise successful observation read."]
+pub type amdf_observation_read_flags_t = u32;
+#[doc = " Bytes were lost before this batch. Interval pairing crosses no such gap."]
+pub const AMDF_OBSERVATION_READ_FLAG_GAP: amdf_observation_read_flag_bits_e = 1;
+#[doc = " Native progress restarted. Previous clock and cursor continuity is gone."]
+pub const AMDF_OBSERVATION_READ_FLAG_RESTART: amdf_observation_read_flag_bits_e = 2;
+#[doc = " A copied batch failed its publication/integrity checks and was discarded."]
+pub const AMDF_OBSERVATION_READ_FLAG_DISCARDED: amdf_observation_read_flag_bits_e = 4;
+pub type amdf_observation_read_flag_bits_e = ::std::os::raw::c_uint;
+#[doc = " One read's progress and borrowed output in caller-owned host storage.\n\n Positions and lost-byte counts use the source's native transport units;\n decoded output bytes need not have the native record size. The caller\n advances its own position only after accepting the result. A successful\n empty read is a snapshot of availability, not producer retirement."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct amdf_observation_read_result_t {
+    #[doc = " Position for the next read of this same capture."]
+    pub next_position: u64,
+    #[doc = " Offset of valid output from the beginning of supplied storage."]
+    pub byte_offset: u64,
+    #[doc = " Valid output length; zero for an empty or discarded batch."]
+    pub byte_length: u64,
+    #[doc = " Lost native bytes, or UINT64_MAX when a restart prevents quantification."]
+    pub lost_byte_length: u64,
+    #[doc = " Discontinuities that the consumer processes before this batch's records."]
+    pub flags: amdf_observation_read_flags_t,
+    #[doc = " Reserved; zero."]
+    pub reserved: u32,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_observation_read_result_t"]
+        [::std::mem::size_of::<amdf_observation_read_result_t>() - 40usize];
+    ["Alignment of amdf_observation_read_result_t"]
+        [::std::mem::align_of::<amdf_observation_read_result_t>() - 8usize];
+    ["Offset of field: amdf_observation_read_result_t::next_position"]
+        [::std::mem::offset_of!(amdf_observation_read_result_t, next_position) - 0usize];
+    ["Offset of field: amdf_observation_read_result_t::byte_offset"]
+        [::std::mem::offset_of!(amdf_observation_read_result_t, byte_offset) - 8usize];
+    ["Offset of field: amdf_observation_read_result_t::byte_length"]
+        [::std::mem::offset_of!(amdf_observation_read_result_t, byte_length) - 16usize];
+    ["Offset of field: amdf_observation_read_result_t::lost_byte_length"]
+        [::std::mem::offset_of!(amdf_observation_read_result_t, lost_byte_length) - 24usize];
+    ["Offset of field: amdf_observation_read_result_t::flags"]
+        [::std::mem::offset_of!(amdf_observation_read_result_t, flags) - 32usize];
+    ["Offset of field: amdf_observation_read_result_t::reserved"]
+        [::std::mem::offset_of!(amdf_observation_read_result_t, reserved) - 36usize];
+};
+#[doc = " Portable host observations shared by CPU, GPU and XDNA profiling.\n\n The profiling host clock is monotonic, system-wide within one boot, and\n independent of wall-clock adjustments. Every native device clock sample's\n primary host timestamps use this clock. Its units are queried explicitly;\n callers subtract timestamps before scaling to avoid absolute-time rounding.\n Capture relations are refreshed after suspend, reset or source loss.\n\n These services need no instance or device. Negotiating the table performs\n no initialization. Calls retain no state and allocate no storage; each is\n thread-safe and may read the native OS clock without waiting for device\n work."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct amdf_observation_api_t {
+    #[doc = " Size in bytes of this table version."]
+    pub structure_size: u32,
+    #[doc = " Observation extension version implemented by this table."]
+    pub extension_version: u32,
+    #[doc = " Queries the host clock's nonzero, boot-stable frequency and counter width.\n Failure leaves out_info unchanged. This clock is a profiling timebase,\n distinct from wall time and from any application-selected host clock."]
+    pub query_host_clock_info: ::std::option::Option<
+        unsafe extern "C" fn(out_info: *mut amdf_observation_clock_info_t) -> amdf_status_t,
+    >,
+    #[doc = " Reads the host clock in the units from query_host_clock_info.\n Failure leaves out_timestamp unchanged. Reads add no synchronization to\n application data or device work; the caller supplies those dependencies."]
+    pub query_host_clock:
+        ::std::option::Option<unsafe extern "C" fn(out_timestamp: *mut u64) -> amdf_status_t>,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_observation_api_t"][::std::mem::size_of::<amdf_observation_api_t>() - 24usize];
+    ["Alignment of amdf_observation_api_t"]
+        [::std::mem::align_of::<amdf_observation_api_t>() - 8usize];
+    ["Offset of field: amdf_observation_api_t::structure_size"]
+        [::std::mem::offset_of!(amdf_observation_api_t, structure_size) - 0usize];
+    ["Offset of field: amdf_observation_api_t::extension_version"]
+        [::std::mem::offset_of!(amdf_observation_api_t, extension_version) - 4usize];
+    ["Offset of field: amdf_observation_api_t::query_host_clock_info"]
+        [::std::mem::offset_of!(amdf_observation_api_t, query_host_clock_info) - 8usize];
+    ["Offset of field: amdf_observation_api_t::query_host_clock"]
+        [::std::mem::offset_of!(amdf_observation_api_t, query_host_clock) - 16usize];
+};
 #[doc = " Features available on a live device under its instance's lifetime policy."]
 pub type amdf_gpu_device_features_t = u64;
 #[doc = " REGISTERED_HOST borrows caller pages without copying their contents."]
@@ -3569,6 +4255,17 @@ impl Default for amdf_gpu_endpoint_info_t {
         }
     }
 }
+#[doc = " Hardware architecture family, independent of available execution services."]
+pub type amdf_gpu_architecture_t = u32;
+#[doc = " The GFX IP identity is outside the architectures known to these headers."]
+pub const AMDF_GPU_ARCHITECTURE_UNKNOWN: amdf_gpu_architecture_e = 0;
+#[doc = " Graphics Core Next, including pre-CDNA GFX9 targets."]
+pub const AMDF_GPU_ARCHITECTURE_GCN: amdf_gpu_architecture_e = 1;
+#[doc = " Radeon DNA graphics and compute architecture."]
+pub const AMDF_GPU_ARCHITECTURE_RDNA: amdf_gpu_architecture_e = 2;
+#[doc = " Compute DNA architecture."]
+pub const AMDF_GPU_ARCHITECTURE_CDNA: amdf_gpu_architecture_e = 3;
+pub type amdf_gpu_architecture_e = ::std::os::raw::c_uint;
 #[doc = " Parameters used to materialize one program-independent GPU device.\n\n A device owns one native GPU execution and address domain. Queue,\n executable, and memory policy are selected by later operations. Native\n lifetime is inherited from the endpoint's instance, not selected per device."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -3674,7 +4371,9 @@ pub const AMDF_GPU_SDMA_FORMAT_FEATURE_COPY_LINEAR_RECT_WIDE: amdf_gpu_sdma_form
 pub type amdf_gpu_sdma_format_feature_bits_e = ::std::os::raw::c_uint;
 #[doc = " AMD vendor format 2 BARRIER_VALUE waits until (signal_value & mask)\n satisfies the signed 64-bit HSA comparison against its reference value.\n The dependency and optional completion are native AMD signal blocks.\n All reserved packet fields are zero. Signal storage remains live through\n the last dependent execution completion. Ordinary dispatch, BARRIER_AND,\n and BARRIER_OR support does not imply this vendor extension."]
 pub const AMDF_GPU_AQL_FORMAT_FEATURE_BARRIER_VALUE: amdf_gpu_aql_format_feature_bits_e = 16;
-#[doc = " Optional native AQL packets reported in `format_features`."]
+#[doc = " Queue creation accepts AMDF_GPU_USER_QUEUE_FLAG_DISPATCH_TIMESTAMPS.\n Availability does not enable capture; the caller selects it at creation."]
+pub const AMDF_GPU_AQL_FORMAT_FEATURE_DISPATCH_TIMESTAMPS: amdf_gpu_aql_format_feature_bits_e = 32;
+#[doc = " Optional native AQL operations reported in `format_features`."]
 pub type amdf_gpu_aql_format_feature_bits_e = ::std::os::raw::c_uint;
 #[doc = " Scratch backing borrowed by one directly published compute queue.\n\n An all-zero value disables scratch and accepts only commands whose private\n segment is empty. Otherwise the selected access must belong to the queue's\n device and provide read/write permission and a stable GPU address. The queue\n borrows the memory without lifetime tracking. The caller keeps the scratch\n backing live until queue destruction succeeds.\n\n AQL format 1 retains fixed scratch across dispatches. Let C be\n compute_unit_count, E be xcc_count * shader_engine_count_per_xcc, and S be\n maximum_scratch_wave_count_per_compute_unit. Its physical slot count is\n ceil(C / E) * E * S, including padding for asymmetric CU harvesting. Set\n maximum_wave_count to this slot count; smaller pools requiring firmware\n scratch reclamation are unsupported. The GPU base is 4096-byte aligned.\n Each slot receives the requested per-workitem private byte length\n times 64, rounded up to 1024 bytes. Backing must cover every wave; excess\n backing does not change the configured capacity. Every submitted dispatch\n fits the configured per-workitem private limit. Scratch is exclusive to the\n queue until its final execution completion and successful destruction."]
 #[repr(C)]
@@ -3727,6 +4426,11 @@ impl Default for amdf_gpu_queue_scratch_t {
         }
     }
 }
+#[doc = " Immutable options selected when a directly published GPU queue is created."]
+pub type amdf_gpu_user_queue_flags_t = u32;
+#[doc = " Enables AQL firmware dispatch timestamps for the queue's lifetime.\n Requires the AQL DISPATCH_TIMESTAMPS format feature. PM4 and SDMA use\n explicit timestamp commands and reject this option.\n\n A dispatch with its own native completion signal writes unsigned 64-bit\n start/end ticks at bytes 32/40 of that 64-byte signal block. The caller\n initializes both fields to zero, gives the signal to only one outstanding\n dispatch, acquires its completion, and consumes both fields before reuse.\n Rearming the signal value does not clear old timestamps. A shared signal\n or a later barrier's completion cannot identify individual intervals.\n\n The interval spans firmware packet processing, not exact first/last\n shader instructions. device_query_queue_clock_info supplies the nominal\n tick rate; it supplies no host epoch, cross-queue offset, or continuity\n across device resets. A resident dispatch has only its outer interval.\n\n This option adds firmware timestamp writes, not library-owned signals,\n collection, or synchronization. Zero flags leave capture disabled."]
+pub const AMDF_GPU_USER_QUEUE_FLAG_DISPATCH_TIMESTAMPS: amdf_gpu_user_queue_flag_bits_e = 1;
+pub type amdf_gpu_user_queue_flag_bits_e = ::std::os::raw::c_uint;
 #[doc = " Parameters used to acquire one directly published GPU queue."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -3743,9 +4447,9 @@ pub struct amdf_gpu_user_queue_create_info_t {
     pub priority: amdf_queue_priority_t,
     #[doc = " Required producer reservation protocol."]
     pub producer_mode: amdf_queue_producer_mode_t,
-    #[doc = " Reserved for compatible growth and must be zero."]
-    pub reserved: u32,
-    #[doc = " Direct producer capabilities that creation must achieve."]
+    #[doc = " Immutable queue options. Unknown bits are invalid."]
+    pub flags: amdf_gpu_user_queue_flags_t,
+    #[doc = " Direct producer capabilities that creation must achieve.\n Optional device publication must be requested here; mapping does not\n upgrade a queue's achieved capabilities. A family capability describes\n what creation supports, while user_queue_query_info reports what this\n queue established. SDMA device publication supports the exact owning GPU."]
     pub required_capabilities: amdf_user_queue_capabilities_t,
     #[doc = " Requested power-of-two primary ring capacity, or zero for the default."]
     pub ring_byte_length: u64,
@@ -3770,8 +4474,8 @@ const _: () = {
         [::std::mem::offset_of!(amdf_gpu_user_queue_create_info_t, priority) - 20usize];
     ["Offset of field: amdf_gpu_user_queue_create_info_t::producer_mode"]
         [::std::mem::offset_of!(amdf_gpu_user_queue_create_info_t, producer_mode) - 24usize];
-    ["Offset of field: amdf_gpu_user_queue_create_info_t::reserved"]
-        [::std::mem::offset_of!(amdf_gpu_user_queue_create_info_t, reserved) - 28usize];
+    ["Offset of field: amdf_gpu_user_queue_create_info_t::flags"]
+        [::std::mem::offset_of!(amdf_gpu_user_queue_create_info_t, flags) - 28usize];
     ["Offset of field: amdf_gpu_user_queue_create_info_t::required_capabilities"][::std::mem::offset_of!(
         amdf_gpu_user_queue_create_info_t,
         required_capabilities
@@ -3976,10 +4680,26 @@ pub struct amdf_gpu_api_t {
             out_queue: *mut *mut amdf_user_queue_t,
         ) -> amdf_status_t,
     >,
+    #[doc = " Queries the nominal timestamp rate for an admitted queue family.\n Available from GPU extension version 2.\n\n PM4/AQL GPU-clock samples and SDMA GET_GLOBAL samples use this rate;\n shader cycle counters and performance-event counts do not. The family\n ordinal belongs to device's endpoint. Success publishes a nonzero rate;\n unavailable native metadata returns UNSUPPORTED. Meaningful counter width\n is zero when the native interface does not establish it. Failure leaves\n out_info unchanged.\n\n Rate does not establish a shared epoch between queues, devices or native\n driver clock queries, nor bounded oscillator accuracy against a host\n clock. Correlation uses independently attributed samples from the actual\n event source. Reset or loss of that source invalidates its relation.\n\n This explicit cold query may enter the driver. It creates no queue,\n allocation, collector or retained calibration state and waits for no\n application work. It is thread-safe with submission and other queries;\n the caller keeps device live through the call."]
+    pub device_query_queue_clock_info: ::std::option::Option<
+        unsafe extern "C" fn(
+            device: *mut amdf_device_t,
+            queue_family_ordinal: u32,
+            out_info: *mut amdf_observation_clock_info_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Samples the native driver's device and host clocks for a queue family.\n Available from GPU extension version 2. The host tuple uses the common\n observation extension clock, so consumers need no native clock calls.\n\n The native service selects the device/partition clock on Linux and the\n admitted engine node on Windows. This sample's device epoch is the native\n query's epoch. Its relation to queue-written timestamps must be\n established for that source; neither equal rates nor one physical device\n implies it. host.before/after bracket the native query, including\n scheduling delay; host.timestamp is the paired native host observation,\n not a simultaneous sampling guarantee. No error bound on physical clock\n drift is implied.\n\n This explicit cold operation enters the driver and reads host clocks.\n It allocates nothing, retains no state, submits no commands, performs no\n retries, and waits for no application work. The caller keeps device live\n and owns sampling cadence and calibration. Failure leaves out_sample\n unchanged; unavailable native sampling returns UNSUPPORTED."]
+    pub device_query_clock_sample: ::std::option::Option<
+        unsafe extern "C" fn(
+            device: *mut amdf_device_t,
+            queue_family_ordinal: u32,
+            out_sample: *mut amdf_observation_clock_sample_t,
+        ) -> amdf_status_t,
+    >,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of amdf_gpu_api_t"][::std::mem::size_of::<amdf_gpu_api_t>() - 56usize];
+    ["Size of amdf_gpu_api_t"][::std::mem::size_of::<amdf_gpu_api_t>() - 72usize];
     ["Alignment of amdf_gpu_api_t"][::std::mem::align_of::<amdf_gpu_api_t>() - 8usize];
     ["Offset of field: amdf_gpu_api_t::structure_size"]
         [::std::mem::offset_of!(amdf_gpu_api_t, structure_size) - 0usize];
@@ -3997,6 +4717,273 @@ const _: () = {
         [::std::mem::offset_of!(amdf_gpu_api_t, kernel_queue_submit) - 40usize];
     ["Offset of field: amdf_gpu_api_t::user_queue_create"]
         [::std::mem::offset_of!(amdf_gpu_api_t, user_queue_create) - 48usize];
+    ["Offset of field: amdf_gpu_api_t::device_query_queue_clock_info"]
+        [::std::mem::offset_of!(amdf_gpu_api_t, device_query_queue_clock_info) - 56usize];
+    ["Offset of field: amdf_gpu_api_t::device_query_clock_sample"]
+        [::std::mem::offset_of!(amdf_gpu_api_t, device_query_clock_sample) - 64usize];
+};
+#[doc = " Extent accepted by the native context's firmware-result association."]
+pub type amdf_xdna_result_buffer_binding_mode_t = u32;
+#[doc = " Offset zero and the entire allocation, with no native rounding surplus."]
+pub const AMDF_XDNA_RESULT_BUFFER_BINDING_WHOLE_MEMORY: amdf_xdna_result_buffer_binding_mode_e = 1;
+#[doc = " One aligned range within an allocation shared with other context uses."]
+pub const AMDF_XDNA_RESULT_BUFFER_BINDING_RANGE: amdf_xdna_result_buffer_binding_mode_e = 2;
+pub type amdf_xdna_result_buffer_binding_mode_e = ::std::os::raw::c_uint;
+#[doc = " Cached requirements for a context's finite firmware-result destination.\n The caller queries these before choosing its allocation/layout. This query\n performs no native mutation and reserves nothing; attachment checks native\n admission. The protocol supplies neither a live cursor nor an overflow\n count."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct amdf_xdna_result_buffer_info_t {
+    #[doc = " Must be AMDF_STRUCTURE_TYPE_XDNA_RESULT_BUFFER_INFO."]
+    pub type_: amdf_structure_type_t,
+    #[doc = " Must be at least sizeof(amdf_xdna_result_buffer_info_t)."]
+    pub structure_size: u32,
+    #[doc = " Optional output extension chain. No extensions are defined."]
+    pub next: *mut ::std::os::raw::c_void,
+    #[doc = " Context-private scope borrowed through the context's lifetime."]
+    pub memory_scope: *mut amdf_memory_scope_t,
+    #[doc = " Memory profile in memory_scope supplying the admitted native backing."]
+    pub memory_profile_ordinal: u32,
+    #[doc = " Whether the destination occupies a whole allocation or an aligned range."]
+    pub binding_mode: amdf_xdna_result_buffer_binding_mode_t,
+    #[doc = " Smallest admitted destination capacity in bytes."]
+    pub minimum_byte_length: u64,
+    #[doc = " Largest admitted destination capacity; allocation limits also apply."]
+    pub maximum_byte_length: u64,
+    #[doc = " Required power-of-two alignment of the logical byte offset."]
+    pub byte_offset_alignment: u64,
+    #[doc = " Required nonzero multiple for the destination capacity."]
+    pub byte_length_granularity: u64,
+    #[doc = " RECORD_TIMER width; frequency is zero in this cached geometry query.\n device_query_timer_clock_info samples the separate operating rate."]
+    pub timer_clock: amdf_observation_clock_info_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_xdna_result_buffer_info_t"]
+        [::std::mem::size_of::<amdf_xdna_result_buffer_info_t>() - 80usize];
+    ["Alignment of amdf_xdna_result_buffer_info_t"]
+        [::std::mem::align_of::<amdf_xdna_result_buffer_info_t>() - 8usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::type_"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, type_) - 0usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::structure_size"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, structure_size) - 4usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::next"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, next) - 8usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::memory_scope"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, memory_scope) - 16usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::memory_profile_ordinal"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, memory_profile_ordinal) - 24usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::binding_mode"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, binding_mode) - 28usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::minimum_byte_length"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, minimum_byte_length) - 32usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::maximum_byte_length"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, maximum_byte_length) - 40usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::byte_offset_alignment"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, byte_offset_alignment) - 48usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::byte_length_granularity"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, byte_length_granularity) - 56usize];
+    ["Offset of field: amdf_xdna_result_buffer_info_t::timer_clock"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_info_t, timer_clock) - 64usize];
+};
+impl Default for amdf_xdna_result_buffer_info_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Caller-owned result backing borrowed by firmware until explicit detachment.\n The descriptor itself is borrowed only during each control call. All calls\n for one attachment supply the same memory, access and range. This range is\n disjoint from live instructions and every other application memory use."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct amdf_xdna_result_buffer_binding_t {
+    #[doc = " Memory created from the queried context-private scope and profile."]
+    pub memory: *mut amdf_memory_t,
+    #[doc = " Access granting the context device read and write permission."]
+    pub access_ordinal: u32,
+    #[doc = " Reserved; zero."]
+    pub reserved: u32,
+    #[doc = " Offset from logical byte zero, excluding any provider-owned prefix."]
+    pub byte_offset: u64,
+    #[doc = " Finite capacity satisfying the queried geometry and planned record bound."]
+    pub byte_length: u64,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_xdna_result_buffer_binding_t"]
+        [::std::mem::size_of::<amdf_xdna_result_buffer_binding_t>() - 32usize];
+    ["Alignment of amdf_xdna_result_buffer_binding_t"]
+        [::std::mem::align_of::<amdf_xdna_result_buffer_binding_t>() - 8usize];
+    ["Offset of field: amdf_xdna_result_buffer_binding_t::memory"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_binding_t, memory) - 0usize];
+    ["Offset of field: amdf_xdna_result_buffer_binding_t::access_ordinal"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_binding_t, access_ordinal) - 8usize];
+    ["Offset of field: amdf_xdna_result_buffer_binding_t::reserved"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_binding_t, reserved) - 12usize];
+    ["Offset of field: amdf_xdna_result_buffer_binding_t::byte_offset"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_binding_t, byte_offset) - 16usize];
+    ["Offset of field: amdf_xdna_result_buffer_binding_t::byte_length"]
+        [::std::mem::offset_of!(amdf_xdna_result_buffer_binding_t, byte_length) - 24usize];
+};
+impl Default for amdf_xdna_result_buffer_binding_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " One transaction-interpreter RECORD_TIMER result, in native word order.\n The compiler/caller establishes record layout, count and timer epoch. Other\n result-producing instructions can insert different records into this buffer."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct amdf_xdna_timer_record_t {
+    #[doc = " Caller-selected identifier supplied by the RECORD_TIMER instruction."]
+    pub id: u32,
+    pub timestamp: amdf_xdna_timer_record_t__bindgen_ty_1,
+}
+#[doc = " Partition-shim timer words; the high word precedes the low word in memory."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct amdf_xdna_timer_record_t__bindgen_ty_1 {
+    #[doc = " Most significant 32 timestamp bits."]
+    pub high: u32,
+    #[doc = " Least significant 32 timestamp bits."]
+    pub low: u32,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_xdna_timer_record_t__bindgen_ty_1"]
+        [::std::mem::size_of::<amdf_xdna_timer_record_t__bindgen_ty_1>() - 8usize];
+    ["Alignment of amdf_xdna_timer_record_t__bindgen_ty_1"]
+        [::std::mem::align_of::<amdf_xdna_timer_record_t__bindgen_ty_1>() - 4usize];
+    ["Offset of field: amdf_xdna_timer_record_t__bindgen_ty_1::high"]
+        [::std::mem::offset_of!(amdf_xdna_timer_record_t__bindgen_ty_1, high) - 0usize];
+    ["Offset of field: amdf_xdna_timer_record_t__bindgen_ty_1::low"]
+        [::std::mem::offset_of!(amdf_xdna_timer_record_t__bindgen_ty_1, low) - 4usize];
+};
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_xdna_timer_record_t"]
+        [::std::mem::size_of::<amdf_xdna_timer_record_t>() - 12usize];
+    ["Alignment of amdf_xdna_timer_record_t"]
+        [::std::mem::align_of::<amdf_xdna_timer_record_t>() - 4usize];
+    ["Offset of field: amdf_xdna_timer_record_t::id"]
+        [::std::mem::offset_of!(amdf_xdna_timer_record_t, id) - 0usize];
+    ["Offset of field: amdf_xdna_timer_record_t::timestamp"]
+        [::std::mem::offset_of!(amdf_xdna_timer_record_t, timestamp) - 4usize];
+};
+#[doc = " Categories selected in the device-wide firmware recorder."]
+pub type amdf_xdna_firmware_trace_categories_t = u32;
+pub const AMDF_XDNA_FIRMWARE_TRACE_CATEGORY_SCHEDULING: amdf_xdna_firmware_trace_category_bits_e =
+    1;
+pub const AMDF_XDNA_FIRMWARE_TRACE_CATEGORY_MAILBOX: amdf_xdna_firmware_trace_category_bits_e = 2;
+pub const AMDF_XDNA_FIRMWARE_TRACE_CATEGORY_CLOCK_POWER: amdf_xdna_firmware_trace_category_bits_e =
+    4;
+pub const AMDF_XDNA_FIRMWARE_TRACE_CATEGORY_SUSPEND_RESUME:
+    amdf_xdna_firmware_trace_category_bits_e = 8;
+pub const AMDF_XDNA_FIRMWARE_TRACE_CATEGORY_ERRORS: amdf_xdna_firmware_trace_category_bits_e = 16;
+pub const AMDF_XDNA_FIRMWARE_TRACE_CATEGORY_PDI_LOAD: amdf_xdna_firmware_trace_category_bits_e = 32;
+pub const AMDF_XDNA_FIRMWARE_TRACE_CATEGORY_FAST_POWER: amdf_xdna_firmware_trace_category_bits_e =
+    64;
+pub const AMDF_XDNA_FIRMWARE_TRACE_CATEGORY_L2: amdf_xdna_firmware_trace_category_bits_e = 128;
+pub const AMDF_XDNA_FIRMWARE_TRACE_CATEGORY_PREEMPTION: amdf_xdna_firmware_trace_category_bits_e =
+    256;
+pub type amdf_xdna_firmware_trace_category_bits_e = ::std::os::raw::c_uint;
+#[doc = " Native recorder state and caller-owned read-storage requirements.\n Query success establishes service availability, not permission to configure\n or read it. Each operation checks its own native admission. The recorder is\n device-wide and may already belong to another process."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct amdf_xdna_firmware_trace_info_t {
+    #[doc = " Must be AMDF_STRUCTURE_TYPE_XDNA_FIRMWARE_TRACE_INFO."]
+    pub type_: amdf_structure_type_t,
+    #[doc = " Must be at least sizeof(amdf_xdna_firmware_trace_info_t)."]
+    pub structure_size: u32,
+    #[doc = " Optional output extension chain. No extensions are defined."]
+    pub next: *mut ::std::os::raw::c_void,
+    #[doc = " One when the native recorder is enabled, otherwise zero."]
+    pub enabled: u32,
+    #[doc = " Enabled category mask; zero when disabled."]
+    pub categories: amdf_xdna_firmware_trace_categories_t,
+    #[doc = " Native payload schema identifier; zero when disabled."]
+    pub format_version: u32,
+    #[doc = " Required power-of-two alignment of caller read storage."]
+    pub buffer_alignment: u32,
+    #[doc = " Smallest accepted storage, including native request overhead."]
+    pub minimum_buffer_byte_length: u32,
+    #[doc = " Storage for the native provider's ordinary full-window read."]
+    pub recommended_buffer_byte_length: u32,
+    #[doc = " Timestamp representation for the active schema; zero when unknown."]
+    pub clock: amdf_observation_clock_info_t,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_xdna_firmware_trace_info_t"]
+        [::std::mem::size_of::<amdf_xdna_firmware_trace_info_t>() - 56usize];
+    ["Alignment of amdf_xdna_firmware_trace_info_t"]
+        [::std::mem::align_of::<amdf_xdna_firmware_trace_info_t>() - 8usize];
+    ["Offset of field: amdf_xdna_firmware_trace_info_t::type_"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_info_t, type_) - 0usize];
+    ["Offset of field: amdf_xdna_firmware_trace_info_t::structure_size"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_info_t, structure_size) - 4usize];
+    ["Offset of field: amdf_xdna_firmware_trace_info_t::next"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_info_t, next) - 8usize];
+    ["Offset of field: amdf_xdna_firmware_trace_info_t::enabled"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_info_t, enabled) - 16usize];
+    ["Offset of field: amdf_xdna_firmware_trace_info_t::categories"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_info_t, categories) - 20usize];
+    ["Offset of field: amdf_xdna_firmware_trace_info_t::format_version"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_info_t, format_version) - 24usize];
+    ["Offset of field: amdf_xdna_firmware_trace_info_t::buffer_alignment"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_info_t, buffer_alignment) - 28usize];
+    ["Offset of field: amdf_xdna_firmware_trace_info_t::minimum_buffer_byte_length"][::std::mem::offset_of!(
+        amdf_xdna_firmware_trace_info_t,
+        minimum_buffer_byte_length
+    ) - 32usize];
+    ["Offset of field: amdf_xdna_firmware_trace_info_t::recommended_buffer_byte_length"][::std::mem::offset_of!(
+        amdf_xdna_firmware_trace_info_t,
+        recommended_buffer_byte_length
+    )
+        - 36usize];
+    ["Offset of field: amdf_xdna_firmware_trace_info_t::clock"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_info_t, clock) - 40usize];
+};
+impl Default for amdf_xdna_firmware_trace_info_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " One decoded event. Unknown event identifiers and their arguments survive\n unchanged, so schema consumers can retain events they do not interpret.\n Command opcodes identify firmware operations, not caller submissions.\n Context fields belong to the firmware's namespace, independently of the\n opaque amdf_xdna_context_info_t.id. This interface supplies no mapping\n between those identities. Recorder ownership does not exclude other\n applications' work from the stream."]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct amdf_xdna_firmware_trace_event_t {
+    #[doc = " Source timestamp in the units reported by the active clock description."]
+    pub timestamp: u64,
+    #[doc = " Native event arguments in the low 48 bits; upper bits are zero."]
+    pub arguments: u64,
+    #[doc = " Native schema event identifier."]
+    pub event_id: u32,
+    #[doc = " Native entry sequence, wrapping from 65535 to 1 in format 2.0."]
+    pub sequence: u32,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of amdf_xdna_firmware_trace_event_t"]
+        [::std::mem::size_of::<amdf_xdna_firmware_trace_event_t>() - 24usize];
+    ["Alignment of amdf_xdna_firmware_trace_event_t"]
+        [::std::mem::align_of::<amdf_xdna_firmware_trace_event_t>() - 8usize];
+    ["Offset of field: amdf_xdna_firmware_trace_event_t::timestamp"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_event_t, timestamp) - 0usize];
+    ["Offset of field: amdf_xdna_firmware_trace_event_t::arguments"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_event_t, arguments) - 8usize];
+    ["Offset of field: amdf_xdna_firmware_trace_event_t::event_id"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_event_t, event_id) - 16usize];
+    ["Offset of field: amdf_xdna_firmware_trace_event_t::sequence"]
+        [::std::mem::offset_of!(amdf_xdna_firmware_trace_event_t, sequence) - 20usize];
 };
 #[doc = " One program-independent schedulable XDNA context."]
 #[repr(C)]
@@ -4452,7 +5439,7 @@ pub struct amdf_xdna_kernel_queue_create_info_t {
     pub next: *const ::std::os::raw::c_void,
     #[doc = " Endpoint-local XDNA family supporting kernel publication."]
     pub queue_family_ordinal: u32,
-    #[doc = " Maximum accepted submissions that may remain unretired, or zero for\n AMDF_XDNA_KERNEL_QUEUE_DEFAULT_PENDING_SUBMISSION_COUNT. Native\n packet/result storage for this capacity is allocated before creation\n returns."]
+    #[doc = " Maximum accepted submissions that may remain unretired, or zero for\n AMDF_XDNA_KERNEL_QUEUE_DEFAULT_PENDING_SUBMISSION_COUNT. Native\n packet/result storage for this capacity is allocated before creation\n returns. Arrays share that bounded storage: a submission with multiple\n commands can consume multiple packet credits and return BUSY below this\n submission bound. Query the created queue's maximum_command_count."]
     pub maximum_pending_submission_count: u32,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
@@ -4527,7 +5514,7 @@ impl Default for amdf_xdna_kernel_command_t {
         }
     }
 }
-#[doc = " One bounded kernel-mediated XDNA submission."]
+#[doc = " One bounded, ordered kernel-mediated XDNA submission. Commands execute in\n descriptor order; the returned submission point covers the entire array."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct amdf_xdna_kernel_queue_submission_info_t {
@@ -4541,7 +5528,7 @@ pub struct amdf_xdna_kernel_queue_submission_info_t {
     pub command_count: u32,
     #[doc = " Reserved for compatible growth and must be zero."]
     pub reserved: u32,
-    #[doc = " Borrowed descriptors consumed before return. Accepted instruction ranges\n remain borrowed through checked native retirement."]
+    #[doc = " Borrowed descriptors consumed before return. All accepted instruction\n ranges remain borrowed through checked native retirement of the array,\n including when execution fails after completing only a prefix."]
     pub commands: *const amdf_xdna_kernel_command_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
@@ -4610,7 +5597,7 @@ pub struct amdf_xdna_api_t {
             out_queue: *mut *mut amdf_kernel_queue_t,
         ) -> amdf_status_t,
     >,
-    #[doc = " Publishes opaque instruction ranges from caller-owned private memory.\n\n Each memory resource must come from the queue's exact context scope and\n grant EXECUTE access. Caller writes must be published before submission;\n libamdf neither reads, copies nor modifies instruction bytes. The native\n provider fills its preallocated transport packet with address and length.\n The library performs no allocation, format parsing, lowering, relocation,\n binding resolution, native submission retry, sleep or host wait. Native\n retirement consumes the command result. The caller keeps instruction\n memory live until retirement; libamdf neither retains nor tracks it.\n Native rejection leaves `out_submission` unchanged.\n The caller also keeps memory reachable through opaque device addresses\n live; native command retirement does not prove that user-mode work\n scheduled elsewhere, such as a GPU consumer, has stopped accessing it.\n\n A complete command covers the lifetime of the work using its XDNA\n placement. Before its controller instructions finish, the program must\n quiesce its tile workers and drain transfers that could interfere with\n subsequent reconfiguration. Native completion does not insert that drain.\n An autonomous worker cannot continue using the placement after the command\n ends merely because its context and memory remain live. Resident role\n changes can preserve services inside the same outstanding command.\n Each independent command establishes the application state it needs;\n neither zeroed entry state nor retention from an earlier command is\n implied. Cross-context handoff belongs to the native provider, not a\n caller-managed exclusion protocol. libamdf does not replay setup or work\n when an admitted command is rescheduled or fails.\n\n This hot path takes no library lock and performs no lazy initialization,\n mapping, pinning or indirect-buffer scan. It is thread-safe with other\n submissions and progress operations. Concurrent publication returns BUSY\n rather than waiting; its claim ends at native acceptance, not execution\n completion. At the configured pending bound, a nonblocking native refresh\n and checked result consumption reclaim completed packet slots before\n returning BUSY if capacity remains unavailable. No intermediate host wait\n is required. Native resource exhaustion can reject work earlier.\n Returned points increase within this queue, without a caller-visible\n starting value or dense-numbering guarantee. Waiting for one point covers\n earlier accepted commands, not independently scheduled descendants.\n This is not a wait-free guarantee. Native publication can block acquiring\n driver admission credits or synchronously resuming an idle device, even\n when library packet capacity remains. Native resume may restore firmware\n and contexts without restoring application tile state. The native call\n may publish queue-owned packet cache lines, not caller instruction/data\n bytes. Preserving the first native completion identity can require a\n one-time fence transfer after acceptance and before later publication;\n its native storage is already prepared at queue creation."]
+    #[doc = " Publishes opaque instruction ranges from caller-owned private memory.\n\n Each memory resource must come from the queue's exact context scope and\n grant EXECUTE access. Caller writes must be published before submission;\n libamdf neither reads, copies nor modifies instruction bytes. The native\n provider fills its preallocated transport packet with address and length.\n The library performs no allocation, format parsing, lowering, relocation,\n binding resolution, work replay, resource-exhaustion retry, sleep or host\n wait. An interrupted native publication may restart only when the native\n contract guarantees that no command was accepted. Native retirement\n consumes the command result. The caller keeps instruction memory live\n until retirement; libamdf neither retains nor tracks it. Native rejection\n accepts no prefix and leaves `out_submission` unchanged. The whole array\n is validated before native publication. After acceptance, execution may\n fail partway through the array; its one retirement point still covers all\n borrowed ranges. The caller also keeps memory reachable\n through opaque device addresses live; native command retirement does not\n prove that user-mode work scheduled elsewhere, such as a GPU consumer, has\n stopped accessing it.\n\n A complete command covers the lifetime of the work using its XDNA\n placement. Before its controller instructions finish, the program must\n quiesce its tile workers and drain transfers that could interfere with\n subsequent reconfiguration. Native completion does not insert that drain.\n An autonomous worker cannot continue using the placement after the command\n ends merely because its context and memory remain live. Resident role\n changes can preserve services inside the same outstanding command.\n Each independent command establishes the application state it needs;\n neither zeroed entry state nor retention from an earlier command is\n implied. Cross-context handoff belongs to the native provider, not a\n caller-managed exclusion protocol. libamdf does not replay setup or work\n when an admitted command is rescheduled or fails.\n\n This hot path takes no library lock and performs no lazy initialization,\n mapping, pinning or indirect-buffer scan. It is thread-safe with other\n submissions and progress operations. Concurrent publication returns BUSY\n rather than waiting; its claim ends at native acceptance, not execution\n completion. At either the configured pending bound or the shared native\n packet capacity, a nonblocking native refresh\n and checked result consumption reclaim completed packet slots before\n returning BUSY if capacity remains unavailable. No intermediate host wait\n is required. Native resource exhaustion can reject work earlier.\n Returned points increase within this queue, without a caller-visible\n starting value or dense-numbering guarantee. Waiting for one point covers\n earlier accepted commands, not independently scheduled descendants.\n This is not a wait-free guarantee. Native publication can block acquiring\n driver admission credits or synchronously resuming an idle device, even\n when library packet capacity remains. Native resume may restore firmware\n and contexts without restoring application tile state. The native call\n may publish queue-owned packet cache lines, not caller instruction/data\n bytes. Preserving the first native completion identity can require a\n one-time fence transfer after acceptance and before later publication;\n its native storage is already prepared at queue creation."]
     pub kernel_queue_submit: ::std::option::Option<
         unsafe extern "C" fn(
             queue: *mut amdf_kernel_queue_t,
@@ -4653,10 +5640,71 @@ pub struct amdf_xdna_api_t {
     pub context_destroy: ::std::option::Option<
         unsafe extern "C" fn(context: *mut amdf_xdna_context_t) -> amdf_status_t,
     >,
+    #[doc = " Queries live firmware recorder state without changing its configuration.\n Performs one native query, with no allocation or workload synchronization.\n Unavailable native services return UNSUPPORTED. Other failures preserve\n native permission/device errors. Failure leaves out_info unchanged."]
+    pub device_query_firmware_trace_info: ::std::option::Option<
+        unsafe extern "C" fn(
+            device: *mut amdf_device_t,
+            out_info: *mut amdf_xdna_firmware_trace_info_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Configures the device-wide firmware recorder. enabled is zero or one;\n enabling requires a nonzero native category mask. Disabling ignores the\n category argument. This changes global native state without acquiring an\n exclusive session: the caller arranges configuration ownership across\n processes and serializes reconfiguration against reads. Device destruction\n does not disable tracing. An external recorder may own configuration while\n a workload only reads, subject to its independent native permissions.\n A configuration failure can have native effects; query the live state\n before deciding cleanup. No array trace resources or workload code change."]
+    pub device_configure_firmware_trace: ::std::option::Option<
+        unsafe extern "C" fn(
+            device: *mut amdf_device_t,
+            enabled: u32,
+            categories: amdf_xdna_firmware_trace_categories_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Nonblocking read into caller-owned host storage. position begins at zero\n for each newly enabled capture. format_version is that capture's queried\n schema. The caller excludes external reconfiguration and owns its capture\n generation: native byte positions cannot detect every external restart.\n Reads allocate nothing, retain nothing and wait for no application queue.\n\n Success publishes decoded amdf_xdna_firmware_trace_event_t records at the\n returned byte offset/length. Discontinuity flags precede those records;\n a discarded copy returns zero records and advances beyond unsafe bytes.\n This is a lossy observation transport, never a completion/credit channel.\n Empty reads do not establish retirement or a final drain. The consumer's\n work/completion protocol supplies that boundary. Simultaneous readers use\n independent storage and positions. Storage is borrowed only for the call.\n It obeys the queried size/alignment and is disjoint from out_result.\n\n BUFFER_TOO_SMALL means storage is below the minimum or capacity made the\n native copy's position ambiguous. Retrying with larger storage leaves the\n caller's prior progress valid.\n The format-2 schema is supported; other schemas return UNSUPPORTED.\n Native failures and unsupported schemas publish no result. Storage may\n change on any native read, including failure; out_result changes only on\n success. Source clock continuity never follows from cursor continuity."]
+    pub device_read_firmware_trace: ::std::option::Option<
+        unsafe extern "C" fn(
+            device: *mut amdf_device_t,
+            format_version: u32,
+            position: u64,
+            buffer: *mut ::std::os::raw::c_void,
+            buffer_byte_length: u32,
+            out_result: *mut amdf_observation_read_result_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Queries the cached backing/geometry requirements for finite firmware\n results before the caller selects its memory layout. Performs no native\n call, allocation or reservation. Failure leaves out_info unchanged."]
+    pub context_query_result_buffer_info: ::std::option::Option<
+        unsafe extern "C" fn(
+            context: *mut amdf_xdna_context_t,
+            out_info: *mut amdf_xdna_result_buffer_info_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Attaches one caller-owned finite result destination to this context.\n The caller clears and publishes its destination beforehand, budgets every\n possible result byte, and maintains only one active attachment per\n context. The compiler/caller supplies RECORD_TIMER/READ_REGS instructions\n and the record protocol; submission neither patches commands nor tracks\n results.\n\n The caller serializes result controls with each other and queue\n publication. The caller retires every result writer before collection,\n rearm or detach. Controls can block on native commands; they allocate no\n library objects and retain no memory/descriptor references. Native failure\n may leave the association active: backing remains live until native\n removal/retirement is established. Failure is not transactional rollback\n or release proof."]
+    pub context_attach_result_buffer: ::std::option::Option<
+        unsafe extern "C" fn(
+            context: *mut amdf_xdna_context_t,
+            binding: *const amdf_xdna_result_buffer_binding_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Completes the native result transfer for the same active binding. This\n does not reset the append position, clear storage, decode records or\n report a written extent. CPU access then performs the existing\n host-mapping cache acquire. The caller's known finite record protocol\n determines valid bytes; a successful transfer alone does not prove that\n expected records exist. Failure invalidates this attempted snapshot and\n preserves the backing obligation. Concurrent collection or live rearm is\n not part of this mode."]
+    pub context_collect_result_buffer: ::std::option::Option<
+        unsafe extern "C" fn(
+            context: *mut amdf_xdna_context_t,
+            binding: *const amdf_xdna_result_buffer_binding_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Removes the same active binding after writer retirement, leaving memory\n allocated. Healthy native completion permits reuse or a fresh explicit\n clear/publish/attach cycle. After an ambiguous native failure, a\n subsequent successful control alone is not independent proof of writer\n retirement. No implicit detach occurs during memory or context\n destruction."]
+    pub context_detach_result_buffer: ::std::option::Option<
+        unsafe extern "C" fn(
+            context: *mut amdf_xdna_context_t,
+            binding: *const amdf_xdna_result_buffer_binding_t,
+        ) -> amdf_status_t,
+    >,
+    #[doc = " Samples the native operating rate of the partition-shim RECORD_TIMER\n counter. This explicit native query may wake the device; it allocates no\n library objects, retains no state and changes no power policy. Failure\n leaves out_info unchanged; absent rate metadata returns UNSUPPORTED.\n\n Query after workload/context admission: idle and active rates can differ.\n A same-epoch delta at constant rate converts as ticks * 1e9 /\n frequency_hz. This snapshot neither pins that rate nor records changes\n between samples. The caller owns a controlled profiling interval or\n accounts for rate changes and clock gating before interpreting this as\n elapsed wall time. Equal before/after rates alone do not prove stability.\n Reconfiguration can reset the timer; markers bracketing work belong after\n that configuration and around the program's ordinary completion waits. The\n rate supplies no shared epoch with another command, automatic firmware\n events or the CPU."]
+    pub device_query_timer_clock_info: ::std::option::Option<
+        unsafe extern "C" fn(
+            device: *mut amdf_device_t,
+            out_info: *mut amdf_observation_clock_info_t,
+        ) -> amdf_status_t,
+    >,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of amdf_xdna_api_t"][::std::mem::size_of::<amdf_xdna_api_t>() - 88usize];
+    ["Size of amdf_xdna_api_t"][::std::mem::size_of::<amdf_xdna_api_t>() - 152usize];
     ["Alignment of amdf_xdna_api_t"][::std::mem::align_of::<amdf_xdna_api_t>() - 8usize];
     ["Offset of field: amdf_xdna_api_t::structure_size"]
         [::std::mem::offset_of!(amdf_xdna_api_t, structure_size) - 0usize];
@@ -4682,8 +5730,24 @@ const _: () = {
         [::std::mem::offset_of!(amdf_xdna_api_t, context_enumerate_memory_scopes) - 72usize];
     ["Offset of field: amdf_xdna_api_t::context_destroy"]
         [::std::mem::offset_of!(amdf_xdna_api_t, context_destroy) - 80usize];
+    ["Offset of field: amdf_xdna_api_t::device_query_firmware_trace_info"]
+        [::std::mem::offset_of!(amdf_xdna_api_t, device_query_firmware_trace_info) - 88usize];
+    ["Offset of field: amdf_xdna_api_t::device_configure_firmware_trace"]
+        [::std::mem::offset_of!(amdf_xdna_api_t, device_configure_firmware_trace) - 96usize];
+    ["Offset of field: amdf_xdna_api_t::device_read_firmware_trace"]
+        [::std::mem::offset_of!(amdf_xdna_api_t, device_read_firmware_trace) - 104usize];
+    ["Offset of field: amdf_xdna_api_t::context_query_result_buffer_info"]
+        [::std::mem::offset_of!(amdf_xdna_api_t, context_query_result_buffer_info) - 112usize];
+    ["Offset of field: amdf_xdna_api_t::context_attach_result_buffer"]
+        [::std::mem::offset_of!(amdf_xdna_api_t, context_attach_result_buffer) - 120usize];
+    ["Offset of field: amdf_xdna_api_t::context_collect_result_buffer"]
+        [::std::mem::offset_of!(amdf_xdna_api_t, context_collect_result_buffer) - 128usize];
+    ["Offset of field: amdf_xdna_api_t::context_detach_result_buffer"]
+        [::std::mem::offset_of!(amdf_xdna_api_t, context_detach_result_buffer) - 136usize];
+    ["Offset of field: amdf_xdna_api_t::device_query_timer_clock_info"]
+        [::std::mem::offset_of!(amdf_xdna_api_t, device_query_timer_clock_info) - 144usize];
 };
-pub const HRX_AMDF_ABI_VERSION: _bindgen_ty_1 = 5;
+pub const HRX_AMDF_ABI_VERSION: _bindgen_ty_1 = 10;
 pub const HRX_AMDF_STRUCTURE_TYPE_GPU_ENDPOINT_INFO: _bindgen_ty_1 = 131073;
 pub const HRX_AMDF_STRUCTURE_TYPE_GPU_DEVICE_CREATE_INFO: _bindgen_ty_1 = 131074;
 pub const HRX_AMDF_STRUCTURE_TYPE_GPU_DEVICE_INFO: _bindgen_ty_1 = 131075;
@@ -4698,6 +5762,9 @@ pub const HRX_AMDF_STRUCTURE_TYPE_XDNA_KERNEL_QUEUE_SUBMISSION_INFO: _bindgen_ty
 pub const HRX_AMDF_STRUCTURE_TYPE_XDNA_CONTEXT_CREATE_INFO: _bindgen_ty_1 = 65546;
 pub const HRX_AMDF_STRUCTURE_TYPE_XDNA_CONTEXT_INFO: _bindgen_ty_1 = 65547;
 pub const HRX_AMDF_STRUCTURE_TYPE_XDNA_CONTEXT_PLACEMENT_INFO: _bindgen_ty_1 = 65549;
+pub const HRX_AMDF_STRUCTURE_TYPE_XDNA_FIRMWARE_TRACE_INFO: _bindgen_ty_1 = 65550;
+pub const HRX_AMDF_STRUCTURE_TYPE_XDNA_RESULT_BUFFER_INFO: _bindgen_ty_1 = 65551;
+pub const HRX_AMDF_XDNA_FIRMWARE_TRACE_FORMAT_2_0: _bindgen_ty_1 = 512;
 pub type _bindgen_ty_1 = ::std::os::raw::c_uint;
 pub struct Amdf {
     __library: ::libloading::Library,

@@ -460,8 +460,8 @@ impl Prepared {
     pub(super) fn index(&self, sources: &[super::Source]) -> Result<(Index, Vec<Diagnostic>)> {
         let api = &self.api;
         unsafe {
-            let builder = output(api, api.loomc_link_index_builder_release, |out| {
-                api.loomc_link_index_builder_create(
+            let builder = output(api, api.loomc_link_index_builder_free, |out| {
+                api.loomc_link_index_builder_allocate(
                     self.context.raw,
                     ptr::null(),
                     api.loomc_allocator_system(),
@@ -482,56 +482,20 @@ impl Prepared {
                             &unit.contents,
                             LOOMC_SOURCE_FORMAT_UNKNOWN,
                         )?;
-                        let mut provider = IncludeProvider {
-                            api,
-                            headers: &unit.headers,
-                        };
-                        let paths: Vec<_> = unit.include_paths.iter().map(|s| view(s)).collect();
-                        let defines: Vec<_> = unit
-                            .defines
-                            .iter()
-                            .map(|(name, value)| loomc_cxx_define_t {
-                                name: view(name),
-                                value: view(value),
-                            })
-                            .collect();
-                        let roots: Vec<_> = unit.roots.iter().map(|s| view(s)).collect();
-                        let options = loomc_cxx_import_options_t {
-                            type_: LOOMC_STRUCTURE_TYPE_CXX_IMPORT_OPTIONS,
-                            structure_size: size_of::<loomc_cxx_import_options_t>(),
-                            standard: view(unit.standard.as_str()),
-                            triple: view("x86_64-unknown-linux-gnu"),
-                            data_model: LOOMC_CXX_DATA_MODEL_LP64,
-                            flags: if unit.approximate_functions {
-                                LOOMC_CXX_IMPORT_FLAG_APPROXIMATE_FUNCTIONS
-                            } else {
-                                0
-                            },
-                            source_provider: loomc_cxx_source_provider_t {
-                                fn_: Some(include_source),
-                                user_data: (&mut provider as *mut IncludeProvider<'_>).cast(),
-                            },
-                            include_paths: paths.as_ptr(),
-                            include_path_count: paths.len(),
-                            defines: defines.as_ptr(),
-                            define_count: defines.len(),
-                            roots: roots.as_ptr(),
-                            root_count: roots.len(),
-                            ..Default::default()
-                        };
-                        let (module, imported) =
+                        let (module, imported) = with_cxx_options(api, unit, |options| {
                             result_call(api, api.loomc_module_release, |out, result| {
                                 api.loomc_module_import_cxx(
                                     self.context.raw,
                                     lease.raw(),
                                     input.raw,
-                                    &options,
+                                    options,
                                     api.loomc_allocator_system(),
                                     out,
                                     result,
                                 )
                             })
-                            .map_err(|e| e.context(format!("importing {}", unit.identifier)))?;
+                            .map_err(|e| e.context(format!("importing {}", unit.identifier)))
+                        })?;
                         diagnostics.extend(imported);
                         let options = loomc_module_serialize_options_t {
                             type_: LOOMC_STRUCTURE_TYPE_MODULE_SERIALIZE_OPTIONS,
@@ -635,7 +599,12 @@ impl Prepared {
                 structure_size: size_of::<loomc_emit_options_t>(),
                 next: (&report_options as *const loomc_compile_report_options_t).cast(),
                 artifact_format: view(self.artifact_format),
-                artifact_flags: LOOMC_EMIT_ARTIFACT_FLAG_PRIMARY,
+                artifact_flags: LOOMC_EMIT_ARTIFACT_FLAG_PRIMARY
+                    | if spec.listing {
+                        LOOMC_EMIT_ARTIFACT_FLAG_TARGET_LISTING
+                    } else {
+                        0
+                    },
                 ..Default::default()
             };
             let mut trace_state = trace.map(|(options, writer)| TraceSink {
@@ -718,6 +687,7 @@ impl Prepared {
             let mut report = None;
             let mut manifest = None;
             let mut launch_bytes = None;
+            let mut listing = None;
             for i in 0..api.loomc_result_artifact_count(result.raw) {
                 let artifact = &*api.loomc_result_artifact_at(result.raw, i);
                 let mut span = loomc_byte_span_t::default();
@@ -733,6 +703,13 @@ impl Prepared {
                 api.loomc_allocator_free(alloc, span.data.cast_mut().cast());
                 if artifact.kind == LOOMC_ARTIFACT_KIND_LAUNCH_CONFIG {
                     launch_bytes = Some(data);
+                } else if artifact.kind == LOOMC_ARTIFACT_KIND_TEXT
+                    && string(artifact.identifier).ends_with(".listing")
+                {
+                    listing = Some(Arc::<str>::from(
+                        std::str::from_utf8(&data)
+                            .map_err(|e| Error::Message(format!("invalid target listing: {e}")))?,
+                    ));
                 } else if string(artifact.format) == "loom-artifact-manifest-json" {
                     manifest = Some(serde_json::from_slice(&data)?);
                 } else if string(artifact.format) == self.artifact_format {
@@ -767,12 +744,18 @@ impl Prepared {
             let bytes = bytes.filter(|v| !v.is_empty()).ok_or_else(|| {
                 Error::Message(format!("Loom emitted no {} artifact", self.artifact_format))
             })?;
+            if spec.listing && listing.is_none() {
+                return Err(Error::Unsupported(
+                    "target emitted no assembly listing".into(),
+                ));
+            }
             Ok(super::Compiled {
                 bytes,
                 diagnostics,
                 report,
                 manifest,
                 launch_bytes,
+                listing,
             })
         }
     }
@@ -945,6 +928,116 @@ unsafe extern "C" fn write_trace(
             }
         }
     }
+}
+
+// Immutable native preambles retain their library and own all frontend storage.
+pub(super) struct Preamble {
+    handle: Handle<loomc_cxx_preamble_t>,
+    key: String,
+}
+unsafe impl Send for Preamble {}
+unsafe impl Sync for Preamble {}
+impl Prepared {
+    pub(super) fn preamble(&self, unit: &super::CxxSource) -> Result<super::CxxPreamble> {
+        let api = &self.api;
+        unsafe {
+            let source = self.source(
+                &unit.identifier,
+                &unit.contents,
+                LOOMC_SOURCE_FORMAT_UNKNOWN,
+            )?;
+            let (handle, _) = with_cxx_options(api, unit, |options| {
+                result_call(api, api.loomc_cxx_preamble_release, |out, result| {
+                    api.loomc_cxx_preamble_create(
+                        self.context.raw,
+                        source.raw,
+                        options,
+                        api.loomc_allocator_system(),
+                        out,
+                        result,
+                    )
+                })
+            })?;
+            Ok(super::CxxPreamble(Arc::new(Preamble {
+                handle,
+                key: unit.preamble_key()?,
+            })))
+        }
+    }
+}
+struct PathMapper<'a>(&'a std::collections::BTreeMap<String, String>);
+unsafe extern "C" fn map_source_path(
+    data: *mut std::ffi::c_void,
+    path: loomc_string_view_t,
+    out: *mut loomc_string_view_t,
+) -> loomc_status_t {
+    let mapper = unsafe { &*data.cast::<PathMapper<'_>>() };
+    let bytes = if path.size == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(path.data.cast::<u8>(), path.size) }
+    };
+    let mapped = std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|p| mapper.0.get(p));
+    unsafe {
+        *out = mapped.map_or(path, |s| view(s));
+    }
+    ptr::null_mut()
+}
+fn with_cxx_options<T>(
+    api: &Arc<Loomc>,
+    unit: &super::CxxSource,
+    call: impl FnOnce(&loomc_cxx_import_options_t) -> Result<T>,
+) -> Result<T> {
+    let key = unit.preamble_key()?;
+    let mut mapper = PathMapper(&unit.source_identifiers);
+    let mut provider = IncludeProvider {
+        api,
+        headers: &unit.headers,
+    };
+    let paths: Vec<_> = unit.include_paths.iter().map(|s| view(s)).collect();
+    let defines: Vec<_> = unit
+        .defines
+        .iter()
+        .map(|(name, value)| loomc_cxx_define_t {
+            name: view(name),
+            value: view(value),
+        })
+        .collect();
+    let roots: Vec<_> = unit.roots.iter().map(|s| view(s)).collect();
+    let options = loomc_cxx_import_options_t {
+        type_: LOOMC_STRUCTURE_TYPE_CXX_IMPORT_OPTIONS,
+        structure_size: size_of::<loomc_cxx_import_options_t>(),
+        standard: view(unit.standard.as_str()),
+        triple: view("x86_64-unknown-linux-gnu"),
+        data_model: LOOMC_CXX_DATA_MODEL_LP64,
+        fp_model: match unit.fp_model {
+            super::CxxFpModel::Precise => LOOMC_CXX_FP_MODEL_PRECISE,
+            super::CxxFpModel::Fast => LOOMC_CXX_FP_MODEL_FAST,
+        },
+        source_provider: loomc_cxx_source_provider_t {
+            fn_: Some(include_source),
+            user_data: (&mut provider as *mut IncludeProvider<'_>).cast(),
+        },
+        include_paths: paths.as_ptr(),
+        include_path_count: paths.len(),
+        defines: defines.as_ptr(),
+        define_count: defines.len(),
+        roots: roots.as_ptr(),
+        root_count: roots.len(),
+        source_path_mapper: loomc_cxx_source_path_mapper_t {
+            fn_: Some(map_source_path),
+            user_data: (&mut mapper as *mut PathMapper).cast(),
+        },
+        preamble: unit
+            .preamble
+            .as_ref()
+            .filter(|p| p.0.key == key && Arc::ptr_eq(&p.0.handle.api, api))
+            .map_or(ptr::null(), |p| p.0.handle.raw),
+        ..Default::default()
+    };
+    call(&options)
 }
 
 #[cfg(test)]

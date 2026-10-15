@@ -1,15 +1,11 @@
 # Loom compiler patches
 
 These patches apply to public `ROCm/hrx-system` commit
-`7e9c7bbd5e93d20c1e1a64c60bb4644499404f9b`; `base-revision` is the machine-readable
+`61c152ac4b40dd758803a2cbcd237184a8dfb669`; `base-revision` is the machine-readable
 pin. `native/release-inputs.json` records the source archive and each active
 patch's SHA-256. The processor-mode patch extends the upstream ABI as described
 below.
 
-- `0001-vopd-source-cache-banks.patch` fixes AMDGPU VOPD source-cache bank
-  constraints. FMAMK addends use hardware SRC2 even though they occupy encoded
-  VSRC1. Allocation and emission check the actual source cache, retaining legal
-  dual instructions. Generator and native assembly regressions cover the rule.
 - `0005-materialize-encoding-config.patch` resolves configured i4/i8 encodings
   into concrete encoding definitions before native emission. It includes
   canonicalization and matrix-fragment regressions.
@@ -18,19 +14,13 @@ below.
   occupancy domain, and emits consistent native and assembly descriptors.
   Explicit modes require GFX11/GFX12. The rebase uses upstream's new kernel
   emission path and metadata-owned descriptor interface. Its unsupported-mode
-  diagnostic is AMDGPU_052. The public extension uses structure ID 44;
+  diagnostic is AMDGPU_053. The public extension uses structure ID 44;
   upstream now owns IDs 42 and 43 for artifact compilation and pass tracing.
 - `0012-retain-rdna35-lds-overlap.patch` retains the gfx1151
   LDS overlap policy. Completion latency and source hazards remain active while
   independent loads can remain in flight. Width-specific classes required by
   generic address lowering are retained without their bandwidth reservation.
   Rerun performance tests when updating the compiler or target.
-- `0013-retain-value-domain-arena.patch` fixes the 0.8.14 compiler crash in
-  hrxdb merge selection. The local value domain owns its acquisition arena;
-  symbolic queries cannot grow its retained value-ID list in temporary storage.
-  Internal registration no longer accepts a caller-selected arena. A native
-  regression destroys the query arena before reading and releasing the domain;
-  `tests/compiler_sources.rs` also compiles the failing hrxdb kernel without a GPU.
 - `0014-materialize-bounded-index-extrema.patch` materializes signed 32-bit
   `index.min`/`index.max` operands whose kernel ABI carriers remain 64-bit.
   Both inputs must independently fit signed 32 bits; a narrow result is not
@@ -57,12 +47,14 @@ below.
 Earlier SMEM, GFX11 VMEM-source reuse, dependent-inline-type and allocation-layout
 patches are no longer in the active set. Patch 0011 is also retired: upstream now
 owns CFG unit-use indexing, storage leases and concat placement. The old
-per-segment liveness overlay is not carried into those analyses. Only the nine
-files above are applied.
+per-segment liveness overlay is not carried into those analyses. VOPD source-cache routing and value-domain arena ownership are also
+upstream now (commits `7a947dce16` and `490a9ac096`). Only the seven files
+above are applied.
 
-The matching native archive is staged as `native-20261008-7e9c7bbd5e`.
+The matching native archive is built locally as `native-20261015-61c152ac4b`.
 Rust bindings require this compiler's current C API, including
-`loomc_compile_artifact` and its diagnostic layout. Older compiler bundles are
+`loomc_compile_artifact`, link-index builder allocation/free, and the
+precise/fast C++ import policy. Older compiler bundles are
 not supported.
 
 ## Rebuild

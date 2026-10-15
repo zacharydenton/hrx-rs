@@ -2,25 +2,23 @@
   "schema": 1,
   "hrx": {
     "repository": "https://github.com/ROCm/hrx-system",
-    "revision": "7e9c7bbd5e93d20c1e1a64c60bb4644499404f9b",
+    "revision": "61c152ac4b40dd758803a2cbcd237184a8dfb669",
     "patches": {
-      "0001-vopd-source-cache-banks.patch": "7b8784f70a92200c1e2fdc60562cafe9bcdf82a537568ee9f2dfba5de6ce609d",
       "0005-materialize-encoding-config.patch": "273fa933f21eb59cdf8299e7c75e72621cdc13d153c323cd7cc9abd4895e4090",
-      "0009-amdgpu-profile-processor-mode.patch": "18b3d41d74ee8f4954767b3522958c19faa94d7c08bf216ac54b3fb63a7195b5",
-      "0012-retain-rdna35-lds-overlap.patch": "996bd9356c74a294f65b564676f8731ee8dd00aee5b9da9030fe07d6def66509",
-      "0013-retain-value-domain-arena.patch": "6e8eaffa6e4deaf2ddedd1c419c50cc687bf94d898ddc79859d12b407ef43b83",
-      "0014-materialize-bounded-index-extrema.patch": "fcf6fd36169055c77a77ca8b3234558c960198f82cae3a5a777264437d8836ca",
-      "0015-retain-partial-incoming-vmem-leases.patch": "a8104c18e8d9cdac7c1a5d50e1640142ad6050a3a2b50860a4eceb570ba20119",
-      "0016-honor-polled-feedback-and-active-masks.patch": "2ef83116685aa50cc668389bba346b0759ddcf786a62dd214e51b90e0f7d1877",
-      "0017-bound-address-sanitizer-shadow-loads.patch": "f6409b9cce4d604d8246985bef6ee08149070dd9f57b6c3b899d7b11d46893ae"
+      "0009-amdgpu-profile-processor-mode.patch": "b15ff1aa4cf0ff53d055109098ee9b3d005bcba7c8905b1d3478a7cbf128d879",
+      "0012-retain-rdna35-lds-overlap.patch": "33bdbd3134514b7c6322cf46a69d75c4d374864548dadf4675ffea595f8537f7",
+      "0014-materialize-bounded-index-extrema.patch": "2d5743812e2092b857333cfcc1dd8a43c163e67a30217719cde7448f0361574f",
+      "0015-retain-partial-incoming-vmem-leases.patch": "03730e33b25542f8e261ce71b2bc1089ad0852bdb3b2028808a2af2ce2318141",
+      "0016-honor-polled-feedback-and-active-masks.patch": "c20bcbb6d9f11ab123ed4a797dd6841d3f13a9a997a64ac139e11d549a6af4ae",
+      "0017-bound-address-sanitizer-shadow-loads.patch": "e66298363fc997c05b45ac9c01a2c43a2e8f9ad307cd5236e3bcda465a12bfce"
     }
   },
   "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",
   "downloads": {
     "hrx-system": {
-      "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/7e9c7bbd5e93d20c1e1a64c60bb4644499404f9b",
-      "archive": "hrx-system-7e9c7bbd5e93d20c1e1a64c60bb4644499404f9b.tar.gz",
-      "sha256": "fb0d33afa747cfb7b6a37a8d1c32e4c15c0d2866e7098833cf393b47c1aeee17"
+      "url": "https://codeload.github.com/ROCm/hrx-system/tar.gz/61c152ac4b40dd758803a2cbcd237184a8dfb669",
+      "archive": "hrx-system-61c152ac4b40dd758803a2cbcd237184a8dfb669.tar.gz",
+      "sha256": "a568da8e3e25ca66625ae527b5085d6f9aa1069692f7575b996046cd61eff563"
     },
     "spirv_headers": {
       "url": "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.357.0.tar.gz",
@@ -43,8 +41,8 @@
       "sha256": "1f17587abc9d0d355cf6f65bdba7496838b4e8313922769199689615c434965c"
     },
     "cxx": {
-      "url": "https://github.com/benvanik/cplusplus/archive/87ac2f8c90dafe0fc95a72bdb90643a207e08f42.tar.gz",
-      "sha256": "6432087170c2a22547b801620e0b800cbf2fd933c6972e8df9275c3638d42c89",
+      "url": "https://github.com/benvanik/cplusplus/archive/d0efe357d7cc37818fd800ac87581bfd094a7152.tar.gz",
+      "sha256": "8e8b5948f5e5cb4af2c43e041fbc5c9f0e2dd49cf9929d13c8c4e9bc8133d070",
       "archive": "cxx.tar.gz"
     },
     "libdrm_headers": {
@@ -101,11 +99,16 @@
       "url": "https://raw.githubusercontent.com/torvalds/linux/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/include/uapi/linux/io_uring/zcrx.h",
       "archive": "linux_io_uring_zcrx_header.h",
       "sha256": "820d8642160740bff5ba1d8d12d5d0464d0e3a765a7e454b901d134bf4b94ec0"
+    },
+    "linux_stat_header": {
+      "url": "https://raw.githubusercontent.com/torvalds/linux/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/include/uapi/linux/stat.h",
+      "sha256": "c900a05e031d999074db5ac3567f651ce2cf2f9f9e0a686810d6453c9f8b9526",
+      "archive": "linux_stat_header.h"
     }
   },
   "native_patches": {
     "native/amdf/build.patch": "de8581450efd4dbedcb3bf689285a09994cd339e4d6853f50875246546b20b47",
-    "native/amdf/cache-policy.patch": "448157b45aaeda06dbe9d33510757246dd1b8b5d90d9183912443be789565ba4",
+    "native/amdf/cache-policy.patch": "74368c0763094ffeff6e6ad8f57ee1bdc97909278f1ea04a95e773cfdaefd778",
     "native/amdf/queue-ring.patch": "3eef6f129af088ce146a9200145756b38bcd6aa23a6b924130e3ed9b08a96a0b"
   }
 }

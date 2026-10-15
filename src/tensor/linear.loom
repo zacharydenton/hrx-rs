@@ -28,9 +28,9 @@
   %km4 = index.sub %k, %four : index
   %wm4 = index.sub %wn, %four : index
   %s0, %s1, %s2, %s3 = scf.for %col = [%start to %k step %step](%a0 = %zf : f32, %a1 = %zf : f32, %a2 = %zf : f32, %a3 = %zf : f32) -> (f32, f32, f32, f32) {
-   %xi = index.assume %col [range(%col, 0, 1073741824), le(%col, %km4), mul(%col, 4)] : index
+   %xi = index.assume %col [range(%col, 0, 1073741824), le(%col, %km4), multiple_of(%col, 4)] : index
    %wi0 = index.add %base, %col : index
-   %wi = index.assume %wi0 [range(%wi0, 0, 1073741824), le(%wi0, %wm4), mul(%wi0, 4)] : index
+   %wi = index.assume %wi0 [range(%wi0, 0, 1073741824), le(%wi0, %wm4), multiple_of(%wi0, 4)] : index
    %xs = vector.load %xv[%xi] : view<[%k]xbf16> -> vector<4xbf16>
    %ws = vector.load %wv[%wi] : view<[%wn]xbf16> -> vector<4xbf16>
    %xb0 = vector.extract %xs[0] : vector<4xbf16> -> bf16

@@ -16,14 +16,16 @@ if(PROJECT_NAME STREQUAL "HRX" AND NOT TARGET hrx_fabric)
     "${CMAKE_CURRENT_LIST_DIR}/profile.c"
     "${CMAKE_CURRENT_LIST_DIR}/xdna.c"
     "${_hrx_gpu_helpers}/util/hsaco_metadata.c"
+    "${_hrx_gpu_helpers}/util/hsaco_elf.c"
+    "${_hrx_gpu_helpers}/util/hsaco_data_layout.c"
     "${_hrx_gpu_helpers}/util/pm4_dispatch.c"
     "${_hrx_gpu_helpers}/target/code_object.c"
     "${_hrx_gpu_helpers}/target/identity.c")
   target_include_directories(hrx_fabric PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
   target_link_libraries(hrx_fabric PRIVATE
     iree::base iree::hal iree::hal::utils::elf_format iree::third_party::hsa_runtime_headers
-    iree::experimental::xdna::executable
-    iree::experimental::xdna::amdf_status
+    iree::hal::drivers::amd::xdna::executable_storage
+    iree::hal::drivers::amd::status
     iree::hal::drivers::amd::xdna::image::aie2p::npu2)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(hrx_fabric PRIVATE iree::third_party::linux_amdgpu_uapi)

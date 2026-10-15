@@ -65,6 +65,11 @@ pub enum Argument<'a> {
     Buffer(&'a Buffer, usize),
     /// Exact bytes of one scalar/record argument.
     Value(&'a [u8]),
+    /// Externally managed device pointer, for example a virtual reservation.
+    /// Unsafe preparation/dispatch requires the caller to retain its address
+    /// owner and backing through completion and order all mapping changes.
+    /// No buffer lease or address-sanitizer range is inferred from this value.
+    Address(u64),
 }
 impl Kernel {
     /// Drain owned value/operation and workgroup race reports after all invocations retire.
@@ -154,6 +159,14 @@ impl Kernel {
                         .ok_or_else(|| Error::Message("device argument address overflow".into()))?;
                     destination.copy_from_slice(&address.to_le_bytes());
                     resources.push((*buffer).clone());
+                }
+                (2, Argument::Address(address)) if destination.len() == 8 => {
+                    if self.0.address_state.is_some() {
+                        return Err(Error::Unsupported(
+                            "external addresses are absent from sanitizer bounds".into(),
+                        ));
+                    }
+                    destination.copy_from_slice(&address.to_le_bytes());
                 }
                 _ => {
                     return Err(Error::Message(format!(

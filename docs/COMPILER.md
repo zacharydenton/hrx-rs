@@ -20,6 +20,38 @@ calling it serially does not use the batch concurrency.
 `CxxSource` supplies named C23/C++26 translation units and virtual headers.
 `Compiler::sources` links them with Loom modules. There is no implicit host
 filesystem include search.
+`CxxSource::fp_model` defaults to `CxxFpModel::Precise`; select `Fast` to permit
+the complete Loom fast-math contract. This replaces the former
+`approximate_functions` flag. For approximate functions without other fast-math
+permissions, use the source facade's `loom::scalar::approximate` operations.
+
+The updated embedded `<loomcxx/kernel.h>` exposes subgroup scans, workgroup
+scans and workgroup reductions through ordinary `CxxSource` import. For example,
+`loom::kernel::workgroup::scan::addi<loom::kernel::scan_mode::exclusive>(count)`
+computes each workitem's prefix offset. Inclusive/exclusive and forward/reverse
+modes are supported; every required participant must converge. These value
+collectives do not order unrelated memory accesses. Native u32/f32 workgroup
+operations are supported; u64 workgroup collectives remain target-dependent.
+The compiler also gains exact dynamic integer division on AMDGPU, improved BF16
+narrowing, and source-level native-math alternatives. These are available through
+the existing importer and Loom source APIs without additional Rust switches.
+
+For repeated imports sharing leading includes, retain a semantic preamble:
+
+```rust,ignore
+let mut source = CxxSource::new("kernel.cpp", contents);
+source.headers.insert("common.h".into(), header_contents);
+source.preamble = Some(compiler.cxx_preamble(source.clone())?);
+// Clone source and vary the body after its leading includes for subsequent imports.
+let module = compiler.import_cxx(source)?;
+```
+
+Preambles are immutable and can be shared across threads. They own copied
+frontend state and keep the native library alive. They are process-local and
+omitted from source serialization and cache identity; changing headers or
+frontend configuration falls back to cold parsing. Import roots and math policy
+may vary. `source_identifiers` maps physical virtual paths to logical diagnostic
+identities without changing include lookup; mappings participate in source identity.
 
 ## Launch geometry
 
@@ -41,11 +73,19 @@ fields remain unknown. `CompileReport::expansions` exposes source-to-low-level
 expansion choices. `hrx report show` and `hrx report diff` inspect saved reports;
 comparisons require compatible identities. CU/WGP policies apply to AMDGPU only.
 
+`Specialization::with_listing(true)` requests target assembly;
+`Artifact::listing()` returns the text. Listings have their own specialization
+identity and a verified cache companion. Missing or corrupt companions trigger
+recompilation. A target without listing support returns an error when requested.
+
 The compile CLI supports:
 
 ```text
 --manifest-output=FILE
 --launch-output=FILE
+--listing-output=FILE
+--fp-model=precise|fast
+--source-identifier=PHYSICAL=LOGICAL
 --trace-output=FILE --trace-format=jsonl
 --trace-before=PATTERN --trace-after=PATTERN
 --trace-max-bytes=N

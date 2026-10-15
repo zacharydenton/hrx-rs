@@ -7,7 +7,7 @@ Loom compilation for both targets is always available. Supported hardware is
 ## Native setup
 
 ```sh
-cargo install hrx-rs --version 0.10.1 --locked --features npu
+cargo install hrx-rs --version 0.11.0 --locked --features npu
 hrx prepare
 hrx doctor
 ```
@@ -28,6 +28,9 @@ the array. One program supports up to 128 pending invocations with immutable
 bindings.
 
 Workers can use C23/C++26 translation units linked with Loom pipelines.
+The bundled pipelines use `run` regions, explicit FIFO channels, and separate
+DMA and compute strands. See [the copy kernel](../tests/kernels/copy.xdna.loom)
+for a complete example using the current compiler syntax.
 See the [compiler guide](COMPILER.md) for sources, reports and diagnostics.
 
 Loading native code and defining its memory contract are unsafe. Image and
@@ -56,6 +59,88 @@ visibility; execution dependencies still need ordering.
 required host cache operations. Host mapping guards reject conflicting device
 use. Shared allocation profiles cover new allocations, not external imports or
 host-page registration.
+
+### Stable addresses and NUMA placement
+
+`Fabric::reserve_virtual_memory` reserves host/device addresses independently of
+their backing. Query `host_reservation_capabilities` or
+`Device::reservation_capabilities(domain)` first, then use `ReservationAccess`
+to select consumers and permissions. `VirtualMemory::access_info` reports the
+stable address, mapping granularity and shared mapping-group identity.
+
+Allocate sources with `Fabric::allocate_with_options`: `mapping_source` prepares
+device remapping, `host_mapping_source` prepares CPU aliases, and
+`required_backing_flags` carries the reservation capability's
+`required_source_flags`. Host/SVA groups require both kinds of preparation for
+every sharing device. `host_numa_node` requests physical placement on a specific
+OS NUMA node and fails if it cannot be enforced.
+`AllocationProfile::supports_host_numa` reports whether a profile accepts this
+constraint. `Endpoint::gpu_architecture` classifies GCN/RDNA/CDNA independently
+of queue services; queue capability queries expose remapping, command-array and
+dispatch-timestamp support.
+
+`VirtualMemory::update` replaces ranges; `detach` removes a complete mapping
+group while retaining its addresses. Both are unsafe because callers must retire
+users and order mapping changes. Sources remain leased, including replaced and
+proposed sources after failure, until checked whole-group removal. Failed
+destruction quarantines those owners. Ordinary `Buffer::read/write` returns
+`Busy` while its source is leased by a reservation.
+
+`Argument::Address(address)` binds a reservation address to a GPU pointer
+parameter. It does not infer ownership, visibility or sanitizer bounds: retain
+the reservation through completion and perform the required memory transitions.
+The coordinated execution planner does not infer hazards for these raw addresses.
+
+## Native observations
+
+`Fabric::host_clock_info/host_clock` expose the shared monotonic profiling clock.
+`Device::queue_clock_info(family)` reports nominal GPU timestamp units, and
+`clock_sample(family)` returns a native device sample with host observations
+before, paired with, and after the query. Equal rates do not establish equal
+epochs or a bounded CPU/GPU correlation. Existing PM4 profiling now gets its rate
+from this public native service.
+
+`Device::aql_queue_with_timestamps(private_bytes, budget, true)` enables firmware
+dispatch timestamps. After checked completion, `AqlCompletion::timing()` returns
+the dispatch's owned start/end sample and clock units. Samples survive signal
+reuse. A profiled prepared dispatch admits one invocation at a time and allocates
+one sample per invocation; ordinary queues keep their existing behavior. These
+intervals cover firmware packet processing, not exact shader instruction bounds.
+
+For the NPU, `firmware_trace_info`, `configure_firmware_trace` and
+`read_firmware_trace` expose the device-wide recorder. Reads return owned decoded
+events, positions, lost-byte counts and discontinuity flags. Category constants
+are in `fabric::native`. Configuration requires native admission and ownership
+coordination across processes; dropping a device does not disable recording.
+An empty read does not prove workload completion. `timer_clock_info` samples the
+current RECORD_TIMER operating rate without assuming that it stays constant.
+
+### Advanced native protocols
+
+`Fabric::native_api()` exposes version-checked core, GPU, XDNA and observation
+tables. `fabric::native` publishes the complete pinned ABI and its contracts;
+`native_handle()` borrows instances, endpoints, devices, buffers or reservations
+without transferring ownership. This provides access to the following protocols:
+
+| Functionality | Native entry points |
+| --- | --- |
+| Queue-ordered remapping | `kernel_queue_update_memory` with VIRTUAL_MEMORY capability |
+| Reservation host views and backing-qualified visibility | `memory_reservation_map`, `memory_query_pair_info` |
+| Ordered NPU command arrays | XDNA `kernel_queue_submit`, bounded by queue command/packet capacity |
+| Finite NPU timer/register results | `context_query_result_buffer_info`, `context_attach_result_buffer`, `context_collect_result_buffer`, `context_detach_result_buffer` |
+
+These are unsafe caller-managed protocols, not automatic operations on an
+`XdnaProgram` or execution graph. For NPU results, query the context's private
+scope/profile, allocate and clear/publish a finite destination, attach it, submit
+caller-authored RECORD_TIMER/READ_REGS instructions, retire every writer, collect,
+acquire the host mapping and decode the known record layout before detaching.
+The transport does not report a written extent or overflow count. Failed controls
+can preserve native attachments; keep backing and owners alive until checked
+retirement and removal. Never destroy Rust-owned handles through the raw API.
+
+The native bundle remains scoped to gfx1151 and Strix Halo XDNA. Upstream x86,
+SPIR-V/Vulkan and model-serving additions are separate systems, not newly enabled
+Rust execution backends.
 
 ## Scheduling and ownership
 

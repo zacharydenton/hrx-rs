@@ -21,6 +21,16 @@ impl CxxStandard {
     }
 }
 
+/// Default floating-point transformations for a C/C++ translation unit.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub enum CxxFpModel {
+    /// Preserve floating-point values and evaluation order.
+    #[default]
+    Precise,
+    /// Permit Loom's complete fast-math contract, including reassociation.
+    Fast,
+}
+
 /// A C/C++ translation unit and all of its explicit include dependencies.
 /// Embedded Loom facade headers are supplied by the pinned compiler.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,8 +49,28 @@ pub struct CxxSource {
     pub defines: Vec<(String, String)>,
     /// Exported source functions; empty selects visible concrete definitions.
     pub roots: Vec<String>,
-    /// Permit approximate math under Loom's AFN contract.
-    pub approximate_functions: bool,
+    /// Default math policy; source attributes can override individual functions.
+    #[serde(default)]
+    pub fp_model: CxxFpModel,
+    /// Physical virtual path to retained diagnostic/module identifier. Lookup
+    /// still uses the physical path. Distinct sources need distinct identities.
+    #[serde(default)]
+    pub source_identifiers: BTreeMap<String, String>,
+    /// Optional process-local reusable leading includes. Serialization omits
+    /// this optimization; header/configuration changes use ordinary parsing.
+    #[serde(skip)]
+    pub preamble: Option<CxxPreamble>,
+}
+/// Immutable parsed C++ include prefix, shareable across concurrent imports.
+/// Create with [`super::Compiler::cxx_preamble`]. The compiler checks the exact
+/// prefix; this wrapper also checks virtual header/configuration identity so a
+/// changed header cannot silently reuse an old semantic snapshot.
+#[derive(Clone)]
+pub struct CxxPreamble(pub(super) std::sync::Arc<super::native::Preamble>);
+impl std::fmt::Debug for CxxPreamble {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CxxPreamble").finish_non_exhaustive()
+    }
 }
 impl CxxSource {
     /// C++26, LP64, strict math, and the compiler's embedded facade headers.
@@ -53,7 +83,9 @@ impl CxxSource {
             include_paths: Vec::new(),
             defines: Vec::new(),
             roots: Vec::new(),
-            approximate_functions: false,
+            fp_model: CxxFpModel::default(),
+            source_identifiers: BTreeMap::new(),
+            preamble: None,
         }
     }
     pub(super) fn validate(&self) -> Result<()> {
@@ -129,6 +161,16 @@ pub(super) fn virtual_path(path: &str) -> Result<String> {
     Ok(format!("{prefix}{}", parts.join("/")))
 }
 impl CxxSource {
+    pub(super) fn preamble_key(&self) -> Result<String> {
+        Ok(crate::bundle::digest(&serde_json::to_vec(&(
+            &self.identifier,
+            self.standard,
+            &self.headers,
+            &self.include_paths,
+            &self.defines,
+            &self.source_identifiers,
+        ))?))
+    }
     pub(super) fn normalize(&mut self) -> Result<()> {
         self.validate()?;
         self.identifier = virtual_path(&self.identifier)?;
@@ -152,6 +194,28 @@ impl CxxSource {
         for path in &mut self.include_paths {
             *path = virtual_path(path)?;
         }
+        let mut identifiers = BTreeMap::new();
+        for (path, identifier) in &self.source_identifiers {
+            if identifier.is_empty()
+                || identifier.contains('\0')
+                || identifiers
+                    .insert(virtual_path(path)?, identifier.clone())
+                    .is_some()
+            {
+                return Err(Error::Message(
+                    "invalid or aliased source identifier mapping".into(),
+                ));
+            }
+        }
+        let mut logical = std::collections::BTreeSet::new();
+        for path in std::iter::once(&self.identifier).chain(self.headers.keys()) {
+            if !logical.insert(identifiers.get(path).unwrap_or(path)) {
+                return Err(Error::Message(
+                    "source identifier mapping merges distinct sources".into(),
+                ));
+            }
+        }
+        self.source_identifiers = identifiers;
         Ok(())
     }
 }

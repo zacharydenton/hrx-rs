@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT_RECORDER: AtomicU64 = AtomicU64::new(1);
 
 type Marker = unsafe extern "C" fn(u64, *mut u32, u32, *mut u32) -> i32;
-type Clock = unsafe extern "C" fn(u32, u32, *mut u64) -> i32;
 
 pub(super) struct MarkerApi {
     _library: libloading::Library,
@@ -32,27 +31,22 @@ impl MarkerApi {
         }
         // The discriminator above validates this union member. Symbols are
         // optional so older runtimes retain ordinary inference compatibility.
-        let (library, marker, clock, native) = unsafe {
+        let (library, marker, native) = unsafe {
             let library = libloading::Library::new(api.bridge_path())?;
             let marker = *library
                 .get::<Marker>(b"hrx_fabric_gpu_profile_marker\0")
                 .map_err(|_| missing("GPU profile markers"))?;
-            let clock = *library
-                .get::<Clock>(b"hrx_fabric_gpu_profile_clock\0")
-                .map_err(|_| missing("GPU profile clock"))?;
-            (
-                library,
-                marker,
-                clock,
-                info.native_identity.value.linux_device,
-            )
+            (library, marker, info.native_identity.value.linux_device)
         };
-        let mut frequency = 0;
-        let status = unsafe { clock(native.major, native.minor, &mut frequency) };
-        if status != 0 || frequency == 0 {
-            return Err(Error::Unsupported(format!(
-                "GPU profile clock unavailable: errno {status}"
-            )));
+        let family = device
+            .endpoint()
+            .queue_capabilities()?
+            .into_iter()
+            .find(|family| family.command == QueueCommand::Pm4 && family.user_publication)
+            .ok_or_else(|| missing("PM4 queue clock"))?;
+        let frequency = device.queue_clock_info(family.ordinal)?.frequency_hz;
+        if frequency == 0 {
+            return Err(missing("nonzero GPU clock rate"));
         }
         Ok(Self {
             _library: library,

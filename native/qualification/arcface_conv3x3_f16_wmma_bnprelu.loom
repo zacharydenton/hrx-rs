@@ -17,15 +17,15 @@ config.decl @arcface.conv3x3_f16_wmma_bnprelu.width : %value: index where [range
 
 config.decl @arcface.conv3x3_f16_wmma_bnprelu.stride : %value: index where [range(%value, 1, 2)]
 
-config.decl @arcface.conv3x3_f16_wmma_bnprelu.cin_pad : %value: index where [range(%value, 16, 1024), mul(%value, 16)]
+config.decl @arcface.conv3x3_f16_wmma_bnprelu.cin_pad : %value: index where [range(%value, 16, 1024), multiple_of(%value, 16)]
 
 // Physical channel stride written by the preceding convolution. Gather only
 // cin_pad channels per tap, without reading extra physical row padding.
-config.decl @arcface.conv3x3_f16_wmma_bnprelu.cin_stride : %value: index where [range(%value, 8, 1024), mul(%value, 8)]
+config.decl @arcface.conv3x3_f16_wmma_bnprelu.cin_stride : %value: index where [range(%value, 8, 1024), multiple_of(%value, 8)]
 
-config.decl @arcface.conv3x3_f16_wmma_bnprelu.k_size : %value: index where [range(%value, 32, 16384), mul(%value, 32)]
+config.decl @arcface.conv3x3_f16_wmma_bnprelu.k_size : %value: index where [range(%value, 32, 16384), multiple_of(%value, 32)]
 
-config.decl @arcface.conv3x3_f16_wmma_bnprelu.n_size : %value: index where [range(%value, 64, 8192), mul(%value, 64)]
+config.decl @arcface.conv3x3_f16_wmma_bnprelu.n_size : %value: index where [range(%value, 64, 8192), multiple_of(%value, 64)]
 
 kernel.def target(@arcface_conv3x3_f16_wmma_bnprelu_gfx11) export("arcface_conv3x3_f16_wmma_bnprelu") @arcface_conv3x3_f16_wmma_bnprelu(%m_size: index) {
   %c1 = index.constant 1 : index
@@ -40,8 +40,8 @@ kernel.def target(@arcface_conv3x3_f16_wmma_bnprelu_gfx11) export("arcface_conv3
 } launch(%m_size: index, %a: buffer, %w: buffer, %bias: buffer, %c: buffer, %slope: buffer) {
   %k_size0 = config.get @arcface.conv3x3_f16_wmma_bnprelu.k_size : index
   %n_size0 = config.get @arcface.conv3x3_f16_wmma_bnprelu.n_size : index
-  %k_size = index.assume %k_size0 [range(%k_size0, 32, 16384), mul(%k_size0, 32)] : index
-  %n_size = index.assume %n_size0 [range(%n_size0, 64, 8192), mul(%n_size0, 64)] : index
+  %k_size = index.assume %k_size0 [range(%k_size0, 32, 16384), multiple_of(%k_size0, 32)] : index
+  %n_size = index.assume %n_size0 [range(%n_size0, 64, 8192), multiple_of(%n_size0, 64)] : index
   %height = config.get @arcface.conv3x3_f16_wmma_bnprelu.height : index
   %width = config.get @arcface.conv3x3_f16_wmma_bnprelu.width : index
   %stride = config.get @arcface.conv3x3_f16_wmma_bnprelu.stride : index
@@ -185,7 +185,7 @@ kernel.def target(@arcface_conv3x3_f16_wmma_bnprelu_gfx11) export("arcface_conv3
       %row_yw_first = index.mul %row_y0_first, %width : index
       %in_row0_first = index.add %row_yw_first, %xi_first : index
       %in_row_first = index.assume %in_row0_first [lt(%in_row0_first, %in_rows_total)] : index
-      %c_col_first = index.assume %c_first [le(%c_first, %c_limit), mul(%c_first, 16)] : index
+      %c_col_first = index.assume %c_first [le(%c_first, %c_limit), multiple_of(%c_first, 16)] : index
       %v_first = vector.load %a_view[%in_row_first, %c_col_first] : view<[%in_rows_total]x[%cin_stride]xf16> -> vector<16xf16>
       scf.yield %v_first : vector<16xf16>
     } else {
@@ -247,7 +247,7 @@ kernel.def target(@arcface_conv3x3_f16_wmma_bnprelu_gfx11) export("arcface_conv3
         %row_yw_next = index.mul %row_y0_next, %width : index
         %in_row0_next = index.add %row_yw_next, %xi_next : index
         %in_row_next = index.assume %in_row0_next [lt(%in_row0_next, %in_rows_total)] : index
-        %c_col_next = index.assume %c_next [le(%c_next, %c_limit), mul(%c_next, 16)] : index
+        %c_col_next = index.assume %c_next [le(%c_next, %c_limit), multiple_of(%c_next, 16)] : index
         %v_next = vector.load %a_view[%in_row_next, %c_col_next] : view<[%in_rows_total]x[%cin_stride]xf16> -> vector<16xf16>
         scf.yield %v_next : vector<16xf16>
       } else {

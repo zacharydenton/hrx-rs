@@ -9,9 +9,13 @@
     unsafe_op_in_unsafe_fn,
     clippy::all
 )]
-mod ffi;
+#[path = "ffi.rs"]
+/// Raw pinned libamdf ABI. Prefer owned wrappers; advanced calls require the
+/// native ownership, synchronization and failure contracts documented here.
+pub mod native;
 use crate::{Error, Result, Target};
 use ffi::*;
+use native as ffi;
 use std::{ffi::CStr, path::Path, ptr, sync::Arc};
 
 fn check(operation: &'static str, status: amdf_status_t) -> Result<()> {
@@ -57,16 +61,24 @@ pub use sanitizer::{
 mod executable;
 pub use executable::{Argument, Kernel};
 mod aql;
-pub use aql::{AqlCompletion, AqlQueue, PreparedAql};
+pub use aql::{AqlCompletion, AqlDispatchTiming, AqlQueue, PreparedAql};
 mod capabilities;
-pub use capabilities::{QueueCapabilities, QueueCommand};
+pub use capabilities::{GpuArchitecture, QueueCapabilities, QueueCommand};
 mod visibility;
 pub use visibility::{
     AtomicScope, CacheExecutor, CacheOperation, CacheTransition, MemorySite, MemoryVisibility,
     PreparedHostVisibility, TransitionKind, VisibilityFacts,
 };
 mod memory;
-pub use memory::{AllocationProfile, Buffer, ProspectiveVisibility};
+pub use memory::{AllocationOptions, AllocationProfile, Buffer, ProspectiveVisibility};
+mod virtual_memory;
+pub use virtual_memory::{MappingUpdate, ReservationAccess, VirtualMemory};
+mod observation;
+pub use observation::{
+    ClockInfo, ClockSample, FirmwareTraceBatch, FirmwareTraceEvent, FirmwareTraceInfo,
+};
+mod native_access;
+pub use native_access::NativeApi;
 
 struct Api {
     core: &'static amdf_api_t,

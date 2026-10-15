@@ -16,7 +16,7 @@ Requires Rust 1.91+. The Cargo package is `hrx-rs`; import it as `hrx`:
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.10.1" }
+hrx = { package = "hrx-rs", version = "0.11.0" }
 ```
 
 ```rust,no_run
@@ -38,7 +38,7 @@ contracts require caller validation at the unsafe API boundaries.
 ## Install the CLI
 
 ```sh
-cargo install hrx-rs --version 0.10.1 --locked --features npu
+cargo install hrx-rs --version 0.11.0 --locked --features npu
 hrx prepare
 hrx doctor
 ```
