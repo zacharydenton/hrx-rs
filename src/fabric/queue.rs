@@ -47,6 +47,7 @@ impl StreamQueues {
 struct QueueInner {
     device: Device,
     family: u32,
+    cache_control: CacheControl,
     raw: *mut amdf_user_queue_t,
     mapping: *mut amdf_user_queue_mapping_t,
     info: amdf_user_queue_mapping_info_t,
@@ -224,7 +225,29 @@ impl Drop for QueueInner {
 fn header(opcode: u32, count: usize) -> u32 {
     (3 << 30) | (((count - 2) as u32) << 16) | (opcode << 8)
 }
-fn barrier(words: &mut Vec<u32>) {
+#[derive(Clone, Copy)]
+pub(super) enum CacheControl {
+    Gcr,
+    Gfx9,
+}
+
+pub(super) fn barrier(words: &mut Vec<u32>, protocol: CacheControl) {
+    if matches!(protocol, CacheControl::Gfx9) {
+        // GFX9 CP_COHER_CNTL: write back TC and invalidate vector L1, TC,
+        // scalar data and instruction caches over the complete address range.
+        words.extend([
+            header(0x46, 2),
+            7 | (4 << 8),
+            header(0x58, 7) | 2,
+            (1 << 18) | (1 << 22) | (1 << 23) | (1 << 27) | (1 << 28) | (1 << 29),
+            u32::MAX,
+            0xff,
+            0,
+            0,
+            0x0a,
+        ]);
+        return;
+    }
     // Native PM4 v1/GCR system release and acquire. GLI_INV=1 invalidates
     // every instruction-cache line; 3 means FIRST_LAST, not ALL. A full address
     // range with FIRST_LAST can retain instructions from retired code whose
@@ -373,12 +396,22 @@ impl Device {
             if family.command_type != command
                 || family.format_version != AMDF_GPU_PM4_QUEUE_FORMAT_VERSION_1
                 || family.publication_modes & AMDF_QUEUE_PUBLICATION_MODE_USER == 0
-                || (command == AMDF_QUEUE_COMMAND_TYPE_GPU_PM4
-                    && family.format_features & AMDF_GPU_PM4_FORMAT_FEATURE_ACQUIRE_MEM_GCR as u64
-                        == 0)
             {
                 continue;
             }
+            let cache_control = if command != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4
+                || family.format_features & u64::from(AMDF_GPU_PM4_FORMAT_FEATURE_ACQUIRE_MEM_GCR)
+                    != 0
+            {
+                CacheControl::Gcr
+            } else if family.format_features
+                & u64::from(AMDF_GPU_PM4_FORMAT_FEATURE_ACQUIRE_MEM_GFX9)
+                != 0
+            {
+                CacheControl::Gfx9
+            } else {
+                continue;
+            };
             let options = amdf_gpu_user_queue_create_info_t {
                 type_: HRX_AMDF_STRUCTURE_TYPE_GPU_USER_QUEUE_CREATE_INFO,
                 structure_size: size_of::<amdf_gpu_user_queue_create_info_t>() as u32,
@@ -399,6 +432,7 @@ impl Device {
             let mut queue = QueueInner {
                 device: self.clone(),
                 family: ordinal,
+                cache_control,
                 raw,
                 mapping: ptr::null_mut(),
                 info: amdf_user_queue_mapping_info_t::default(),
@@ -591,7 +625,7 @@ impl Queue {
             None
         };
         let mut words = Vec::with_capacity(160);
-        barrier(&mut words);
+        barrier(&mut words, self.0.cache_control);
         let dispatch_start = words.len();
         words.extend(
             kernel.dispatch_words(
@@ -605,7 +639,7 @@ impl Queue {
             )?,
         );
         let dispatch_end = words.len();
-        barrier(&mut words);
+        barrier(&mut words, self.0.cache_control);
         let fence_word = words.len() + 4;
         words.extend([
             header(0x37, 5),
@@ -737,17 +771,17 @@ impl Queue {
                 ));
             }
             if *dependency {
-                barrier(&mut indirect);
+                barrier(&mut indirect, self.0.cache_control);
             }
             if let (Some(profile), Some(address)) = (profile, timestamp_address) {
-                barrier(&mut indirect);
+                barrier(&mut indirect, self.0.cache_control);
                 profile
                     .api
                     .emit(address + (profile_start + index) as u64 * 16, &mut indirect)?;
             }
             indirect.extend_from_slice(command.dispatch_words());
             if let (Some(profile), Some(address)) = (profile, timestamp_address) {
-                barrier(&mut indirect);
+                barrier(&mut indirect, self.0.cache_control);
                 profile.api.emit(
                     address + (profile_start + index) as u64 * 16 + 8,
                     &mut indirect,
@@ -790,7 +824,7 @@ impl Queue {
         let fence = fabric.allocate_shared(64, std::slice::from_ref(self.device()))?;
         let address = fence.device_address(self.device())?;
         let mut words = Vec::new();
-        barrier(&mut words);
+        barrier(&mut words, self.0.cache_control);
         let dispatch_start = words.len();
         words.extend([
             header(0x3f, 4),
@@ -799,7 +833,7 @@ impl Queue {
             indirect.len() as u32 | (1 << 23),
         ]);
         let dispatch_end = words.len();
-        barrier(&mut words);
+        barrier(&mut words, self.0.cache_control);
         let fence_word = words.len() + 4;
         words.extend([
             header(0x37, 5),
@@ -882,7 +916,7 @@ impl Queue {
             u32::MAX,
             4,
         ]);
-        barrier(&mut words);
+        barrier(&mut words, self.0.cache_control);
         let dispatch_end = words.len();
         let fence_word = words.len() + 4;
         words.extend([

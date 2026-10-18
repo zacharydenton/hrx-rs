@@ -28,6 +28,7 @@ struct hrx_fabric_gpu_image {
   uint8_t* data;
   size_t size;
   Elf64_Ehdr elf;
+  iree_hal_amdgpu_gfxip_version_t gfxip;
   uint64_t low, high, descriptor;
   iree_hal_amdgpu_hsaco_metadata_t metadata;
   const iree_hal_amdgpu_hsaco_metadata_kernel_t* kernel;
@@ -128,10 +129,15 @@ int hrx_fabric_gpu_image_open(const uint8_t* data, size_t size, const char* symb
   }
   iree_const_byte_span_t bytes = iree_make_const_byte_span(image->data, size);
   iree_hal_amdgpu_target_identity_t identity;
-  if (hrx_fabric_status(iree_hal_amdgpu_code_object_identity_from_elf(bytes, &identity)) ||
-      identity.version.major != 11 || identity.version.minor != 5 || identity.version.stepping != 1) {
-    hrx_fabric_gpu_image_close(image); return fail("GPU code object must target gfx1151");
+  if (hrx_fabric_status(iree_hal_amdgpu_code_object_identity_from_elf(bytes, &identity))) {
+    hrx_fabric_gpu_image_close(image); return 1;
   }
+  const bool gfx1151 = identity.version.major == 11 && identity.version.minor == 5 && identity.version.stepping == 1;
+  const bool gfx906 = identity.version.major == 9 && identity.version.minor == 0 && identity.version.stepping == 6;
+  if (!gfx1151 && !gfx906) {
+    hrx_fabric_gpu_image_close(image); return fail("GPU code object must target gfx1151 or gfx906");
+  }
+  image->gfxip = identity.version;
   if (hrx_fabric_status(iree_hal_amdgpu_hsaco_metadata_initialize_from_elf(bytes, iree_allocator_system(), &image->metadata))) {
     hrx_fabric_gpu_image_close(image); return 1;
   }
@@ -155,6 +161,9 @@ int hrx_fabric_gpu_image_open(const uint8_t* data, size_t size, const char* symb
   }
   if (!found || image->kernel->arg_count > UINT32_MAX) {
     hrx_fabric_gpu_image_close(image); return fail("kernel descriptor has no file storage");
+  }
+  if (gfx906 && (image->descriptor_data.kernel_code_properties & IREE_HAL_AMDGPU_KERNEL_CODE_PROPERTY_ENABLE_WAVEFRONT_SIZE32)) {
+    hrx_fabric_gpu_image_close(image); return fail("gfx906 requires wave64 code");
   }
   uint64_t entry;
   if (add_signed(image->descriptor, image->descriptor_data.kernel_code_entry_byte_offset, &entry)) {
@@ -288,11 +297,13 @@ int hrx_fabric_gpu_dispatch(const hrx_fabric_gpu_image* image, uint64_t image_ad
   const uint32_t private_bytes = descriptor.private_segment_fixed_size;
   const uint32_t scratch_enabled = descriptor.compute_pgm_rsrc2 &
       IREE_HAL_AMDGPU_COMPUTE_PGM_RSRC2_ENABLE_PRIVATE_SEGMENT;
+  if (image->gfxip.major == 9 && (private_bytes || scratch_enabled))
+    return fail("gfx906 PM4 scratch dispatch is not qualified; use a scratch-free kernel");
   descriptor.private_segment_fixed_size = 0;
   descriptor.compute_pgm_rsrc2 &= ~IREE_HAL_AMDGPU_COMPUTE_PGM_RSRC2_ENABLE_PRIVATE_SEGMENT;
   iree_hal_amdgpu_pm4_dispatch_launch_state_t state;
   if (hrx_fabric_status(iree_hal_amdgpu_pm4_dispatch_launch_state_initialize(
-      (iree_hal_amdgpu_gfxip_version_t){11, 5, 1}, &descriptor,
+      image->gfxip, &descriptor,
       image_address + image->descriptor - image->low, block, 0, &state))) return 1;
   if (private_bytes || scratch_enabled) {
     const uint32_t lanes = (descriptor.kernel_code_properties &

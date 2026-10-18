@@ -269,7 +269,7 @@ impl Endpoint {
     }
     /// Activate this exact endpoint. Unsupported hardware is never substituted.
     pub fn open(&self) -> Result<Device> {
-        if self.target().as_str() != "gfx1151" && !self.target().is_xdna() {
+        if !matches!(self.target().as_str(), "gfx1151" | "gfx906") && !self.target().is_xdna() {
             return Err(Error::Unsupported(format!(
                 "unqualified device {}",
                 self.target().as_str()

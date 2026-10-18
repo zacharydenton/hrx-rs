@@ -482,18 +482,36 @@ impl AqlQueue {
             .device_address(self.device())?
             .checked_add(kernel.0.info.descriptor_offset)
             .ok_or_else(|| Error::Message("AQL descriptor address overflow".into()))?;
-        // GFX11 GCR includes GLI_INV_ALL. The native system fences on dispatch
-        // order data; this explicit publication also handles reused code addresses.
-        let invalidation = [
-            0xc0065800u32,
-            0,
-            u32::MAX,
-            0xff,
-            0,
-            0,
-            0x0a,
-            1 | (1 << 4) | (1 << 5) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 14) | (1 << 15),
-        ];
+        // Select the publication packet from the native PM4 contract instead of
+        // sending a GCR_CNTL word to a GFX9 seven-DWORD ACQUIRE_MEM decoder.
+        let gfx9 = self
+            .device()
+            .endpoint()
+            .queue_capabilities()?
+            .iter()
+            .any(|family| {
+                family.command == QueueCommand::Pm4
+                    && family.format_features & AMDF_GPU_PM4_FORMAT_FEATURE_ACQUIRE_MEM_GFX9 as u64
+                        != 0
+            });
+        let mut invalidation = if gfx9 {
+            Vec::new()
+        } else {
+            vec![
+                0xc0065800,
+                0,
+                u32::MAX,
+                0xff,
+                0,
+                0,
+                0x0a,
+                1 | (1 << 4) | (1 << 5) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 14) | (1 << 15),
+            ]
+        };
+        if gfx9 {
+            super::queue::barrier(&mut invalidation, super::queue::CacheControl::Gfx9);
+        }
+        let publication_words = invalidation.len();
         let publication = fabric.allocate_owned(
             4096,
             self.device(),
@@ -510,7 +528,7 @@ impl AqlQueue {
                 .collect::<Vec<_>>(),
         )?;
         let ib = publication.device_address(self.device())?;
-        if ib >= (1 << 48) || ib + 32 > (1 << 48) {
+        if ib >= (1 << 48) || ib + (publication_words * 4) as u64 > (1 << 48) {
             return Err(Error::Unsupported(
                 "AQL publication IB is outside the 48-bit address domain".into(),
             ));
@@ -531,7 +549,7 @@ impl AqlQueue {
         publish[1] = 0xc0023f00;
         publish[2] = ib as u32;
         publish[3] = (ib >> 32) as u32;
-        publish[4] = (1 << 23) | 8;
+        publish[4] = (1 << 23) | publication_words as u32;
         publish[5] = 10;
         let mut dispatch = [0; 16];
         dispatch[0] = 2 | (1 << 8) | (2 << 9) | (2 << 11) | (3 << 16);

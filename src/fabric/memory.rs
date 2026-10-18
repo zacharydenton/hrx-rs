@@ -38,7 +38,8 @@ impl AllocationOptions {
     }
 }
 
-/// Shared backing with explicit device access and checked host transfers.
+/// Owned backing with explicit device access and checked host transfers.
+/// Device-only local buffers reject host operations and require device copies.
 #[derive(Clone)]
 pub struct Buffer(pub(super) Arc<Memory>);
 pub(super) struct Memory {
@@ -92,6 +93,7 @@ impl Buffer {
         Arc::strong_count(&self.0) == 1
     }
     pub(crate) fn zero(&self) -> Result<()> {
+        self.require_host_mapping()?;
         let uses = self
             .0
             .uses
@@ -119,6 +121,7 @@ impl Buffer {
     }
     // Only privately owned fence buffers use this path while a device writes.
     pub(super) fn fence_value(&self) -> Result<u32> {
+        self.require_host_mapping()?;
         if self.len() < 4 {
             return Err(Error::Message("completion storage is too small".into()));
         }
@@ -153,6 +156,7 @@ impl Buffer {
     /// cache operation completes, and retain this allocation through that use.
     pub unsafe fn cache_control(&self, flush: bool, offset: usize, length: usize) -> Result<()> {
         self.range(offset, length)?;
+        self.require_host_mapping()?;
         // Owned imports retain the original mapping as the maintenance site
         // for these exact physical bytes, including its cache-policy contract.
         if let Some(source) = &self.0.source {
@@ -186,6 +190,14 @@ impl Buffer {
     /// Allocations are always nonempty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    fn require_host_mapping(&self) -> Result<()> {
+        if self.0.pointer.is_null() {
+            return Err(Error::Unsupported(
+                "device-only buffer has no host mapping; use a device transfer".into(),
+            ));
+        }
+        Ok(())
     }
     fn range(&self, offset: usize, length: usize) -> Result<()> {
         if offset
@@ -294,6 +306,7 @@ impl Drop for DeviceUse {
 
 #[derive(Default)]
 struct MemoryOwners {
+    device_only: bool,
     coherent: bool,
     profile: Option<(*mut amdf_memory_scope_t, u32)>,
     source: Option<Buffer>,
@@ -313,6 +326,43 @@ impl Drop for ExternalMemory {
     }
 }
 impl Fabric {
+    /// Allocate device-only local backing without a CPU aperture mapping.
+    /// Contents are unspecified. Host read/write/cache operations return Unsupported.
+    ///
+    /// # Safety
+    /// Initialize every byte a device will read before submitting that read. Retain
+    /// and order producers/consumers through their native completion and cache fences.
+    pub unsafe fn allocate_device_local(&self, bytes: usize, device: &Device) -> Result<Buffer> {
+        self.allocate_device_local_access(
+            bytes,
+            device,
+            AMDF_MEMORY_ACCESS_READ | AMDF_MEMORY_ACCESS_WRITE,
+        )
+    }
+    pub(super) fn allocate_device_local_access(
+        &self,
+        bytes: usize,
+        device: &Device,
+        access: u32,
+    ) -> Result<Buffer> {
+        if device.endpoint().engine() != Engine::Gpu {
+            return Err(Error::Unsupported(
+                "device-local backing requires a GPU".into(),
+            ));
+        }
+        self.create_memory(
+            bytes,
+            std::slice::from_ref(device),
+            access,
+            4096,
+            None,
+            MemoryOwners {
+                device_only: true,
+                ..Default::default()
+            },
+            None,
+        )
+    }
     /// Allocate initialized system memory with explicit remapping/placement
     /// requirements. Device access ordinals follow the order in `devices`.
     pub fn allocate_with_options(
@@ -572,6 +622,11 @@ impl Fabric {
                 ));
             }
         }
+        let required_flags = if owners.device_only {
+            AMDF_MEMORY_FLAG_DEVICE_LOCAL as u64
+        } else {
+            owners.options.required_flags()
+        };
         let api = self.0.api.core;
         let _ = entry!(api, memory_destroy);
         let _ = entry!(api, host_mapping_destroy);
@@ -643,6 +698,34 @@ impl Fabric {
                 &mut count,
             )
         })?;
+        if owners.device_only {
+            scopes.clear();
+            for device in devices {
+                let mut local_count = 0;
+                let status = unsafe {
+                    entry!(api, device_enumerate_memory_scopes)(
+                        device.0.raw,
+                        0,
+                        ptr::null_mut(),
+                        &mut local_count,
+                    )
+                };
+                if status != AMDF_STATUS_CODE_BUFFER_TOO_SMALL as u64 {
+                    check("enumerate local memory scopes", status)?;
+                }
+                let mut local_scopes = vec![ptr::null_mut(); local_count as usize];
+                check("enumerate local memory scopes", unsafe {
+                    entry!(api, device_enumerate_memory_scopes)(
+                        device.0.raw,
+                        local_count,
+                        local_scopes.as_mut_ptr(),
+                        &mut local_count,
+                    )
+                })?;
+                local_scopes.truncate(local_count as usize);
+                scopes.extend(local_scopes);
+            }
+        }
         for scope in scopes {
             let mut scope_info = amdf_memory_scope_info_t {
                 type_: AMDF_STRUCTURE_TYPE_MEMORY_SCOPE_INFO,
@@ -652,7 +735,7 @@ impl Fabric {
             check("memory_scope_query_info", unsafe {
                 entry!(api, memory_scope_query_info)(scope, &mut scope_info)
             })?;
-            if scope_info.kind != AMDF_MEMORY_SCOPE_KIND_SYSTEM {
+            if !owners.device_only && scope_info.kind != AMDF_MEMORY_SCOPE_KIND_SYSTEM {
                 continue;
             }
             for ordinal in 0..scope_info.memory_profile_count {
@@ -703,10 +786,13 @@ impl Fabric {
                 } else {
                     &profile.allocation
                 };
-                if profile.roles & (role | AMDF_MEMORY_PROFILE_ROLE_HOST_MAP) as u64
-                    != (role | AMDF_MEMORY_PROFILE_ROLE_HOST_MAP) as u64
-                    || profile.supported_flags & owners.options.required_flags()
-                        != owners.options.required_flags()
+                let roles = if owners.device_only {
+                    role
+                } else {
+                    role | AMDF_MEMORY_PROFILE_ROLE_HOST_MAP
+                } as u64;
+                if profile.roles & roles != roles
+                    || profile.supported_flags & required_flags != required_flags
                     || (owners.options.host_numa_node.is_some()
                         && construction.placement_kinds
                             & (1 << AMDF_MEMORY_PLACEMENT_KIND_HOST_NUMA)
@@ -720,7 +806,7 @@ impl Fabric {
                     structure_size: size_of::<amdf_memory_create_info_t>() as u32,
                     memory_profile_ordinal: ordinal,
                     access_count: accesses.len() as u32,
-                    required_flags: owners.options.required_flags(),
+                    required_flags,
                     placement: owners.options.placement(),
                     byte_length: bytes as u64,
                     minimum_alignment: alignment,
@@ -784,6 +870,9 @@ impl Fabric {
                         .as_ref()
                         .map_or_else(|| Arc::new(Mutex::new(0)), |source| source.0.uses.clone()),
                 };
+                if owners.device_only {
+                    return Ok(Buffer(Arc::new(memory)));
+                }
                 let options = amdf_memory_map_info_t {
                     type_: AMDF_STRUCTURE_TYPE_MEMORY_MAP_INFO,
                     structure_size: size_of::<amdf_memory_map_info_t>() as u32,
@@ -826,7 +915,7 @@ impl Fabric {
             }
         }
         Err(Error::Unsupported(
-            "no system memory profile admits all requested consumers".into(),
+            "no memory profile admits the requested placement and consumers".into(),
         ))
     }
 }

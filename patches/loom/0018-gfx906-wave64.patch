@@ -1,0 +1,696 @@
+--- a/loom/build_tools/amdgpu/target_config.bzl
++++ b/loom/build_tools/amdgpu/target_config.bzl
+@@ -38,6 +38,7 @@
+     "gfx1172",
+     "gfx1251",
+     "gfx90a",
++    "gfx906",
+ ]
+ 
+ LOOM_AMDGPU_SUPPORTED_CODE_OBJECT_PROCESSORS = [
+@@ -68,6 +69,7 @@
+     "gfx1172",
+     "gfx1251",
+     "gfx90a",
++    "gfx906",
+     "gfx9-4-generic",
+     "gfx11-generic",
+     "gfx12-generic",
+@@ -100,6 +102,7 @@
+     "gfx9-4-generic",
+     "gfx1250-a0",
+     "gfx90a",
++    "gfx906",
+ ]
+ 
+ # buildifier: disable=unsorted-dict-items
+@@ -129,6 +132,7 @@
+     "gfx9-4-generic": "descriptor_set_gfx9_4_generic_core",
+     "gfx1250-a0": "descriptor_set_rdna4_gfx1250_a0_core",
+     "gfx90a": "descriptor_set_cdna2_core",
++    "gfx906": "descriptor_set_gcn5_core",
+ }
+ 
+ LOOM_AMDGPU_DESCRIPTOR_SET_CAPABILITIES = [
+@@ -141,6 +145,7 @@
+     "descriptor_set_rdna4m_core",
+     "descriptor_set_rdna4_gfx1251_core",
+     "descriptor_set_cdna2_core",
++    "descriptor_set_gcn5_core",
+     "descriptor_set_gfx9_4_generic_core",
+     "descriptor_set_gfx11_generic_core",
+     "descriptor_set_gfx12_generic_core",
+@@ -159,6 +164,7 @@
+     "amdgpu.rdna4m.core": "descriptor_set_rdna4m_core",
+     "amdgpu.rdna4.gfx1251.core": "descriptor_set_rdna4_gfx1251_core",
+     "amdgpu.cdna2.core": "descriptor_set_cdna2_core",
++    "amdgpu.gcn5.core": "descriptor_set_gcn5_core",
+     "amdgpu.gfx9_4.generic.core": "descriptor_set_gfx9_4_generic_core",
+     "amdgpu.gfx11.generic.core": "descriptor_set_gfx11_generic_core",
+     "amdgpu.gfx12.generic.core": "descriptor_set_gfx12_generic_core",
+@@ -177,6 +183,7 @@
+     "descriptor_set_rdna4m_core": ["descriptor_set_rdna4m_core"],
+     "descriptor_set_rdna4_gfx1251_core": ["descriptor_set_rdna4_gfx1251_core"],
+     "descriptor_set_cdna2_core": ["descriptor_set_cdna2_core"],
++    "descriptor_set_gcn5_core": ["descriptor_set_gcn5_core"],
+     "descriptor_set_gfx9_4_generic_core": [
+         "descriptor_set_gfx9_4_generic_core",
+         "descriptor_set_cdna3_core",
+@@ -232,6 +239,7 @@
+     ],
+     "descriptor_set_rdna4_gfx1251_core": ["gfx1251"],
+     "descriptor_set_cdna2_core": ["gfx90a"],
++    "descriptor_set_gcn5_core": ["gfx906"],
+     "descriptor_set_gfx9_4_generic_core": [],
+     "descriptor_set_gfx11_generic_core": [],
+     "descriptor_set_gfx12_generic_core": [],
+@@ -250,6 +258,7 @@
+     "descriptor_set_rdna4m_core": [],
+     "descriptor_set_rdna4_gfx1251_core": [],
+     "descriptor_set_cdna2_core": [],
++    "descriptor_set_gcn5_core": [],
+     "descriptor_set_gfx9_4_generic_core": ["gfx9-4-generic"],
+     "descriptor_set_gfx11_generic_core": ["gfx11-generic"],
+     "descriptor_set_gfx12_generic_core": ["gfx12-generic"],
+@@ -268,6 +277,7 @@
+     "descriptor_set_rdna4m_core": "rdna4m",
+     "descriptor_set_rdna4_gfx1251_core": "rdna4_gfx1251",
+     "descriptor_set_cdna2_core": "cdna2",
++    "descriptor_set_gcn5_core": "gcn5",
+     "descriptor_set_gfx9_4_generic_core": "gfx9_4_generic",
+     "descriptor_set_gfx11_generic_core": "gfx11_generic",
+     "descriptor_set_gfx12_generic_core": "gfx12_generic",
+@@ -283,6 +293,7 @@
+         "descriptor_set_gfx9_4_generic_core",
+     ],
+     "cdna4": ["descriptor_set_cdna4_core"],
++    "gcn5": ["descriptor_set_gcn5_core"],
+     "rdna3": [
+         "descriptor_set_rdna3_core",
+         "descriptor_set_gfx11_generic_core",
+@@ -312,6 +323,7 @@
+     "descriptor_set_rdna4m_core": "loom/target/arch/amdgpu/descriptors/rdna4m_descriptors.h",
+     "descriptor_set_rdna4_gfx1251_core": "loom/target/arch/amdgpu/descriptors/rdna4_gfx1251_descriptors.h",
+     "descriptor_set_cdna2_core": "loom/target/arch/amdgpu/descriptors/cdna2_descriptors.h",
++    "descriptor_set_gcn5_core": "loom/target/arch/amdgpu/descriptors/gcn5_descriptors.h",
+     "descriptor_set_gfx9_4_generic_core": "loom/target/arch/amdgpu/descriptors/gfx9_4_generic_descriptors.h",
+     "descriptor_set_gfx11_generic_core": "loom/target/arch/amdgpu/descriptors/gfx11_generic_descriptors.h",
+     "descriptor_set_gfx12_generic_core": "loom/target/arch/amdgpu/descriptors/gfx12_generic_descriptors.h",
+@@ -330,6 +342,7 @@
+     "descriptor_set_rdna4m_core": "loom_amdgpu_rdna4m_core_descriptor_set",
+     "descriptor_set_rdna4_gfx1251_core": "loom_amdgpu_rdna4_gfx1251_core_descriptor_set",
+     "descriptor_set_cdna2_core": "loom_amdgpu_cdna2_core_descriptor_set",
++    "descriptor_set_gcn5_core": "loom_amdgpu_gcn5_core_descriptor_set",
+     "descriptor_set_gfx9_4_generic_core": "loom_amdgpu_gfx9_4_generic_core_descriptor_set",
+     "descriptor_set_gfx11_generic_core": "loom_amdgpu_gfx11_generic_core_descriptor_set",
+     "descriptor_set_gfx12_generic_core": "loom_amdgpu_gfx12_generic_core_descriptor_set",
+@@ -348,6 +361,7 @@
+     "descriptor_set_rdna4m_core": "LOOM_AMDGPU_DESCRIPTOR_SET_RDNA4M_CORE",
+     "descriptor_set_rdna4_gfx1251_core": "LOOM_AMDGPU_DESCRIPTOR_SET_RDNA4_GFX1251_CORE",
+     "descriptor_set_cdna2_core": "LOOM_AMDGPU_DESCRIPTOR_SET_CDNA2_CORE",
++    "descriptor_set_gcn5_core": "LOOM_AMDGPU_DESCRIPTOR_SET_GCN5_CORE",
+     "descriptor_set_gfx9_4_generic_core": "LOOM_AMDGPU_DESCRIPTOR_SET_GFX9_4_GENERIC_CORE",
+     "descriptor_set_gfx11_generic_core": "LOOM_AMDGPU_DESCRIPTOR_SET_GFX11_GENERIC_CORE",
+     "descriptor_set_gfx12_generic_core": "LOOM_AMDGPU_DESCRIPTOR_SET_GFX12_GENERIC_CORE",
+--- a/loom/build_tools/amdgpu/target_config.cmake
++++ b/loom/build_tools/amdgpu/target_config.cmake
+@@ -35,6 +35,7 @@
+   "gfx1172"
+   "gfx1251"
+   "gfx90a"
++  "gfx906"
+ )
+ 
+ set(_LOOM_AMDGPU_SUPPORTED_CODE_OBJECT_PROCESSORS
+@@ -65,6 +66,7 @@
+   "gfx1172"
+   "gfx1251"
+   "gfx90a"
++  "gfx906"
+   "gfx9-4-generic"
+   "gfx11-generic"
+   "gfx12-generic"
+@@ -97,6 +99,7 @@
+   "gfx9-4-generic"
+   "gfx1250-a0"
+   "gfx90a"
++  "gfx906"
+ )
+ 
+ set(_LOOM_AMDGPU_DESCRIPTOR_SET_CAPABILITIES
+@@ -109,6 +112,7 @@
+   "descriptor_set_rdna4m_core"
+   "descriptor_set_rdna4_gfx1251_core"
+   "descriptor_set_cdna2_core"
++  "descriptor_set_gcn5_core"
+   "descriptor_set_gfx9_4_generic_core"
+   "descriptor_set_gfx11_generic_core"
+   "descriptor_set_gfx12_generic_core"
+@@ -226,6 +230,17 @@
+ set(_LOOM_AMDGPU_LOW_DESCRIPTOR_PROVIDER_SYMBOL_descriptor_set_cdna2_core "loom_amdgpu_cdna2_core_descriptor_set")
+ set(_LOOM_AMDGPU_DESCRIPTOR_SET_DEFINE_descriptor_set_cdna2_core "LOOM_AMDGPU_DESCRIPTOR_SET_CDNA2_CORE")
+ 
++set(_LOOM_AMDGPU_DESCRIPTOR_SET_KEY_descriptor_set_gcn5_core "amdgpu.gcn5.core")
++set(_LOOM_AMDGPU_DESCRIPTOR_SET_EXACT_PROCESSORS_descriptor_set_gcn5_core
++  "gfx906"
++)
++set(_LOOM_AMDGPU_DESCRIPTOR_SET_GENERIC_PROCESSORS_descriptor_set_gcn5_core
++)
++set(_LOOM_AMDGPU_DESCRIPTOR_SET_GENERATOR_TARGET_descriptor_set_gcn5_core "gcn5")
++set(_LOOM_AMDGPU_LOW_DESCRIPTOR_HEADER_descriptor_set_gcn5_core "loom/target/arch/amdgpu/descriptors/gcn5_descriptors.h")
++set(_LOOM_AMDGPU_LOW_DESCRIPTOR_PROVIDER_SYMBOL_descriptor_set_gcn5_core "loom_amdgpu_gcn5_core_descriptor_set")
++set(_LOOM_AMDGPU_DESCRIPTOR_SET_DEFINE_descriptor_set_gcn5_core "LOOM_AMDGPU_DESCRIPTOR_SET_GCN5_CORE")
++
+ set(_LOOM_AMDGPU_DESCRIPTOR_SET_KEY_descriptor_set_gfx9_4_generic_core "amdgpu.gfx9_4.generic.core")
+ set(_LOOM_AMDGPU_DESCRIPTOR_SET_EXACT_PROCESSORS_descriptor_set_gfx9_4_generic_core
+ )
+--- a/loom/py/loom/gen/target/arch/amdgpu/amdgpu_target_info.py
++++ b/loom/py/loom/gen/target/arch/amdgpu/amdgpu_target_info.py
+@@ -1011,7 +1011,7 @@
+                 raise ValueError(f"AMDGPU ISA XML key is required for {info.key}")
+             if not isa_info.isa_architecture_name:
+                 raise ValueError(f"AMDGPU ISA XML architecture name is required for {info.key}")
+-            if isa_info.isa_architecture_id <= 0:
++            if isa_info.isa_architecture_id < 0:
+                 raise ValueError(f"AMDGPU ISA XML architecture id is required for {info.key}")
+         if info.flags < 0 or info.flags > 0xFFFFFFFFFFFFFFFF:
+             raise ValueError(f"AMDGPU descriptor-set info flags for {info.key} must fit u64")
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/api.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/api.py
+@@ -1480,6 +1480,11 @@
+ 
+ 
+ _AMDGPU_CORE_DESCRIPTOR_SET_BUILDERS = {
++    "gcn5": _AmdgpuCoreDescriptorSetBuilder(
++        base=_AMDGPU_GCN5_CORE_DESCRIPTOR_SET_BASE,
++        overlay_rows=_gfx906_core_overlays,
++        overlay_descriptors=_gfx906_core_overlay_descriptors,
++    ),
+     "cdna2": _AmdgpuCoreDescriptorSetBuilder(
+         base=_AMDGPU_CDNA2_CORE_DESCRIPTOR_SET_BASE,
+         overlay_rows=_gfx90a_core_overlays,
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/cdna.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/cdna.py
+@@ -248,6 +248,17 @@
+     ),
+ )
+ 
++_AMDGPU_GCN5_CORE_DESCRIPTOR_SET_BASE = _amdgpu_core_descriptor_set(
++    key="amdgpu.gcn5.core",
++    reg_classes=tuple(reg for reg in _AMDGPU_CDNA3_CORE_DESCRIPTOR_SET_BASE.reg_classes
++                      if reg.name != _REG_AGPR),
++    register_parts=_AMDGPU_REGISTER_PARTS,
++    resources=tuple(resource for resource in _AMDGPU_CDNA3_CORE_DESCRIPTOR_SET_BASE.resources
++                    if resource.kind != ResourceKind.MATRIX),
++    schedule_classes=tuple(schedule for schedule in _AMDGPU_CDNA3_CORE_DESCRIPTOR_SET_BASE.schedule_classes
++                          if not schedule.name.startswith("amdgpu.mfma")),
++)
++
+ _AMDGPU_GFX9_4_GENERIC_CORE_DESCRIPTOR_SET_BASE = (
+     _amdgpu_core_descriptor_set_intersection(
+         key="amdgpu.gfx9_4.generic.core",
+@@ -263,6 +274,7 @@
+ 
+ 
+ __all__ = (
++    "_AMDGPU_GCN5_CORE_DESCRIPTOR_SET_BASE",
+     "AMDGPU_MFMA_TIMINGS_BY_DESCRIPTOR_SET",
+     "_AMDGPU_CDNA2_CORE_DESCRIPTOR_SET_BASE",
+     "_AMDGPU_CDNA3_CORE_DESCRIPTOR_SET_BASE",
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/sets.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/sets.py
+@@ -357,7 +357,7 @@
+     cache_fields = (
+         _GFX950_VECTOR_CACHE_FIELDS if isa_generation >= 3 else (("GLC", 1), ("SLC", 1))
+     )
+-    packed8_source_semantics = {2: None, 3: "fnuz", 4: "ocp"}[isa_generation]
++    packed8_source_semantics = {1: None, 2: None, 3: "fnuz", 4: "ocp"}[isa_generation]
+     global_load_lds_variants = (
+         _GLOBAL_LOAD_LDS_GFX950_VARIANTS
+         if isa_generation >= 4
+@@ -369,7 +369,7 @@
+         else _BUFFER_LOAD_LDS_CDNA3_VARIANTS
+     )
+     overlays = (
+-        *_cdna_register_move_overlays(),
++        *(_cdna_register_move_overlays() if isa_generation >= 2 else ()),
+         _s_add_u32_overlay(),
+         _s_add_co_u32_overlay(),
+         _s_add_co_u32_rhs_inline_overlay(),
+@@ -458,9 +458,9 @@
+             if isa_generation >= 3
+             else ()
+         ),
+-        _v_fmac_f32_overlay(),
+-        *_cdna_scalar_fma_overlays(),
+-        _v_pk_fmac_f16_overlay(),
++        *((_v_fmac_f32_overlay(),) if isa_generation >= 2 else ()),
++        *(_cdna_scalar_fma_overlays() if isa_generation >= 2 else ()),
++        *((_v_pk_fmac_f16_overlay(),) if isa_generation >= 2 else ()),
+         *_v_pk_operand_overlays(
+             (
+                 _v_pk_fma_f16_overlay(),
+@@ -471,9 +471,8 @@
+                 *_v_pk_i16_binary_overlays(),
+                 _v_pk_mad_i16_overlay(),
+                 _v_pk_mad_u16_overlay(),
+-                _v_pk_add_f32_overlay(),
+-                _v_pk_mul_f32_overlay(),
+-                _v_pk_fma_f32_overlay(),
++                *((_v_pk_add_f32_overlay(), _v_pk_mul_f32_overlay(),
++                   _v_pk_fma_f32_overlay()) if isa_generation >= 2 else ()),
+             )
+         ),
+         *_v_mad_mix_f32_overlays(op_sel_field="OP_SEL", op_sel_hi_field="OP_SEL_HI"),
+@@ -986,7 +985,41 @@
+         ),
+     )
+ 
+-    return _with_accumulator_memory_banks(overlays)
++    return _with_accumulator_memory_banks(overlays) if isa_generation >= 2 else overlays
++
++
++@cache
++def _gfx906_core_overlays() -> tuple[AmdgpuDescriptorOverlay, ...]:
++    # These CDNA capabilities have no GCN5 instruction contract. In particular,
++    # no global/flat floating atomic addition or direct global-to-LDS path is
++    # advertised by the GCN5 target.
++    unsupported = frozenset((
++        "BUFFER_INV", "BUFFER_WBL2", "DS_ADD_F64", "DS_ADD_RTN_F64",
++        "FLAT_ATOMIC_ADD_F64", "GLOBAL_ATOMIC_ADD_F64",
++        "FLAT_ATOMIC_ADD_F32", "GLOBAL_ATOMIC_ADD_F32",
++        "GLOBAL_LOAD_LDS_DWORD", "GLOBAL_LOAD_LDS_SBYTE",
++        "GLOBAL_LOAD_LDS_SSHORT", "GLOBAL_LOAD_LDS_UBYTE", "GLOBAL_LOAD_LDS_USHORT",
++    ))
++    rows = []
++    for row in _cdna_core_overlays(isa_generation=1, matrix_overlays=()):
++        if row.instruction_name in unsupported:
++            continue
++        if row.instruction_name.startswith("V_MAD_MIX"):
++            # Vega 20 implements the fused MIX operation. The donor XML keeps
++            # the historical MAD instruction name; expose FMA source semantics
++            # and native assembly names, as independently decoded by LLVM.
++            row = replace(row,
++                descriptor_key=row.descriptor_key.replace(".v_mad_mix", ".v_fma_mix"),
++                mnemonic=row.mnemonic.replace("v_mad_mix", "v_fma_mix"),
++                semantic_tag=row.semantic_tag.replace("float.mad.mix", "float.fma.mix"))
++        rows.append(row)
++    return tuple(rows)
++
++
++def _gfx906_core_overlay_descriptors(spec: AmdgpuIsaFactSource) -> tuple[Descriptor, ...]:
++    return _with_execution_mask_state_reads(
++        materialize_amdgpu_descriptor_overlays(spec, _gfx906_core_overlays())
++    )
+ 
+ 
+ @cache
+@@ -2893,6 +2926,7 @@
+ 
+ def _amdgpu_core_descriptor_set_bases() -> tuple[DescriptorSet, ...]:
+     return (
++        _AMDGPU_GCN5_CORE_DESCRIPTOR_SET_BASE,
+         _AMDGPU_CDNA2_CORE_DESCRIPTOR_SET_BASE,
+         _AMDGPU_CDNA3_CORE_DESCRIPTOR_SET_BASE,
+         _AMDGPU_CDNA4_CORE_DESCRIPTOR_SET_BASE,
+@@ -2917,6 +2951,7 @@
+     for descriptor_set in _amdgpu_core_descriptor_set_bases():
+         keys.update(descriptor.key for descriptor in descriptor_set.descriptors)
+     for overlays in (
++        _gfx906_core_overlays(),
+         _gfx90a_core_overlays(),
+         _gfx940_core_overlays(),
+         _gfx950_core_overlays(),
+@@ -2931,6 +2966,9 @@
+ 
+ 
+ __all__ = (
++    "_AMDGPU_GCN5_CORE_DESCRIPTOR_SET_BASE",
++    "_gfx906_core_overlays",
++    "_gfx906_core_overlay_descriptors",
+     "_AMDGPU_CDNA2_CORE_DESCRIPTOR_SET_BASE",
+     "_gfx90a_core_overlays",
+     "_gfx90a_core_overlay_descriptors",
+--- a/loom/py/loom/target/arch/amdgpu/low_aliases.py
++++ b/loom/py/loom/target/arch/amdgpu/low_aliases.py
+@@ -93,8 +93,8 @@
+         descriptor_key="amdgpu.v_fmac_dx9_zero_f32",
+         asm_mnemonic="v_fmac_dx9_zero_f32",
+         alias_semantics="dx9_zero",
+-        replacement_descriptor_key="amdgpu.v_fmac_f32",
+-        replacement_mnemonic="v_fmac_f32",
++        replacement_descriptor_key="amdgpu.v_fma_f32",
++        replacement_mnemonic="v_fma_f32",
+     ),
+     AmdgpuBlockedLowAlias(
+         descriptor_key="amdgpu.v_mul_dx9_zero_f32",
+--- a/loom/py/loom/target/arch/amdgpu/target_info.py
++++ b/loom/py/loom/target/arch/amdgpu/target_info.py
+@@ -523,6 +523,15 @@
+     sopp_opcodes=AMDGPU_SOPP_OPCODE_INFO_CDNA,
+ )
+ 
++# CDNA1 XML is a donor for the common GCN5 instruction subset. GCN5 encodings
++# and instruction semantics are checked independently against LLVM gfx906.
++AMDGPU_DESCRIPTOR_SET_ISA_GCN5 = AmdgpuDescriptorSetIsaInfo(
++    isa_xml_key="cdna1",
++    isa_architecture_name="AMD CDNA 1",
++    isa_architecture_id=0,
++    sopp_opcodes=AMDGPU_SOPP_OPCODE_INFO_CDNA,
++)
++
+ AMDGPU_DESCRIPTOR_SET_ISA_CDNA3 = AmdgpuDescriptorSetIsaInfo(
+     isa_xml_key="cdna3",
+     isa_architecture_name="AMD CDNA 3",
+@@ -829,6 +838,12 @@
+     ),
+     vgpr_granules=AmdgpuKernelDescriptorVgprGranules(wave32=8, wave64=8),
+ )
++AMDGPU_KERNEL_DESCRIPTOR_INFO_GCN5 = AmdgpuProcessorKernelDescriptorInfo(
++    profile=AMDGPU_KERNEL_DESCRIPTOR_PROFILE_GFX9,
++    flags=(AMDGPU_KERNEL_DESCRIPTOR_ABI_FLAG_USER_FLAT_SCRATCH_INIT
++           | AMDGPU_KERNEL_DESCRIPTOR_ABI_FLAG_DX10_CLAMP_AND_IEEE_MODE),
++    vgpr_granules=AmdgpuKernelDescriptorVgprGranules(wave32=4, wave64=4),
++)
+ AMDGPU_KERNEL_DESCRIPTOR_INFO_CDNA_GFX9 = AmdgpuProcessorKernelDescriptorInfo(
+     profile=AMDGPU_KERNEL_DESCRIPTOR_PROFILE_GFX9,
+     flags=AMDGPU_KERNEL_DESCRIPTOR_ABI_FLAGS_CDNA_GFX9,
+@@ -920,6 +935,14 @@
+                 ),
+             ),
+         ),
++    ),
++)
++AMDGPU_OCCUPANCY_GCN5 = AmdgpuProcessorOccupancyInfo(
++    wave64=AmdgpuOccupancyModelInfo(
++        max_waves_per_simd=10,
++        domain=AMDGPU_OCCUPANCY_DOMAIN_CDNA3,
++        register_classes=(AMDGPU_OCCUPANCY_REGISTER_CLASS_SGPR_CDNA,
++                          AmdgpuOccupancyRegisterClassInfo("amdgpu.vgpr", 256, 4)),
+     ),
+ )
+ AMDGPU_OCCUPANCY_CDNA4 = AmdgpuProcessorOccupancyInfo(
+@@ -1377,6 +1400,18 @@
+ # for signaling NaNs, so that guarantee is absent.
+ AMDGPU_DESCRIPTOR_SET_INFOS: tuple[AmdgpuDescriptorSetInfo, ...] = (
+     AmdgpuDescriptorSetInfo(
++        generator_target="gcn5",
++        key="amdgpu.gcn5.core",
++        isa_infos=(AMDGPU_DESCRIPTOR_SET_ISA_GCN5,),
++        flags=(AMDGPU_DESCRIPTOR_SET_INFO_FLAG_DESCRIPTOR_PACKET_ENCODING
++               | AMDGPU_DESCRIPTOR_SET_INFO_FLAG_STORE_DATA_WAIT_STATES),
++        buffer_resource=AMDGPU_BUFFER_RESOURCE_INFO_BASE48_LEGACY,
++        vector_memory=AmdgpuDescriptorSetVectorMemoryInfo(
++            cache_policy_encoding=AMDGPU_VECTOR_MEMORY_CACHE_POLICY_ENCODING_CDNA2_GLC_SLC,
++            ordering_model=AMDGPU_MEMORY_ORDERING_MODEL_CDNA,
++        ),
++    ),
++    AmdgpuDescriptorSetInfo(
+         generator_target="cdna2",
+         key="amdgpu.cdna2.core",
+         isa_infos=(AMDGPU_DESCRIPTOR_SET_ISA_CDNA2,),
+@@ -1621,8 +1656,13 @@
+     gfx9_10_processor_info(
+         "gfx904", 0x02E, elf_feature_flags=AMDGPU_ELF_FEATURE_XNACK_ANY_V4
+     ),
+-    gfx9_10_processor_info(
+-        "gfx906", 0x02F, elf_feature_flags=AMDGPU_ELF_FEATURE_XNACK_SRAMECC_ANY_V4
++    processor_info(
++        "gfx906", 0x02F, elf_feature_flags=AMDGPU_ELF_FEATURE_XNACK_SRAMECC_ANY_V4,
++        flags=AMDGPU_PROCESSOR_INFO_FLAG_HSACO_EMISSION,
++        descriptor_set_key="amdgpu.gcn5.core",
++        kernel_descriptor=AMDGPU_KERNEL_DESCRIPTOR_INFO_GCN5,
++        occupancy=AMDGPU_OCCUPANCY_GCN5,
++        scheduling_bits=AMDGPU_PROCESSOR_SCHEDULING_CDNA_FIXED_WAIT_STATES,
+     ),
+     gfx9_10_processor_info(
+         "gfx908",
+@@ -1821,6 +1861,10 @@
+ 
+ 
+ AMDGPU_TARGET_INFOS: tuple[AmdgpuTargetInfo, ...] = (
++    AmdgpuTargetInfo(
++        target="gfx906", processor="gfx906", enum_value=26,
++        doc="GCN5 gfx906 wave64 target row.", default_for_descriptor_set=True,
++    ),
+     AmdgpuTargetInfo(
+         target="gfx942",
+         processor="gfx942",
+--- a/loom/py/loom/target/arch/amdgpu/target_info_test.py
++++ b/loom/py/loom/target/arch/amdgpu/target_info_test.py
+@@ -26,6 +26,7 @@
+ )
+ from loom.target.arch.amdgpu.target_info import (
+     AMDGPU_DESCRIPTOR_SET_INFO_FLAG_ATOMIC_F32_ADD_DENORMALS,
++    AMDGPU_PROCESSOR_SCHEDULING_CDNA_FIXED_WAIT_STATES,
+     AMDGPU_DESCRIPTOR_SET_INFO_FLAG_NATIVE_OCP_FP8_NONCANONICAL_NAN,
+     AMDGPU_DESCRIPTOR_SET_INFO_FLAG_NATIVE_SCALAR_FLOAT_ARITHMETIC,
+     AMDGPU_DESCRIPTOR_SET_INFO_FLAG_NATIVE_SCALAR_FLOAT_COMPARE,
+@@ -84,6 +85,22 @@
+     architecture_id: int
+ 
+ 
++def test_gfx906_uses_wave64_gcn5_without_matrix_or_accumulator_registers():
++    target = amdgpu_target_info_by_name("gfx906")
++    processor = next(info for info in AMDGPU_PROCESSOR_INFOS if info.processor == target.processor)
++    assert processor.descriptor_set.key == "amdgpu.gcn5.core"
++    assert processor.features.scheduling == AMDGPU_PROCESSOR_SCHEDULING_CDNA_FIXED_WAIT_STATES
++    assert processor.wavefront.default_size == 64
++    assert processor.kernel_descriptor.profile == "gfx9"
++    assert processor.kernel_descriptor.vgpr_granules.wave64 == 4
++    assert processor.features.matrix == "none"
++    assert processor.occupancy.wave64.max_waves_per_simd == 10
++    assert {register.register_class for register in processor.occupancy.wave64.register_classes} == {
++        "amdgpu.sgpr", "amdgpu.vgpr"}
++    donor = amdgpu_descriptor_set_info_by_generator_target("gcn5")
++    validate_amdgpu_descriptor_set_isa_xml(donor, _IsaArchitecture("cdna1", "AMD CDNA 1", 0))
++
++
+ @contextmanager
+ def _raises_value_error(match: str) -> Iterator[None]:
+     try:
+@@ -248,7 +265,7 @@
+         ) == info.processor.startswith("gfx11"), info.processor
+ 
+ 
+-def test_vmem_replay_clauses_cover_cdna_and_exclude_always_on_gfx125x() -> None:
++def test_vmem_replay_clauses_cover_gcn_cdna_and_exclude_always_on_gfx125x() -> None:
+     # LLVM checks SMEM before the NoDataDepHazard early return, and VMEM
+     # afterward. Always-on XNACK on gfx125x therefore does not imply VMEM
+     # software clauses. Stepping overlays inherit their processor's policy.
+@@ -256,7 +273,7 @@
+         info.processor
+         for info in AMDGPU_PROCESSOR_INFOS
+         if info.features.scheduling & AMDGPU_PROCESSOR_SCHEDULING_VMEM_REPLAY_CLAUSES
+-    } == {"gfx90a", "gfx940", "gfx941", "gfx942", "gfx950", "gfx9-4-generic"}
++    } == {"gfx906", "gfx90a", "gfx940", "gfx941", "gfx942", "gfx950", "gfx9-4-generic"}
+ 
+ 
+ def test_rdna4m_processors_publish_delay_alu_scheduling() -> None:
+--- a/loom/src/loom/target/arch/amdgpu/descriptors/BUILD.bazel
++++ b/loom/src/loom/target/arch/amdgpu/descriptors/BUILD.bazel
+@@ -63,6 +63,7 @@
+ )
+ 
+ _AMDGPU_ISA_XML_ARGS = [
++    "--isa-xml=cdna1:$(location @amdgpu_isa_xml//:amdgpu_isa_cdna1.xml)",
+     "--isa-xml=cdna2:$(location @amdgpu_isa_xml//:amdgpu_isa_cdna2.xml)",
+     "--isa-xml=cdna3:$(location @amdgpu_isa_xml//:amdgpu_isa_cdna3.xml)",
+     "--isa-xml=cdna4:$(location @amdgpu_isa_xml//:amdgpu_isa_cdna4.xml)",
+@@ -72,6 +73,7 @@
+ ]
+ 
+ _AMDGPU_ISA_XML_INPUTS = [
++    "@amdgpu_isa_xml//:amdgpu_isa_cdna1.xml",
+     "@amdgpu_isa_xml//:amdgpu_isa_cdna2.xml",
+     "@amdgpu_isa_xml//:amdgpu_isa_cdna3.xml",
+     "@amdgpu_isa_xml//:amdgpu_isa_cdna4.xml",
+@@ -120,6 +122,34 @@
+ )
+ 
+ loom_generated_file_family(
++    name = "gcn5_gen",
++    args = [
++        "--shared-strings=$(rootpath //loom/src/loom/target/arch/amdgpu/contracts:instruction_strings.json)",
++        "--target=gcn5",
++        "--isa-xml=cdna1:$(rootpath @amdgpu_isa_xml//:amdgpu_isa_cdna1.xml)",
++    ],
++    comment = "Generating GCN5 runtime target table family",
++    generator = _AMDGPU_TARGET_TABLE_GENERATOR,
++    inputs = [
++        "//loom/src/loom/target/arch/amdgpu/contracts:instruction_strings.json",
++        "@amdgpu_isa_xml//:amdgpu_isa_cdna1.xml",
++    ],
++    output_flags = ["--descriptor-source", "--encoding-source"],
++    outputs = ["gcn5_descriptors.c", "gcn5_encoding_tables.c"],
++    visibility = _AMDGPU_TARGET_TABLE_VISIBILITY,
++)
++
++loom_cc_library(
++    name = "gcn5",
++    srcs = [":gcn5_descriptors.c"],
++    target_compatible_with = loom_amdgpu_descriptor_table_compatible_with("gcn5"),
++    deps = [
++        "//loom/src/loom/codegen/low:descriptors",
++        "//loom/src/loom/target/arch/amdgpu/contracts:instruction_strings",
++    ],
++)
++
++loom_generated_file_family(
+     name = "cdna_gen",
+     args = [
+         "--shared-strings=$(rootpath //loom/src/loom/target/arch/amdgpu/contracts:instruction_strings.json)",
+--- a/loom/src/loom/target/arch/amdgpu/descriptors/CMakeLists.txt
++++ b/loom/src/loom/target/arch/amdgpu/descriptors/CMakeLists.txt
+@@ -54,6 +54,9 @@
+ endif()
+ if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_CDNA2_CORE)
+   list(APPEND _descriptor_tables_gen_platform_args "--descriptor-set=amdgpu.cdna2.core")
++endif()
++if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GCN5_CORE)
++  list(APPEND _descriptor_tables_gen_platform_args "--descriptor-set=amdgpu.gcn5.core")
+ endif()
+ if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GFX9_4_GENERIC_CORE)
+   list(APPEND _descriptor_tables_gen_platform_args "--descriptor-set=amdgpu.gfx9_4.generic.core")
+@@ -90,6 +93,7 @@
+     "--target-ref-source"
+     "--target-ref-header"
+   ARGS
++    "--isa-xml=cdna1:${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_cdna1.xml"
+     "--isa-xml=cdna2:${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_cdna2.xml"
+     "--isa-xml=cdna3:${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_cdna3.xml"
+     "--isa-xml=cdna4:${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_cdna4.xml"
+@@ -99,8 +103,9 @@
+     "--target-ref-public-header=loom/target/arch/amdgpu/refs/target_refs.h"
+     ${_descriptor_tables_gen_platform_args}
+   INPUTS
++    "${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_cdna1.xml"
++    "loom_amdgpu_isa_xml"
+     "${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_cdna2.xml"
+-    "loom_amdgpu_isa_xml"
+     "${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_cdna3.xml"
+     "${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_cdna4.xml"
+     "${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_rdna3.xml"
+@@ -108,6 +113,44 @@
+     "${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_rdna4.xml"
+   COMMENT
+     "Generating AMDGPU global descriptor-derived table family"
++)
++endif()
++
++if(LOOM_TARGET_ARCH_AMDGPU)
++loom_generated_file_family(
++  NAME
++    gcn5_gen
++  GENERATOR
++    loom::py::loom::gen::target::arch::amdgpu::target_tables
++  OUTPUTS
++    "gcn5_descriptors.c"
++    "gcn5_encoding_tables.c"
++  OUTPUT_FLAGS
++    "--descriptor-source"
++    "--encoding-source"
++  ARGS
++    "--shared-strings=${IREE_BINARY_DIR}/loom/src/loom/target/arch/amdgpu/contracts/instruction_strings.json"
++    "--target=gcn5"
++    "--isa-xml=cdna1:${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_cdna1.xml"
++  INPUTS
++    "${IREE_BINARY_DIR}/loom/src/loom/target/arch/amdgpu/contracts/instruction_strings.json"
++    "${_LOOM_AMDGPU_ISA_XML_SOURCE_DIR}/amdgpu_isa_cdna1.xml"
++    "loom_amdgpu_isa_xml"
++  COMMENT
++    "Generating GCN5 runtime target table family"
++)
++endif()
++
++if(LOOM_TARGET_ARCH_AMDGPU AND LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GCN5_CORE)
++loom_cc_library(
++  NAME
++    gcn5
++  SRCS
++    "gcn5_descriptors.c"
++  DEPS
++    loom::codegen::low::descriptors
++    loom::target::arch::amdgpu::contracts::instruction_strings
++  PUBLIC
+ )
+ endif()
+ 
+@@ -416,6 +459,9 @@
+ if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_CDNA2_CORE)
+   list(APPEND _low_registry_platform_defines "LOOM_AMDGPU_DESCRIPTOR_SET_CDNA2_CORE")
+ endif()
++if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GCN5_CORE)
++  list(APPEND _low_registry_platform_defines "LOOM_AMDGPU_DESCRIPTOR_SET_GCN5_CORE")
++endif()
+ if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GFX9_4_GENERIC_CORE)
+   list(APPEND _low_registry_platform_defines "LOOM_AMDGPU_DESCRIPTOR_SET_GFX9_4_GENERIC_CORE")
+ endif()
+@@ -458,6 +504,9 @@
+ endif()
+ if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_CDNA2_CORE)
+   list(APPEND _low_registry_platform_deps ::cdna2)
++endif()
++if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GCN5_CORE)
++  list(APPEND _low_registry_platform_deps ::gcn5)
+ endif()
+ if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GFX9_4_GENERIC_CORE)
+   list(APPEND _low_registry_platform_deps ::gfx9_4_generic)
+--- a/loom/src/loom/target/arch/amdgpu/encoding/BUILD.bazel
++++ b/loom/src/loom/target/arch/amdgpu/encoding/BUILD.bazel
+@@ -57,6 +57,13 @@
+     textual_hdrs = ["//loom/src/loom/target/arch/amdgpu:encoding_field_ids.inl"],
+     visibility = _AMDGPU_ENCODING_VISIBILITY,
+     deps = ["//runtime/src/iree/base"],
++)
++
++loom_cc_library(
++    name = "gcn5_encoding_tables",
++    srcs = ["//loom/src/loom/target/arch/amdgpu/descriptors:gcn5_encoding_tables.c"],
++    target_compatible_with = loom_amdgpu_descriptor_table_compatible_with("gcn5"),
++    deps = [":encoding_defs", "//runtime/src/iree/base"],
+ )
+ 
+ loom_cc_library(
+--- a/loom/src/loom/target/arch/amdgpu/encoding/CMakeLists.txt
++++ b/loom/src/loom/target/arch/amdgpu/encoding/CMakeLists.txt
+@@ -23,6 +23,19 @@
+ )
+ endif()
+ 
++if(LOOM_TARGET_ARCH_AMDGPU AND LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GCN5_CORE)
++loom_cc_library(
++  NAME
++    gcn5_encoding_tables
++  SRCS
++    "${IREE_BINARY_DIR}/loom/src/loom/target/arch/amdgpu/descriptors/gcn5_encoding_tables.c"
++  DEPS
++    ::encoding_defs
++    iree::base
++  PUBLIC
++)
++endif()
++
+ if(LOOM_TARGET_ARCH_AMDGPU AND LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_CDNA2_CORE)
+ loom_cc_library(
+   NAME
+@@ -228,6 +241,9 @@
+ if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_CDNA2_CORE)
+   list(APPEND _encoding_platform_defines "LOOM_AMDGPU_DESCRIPTOR_SET_CDNA2_CORE")
+ endif()
++if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GCN5_CORE)
++  list(APPEND _encoding_platform_defines "LOOM_AMDGPU_DESCRIPTOR_SET_GCN5_CORE")
++endif()
+ if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GFX9_4_GENERIC_CORE)
+   list(APPEND _encoding_platform_defines "LOOM_AMDGPU_DESCRIPTOR_SET_GFX9_4_GENERIC_CORE")
+ endif()
+@@ -270,6 +286,9 @@
+ endif()
+ if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_CDNA2_CORE)
+   list(APPEND _encoding_platform_deps ::cdna2_encoding_tables)
++endif()
++if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GCN5_CORE)
++  list(APPEND _encoding_platform_deps ::gcn5_encoding_tables)
+ endif()
+ if(LOOM_TARGET_AMDGPU_DESCRIPTOR_SET_GFX9_4_GENERIC_CORE)
+   list(APPEND _encoding_platform_deps ::gfx9_4_generic_encoding_tables)

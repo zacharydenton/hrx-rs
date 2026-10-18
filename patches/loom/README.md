@@ -65,3 +65,22 @@ Use `scripts/fetch-native-inputs.py` and `scripts/rebuild-hrx.sh`, documented in
 applies the active compiler set. `scripts/build-amdf.sh SOURCE BUILD` then applies
 the native build, queue and cache-policy patches and builds all three libraries.
 The compiler patches must be applied in filename order.
+
+## Experimental Radeon VII bringup
+
+`0018-gfx906-wave64.patch` adds an executable GCN5 descriptor family for gfx906,
+with wave64, ordinary vector FP32 arithmetic, software BF16 conversion, and no
+MFMA/AGPR capability. It uses the compatible subset of the vendor CDNA1 XML
+with GCN5 exclusions and corrected fused mixed-precision instruction names.
+The accompanying `native/amdf/gfx906.patch` enables the qualified native queue
+path. Its legacy cache-control capability uses bit 3, avoiding upstream's newer
+PRIV/TRAP_PRESENT bits 1 and 2. This does not upgrade HRX to that newer ABI.
+
+Build the pinned source with `HRX_GPU_TARGETS='gfx906;gfx1151'`; retain gfx1151
+in the target set when qualifying regressions on the original hardware.
+Qualification on a Radeon VII has passed scratch-free native wave64 launches,
+changed-input visibility checks, and authored Loom BF16 GEMMs with LDS staging
+and ragged tails. The MOSS repository's `examples/qualify_gfx906.rs` carries the
+kernel integration check. Scratch, comprehensive ISA coverage, device-local
+transfer paths, and model performance remain unqualified. Do not interpret
+these initial correctness checks as full GPU or inference support.

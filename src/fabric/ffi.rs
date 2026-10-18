@@ -4349,6 +4349,8 @@ impl Default for amdf_gpu_device_info_t {
 }
 #[doc = " Eight-dword ACQUIRE_MEM with GCR_CNTL in dword 7. Global cache control\n uses zero bases and maximum sizes; EVENT_WRITE CS_PARTIAL_FLUSH supplies\n preceding compute completion. This does not select a cache policy for\n the caller: cache_operations and cache_transition_kinds remain required."]
 pub const AMDF_GPU_PM4_FORMAT_FEATURE_ACQUIRE_MEM_GCR: amdf_gpu_pm4_format_feature_bits_e = 1;
+#[doc = " Eight-dword ACQUIRE_MEM with GCR_CNTL in dword 7. Global cache control\n uses zero bases and maximum sizes; EVENT_WRITE CS_PARTIAL_FLUSH supplies\n preceding compute completion. This does not select a cache policy for\n the caller: cache_operations and cache_transition_kinds remain required."]
+pub const AMDF_GPU_PM4_FORMAT_FEATURE_ACQUIRE_MEM_GFX9: amdf_gpu_pm4_format_feature_bits_e = 8;
 #[doc = " Native PM4 encoding features reported in `format_features`."]
 pub type amdf_gpu_pm4_format_feature_bits_e = ::std::os::raw::c_uint;
 #[doc = " Five-dword USER_GCR, opcode 17 and suboperation 1. Whole-cache data\n acquire uses control 0xc3c0 and release uses 0x8040 in dword 2 bits\n 31:16, with every other operand zero. Dependency waits precede acquire;\n release follows the data commands and precedes completion. These are\n queue GLOBAL ACQUIRE_FROM_SYSTEM/RELEASE_TO_SYSTEM operations. This\n contract admits neither address ranges nor explicit VMID selection."]

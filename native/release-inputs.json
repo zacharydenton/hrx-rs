@@ -10,7 +10,8 @@
       "0014-materialize-bounded-index-extrema.patch": "2d5743812e2092b857333cfcc1dd8a43c163e67a30217719cde7448f0361574f",
       "0015-retain-partial-incoming-vmem-leases.patch": "03730e33b25542f8e261ce71b2bc1089ad0852bdb3b2028808a2af2ce2318141",
       "0016-honor-polled-feedback-and-active-masks.patch": "c20bcbb6d9f11ab123ed4a797dd6841d3f13a9a997a64ac139e11d549a6af4ae",
-      "0017-bound-address-sanitizer-shadow-loads.patch": "e66298363fc997c05b45ac9c01a2c43a2e8f9ad307cd5236e3bcda465a12bfce"
+      "0017-bound-address-sanitizer-shadow-loads.patch": "e66298363fc997c05b45ac9c01a2c43a2e8f9ad307cd5236e3bcda465a12bfce",
+      "0018-gfx906-wave64.patch": "c032e1770e5bcc9cc83e2d79c977fc2ab395e4f34e844944d9b0e9bb41c89bc9"
     }
   },
   "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",
@@ -109,6 +110,7 @@
   "native_patches": {
     "native/amdf/build.patch": "de8581450efd4dbedcb3bf689285a09994cd339e4d6853f50875246546b20b47",
     "native/amdf/cache-policy.patch": "74368c0763094ffeff6e6ad8f57ee1bdc97909278f1ea04a95e773cfdaefd778",
-    "native/amdf/queue-ring.patch": "3eef6f129af088ce146a9200145756b38bcd6aa23a6b924130e3ed9b08a96a0b"
+    "native/amdf/queue-ring.patch": "3eef6f129af088ce146a9200145756b38bcd6aa23a6b924130e3ed9b08a96a0b",
+    "native/amdf/gfx906.patch": "b52b3646bf05d1220951168f1e891095fe7b49cb8d53de1e571efd0609de1d0f"
   }
 }

@@ -26,6 +26,36 @@ pub(super) fn bridge_check(api: &Bridge, status: i32) -> Result<()> {
     })
 }
 
+// The bridge validates complete ELF and kernel metadata. Check the exact
+// processor here as well: load_bytes has no compiler Artifact identity to
+// prevent a supported code object being loaded on the wrong supported GPU.
+fn validate_code_target(bytes: &[u8], target: &str) -> Result<()> {
+    if bytes.len() < 64 || &bytes[..6] != b"\x7fELF\x02\x01" {
+        return Err(Error::Message(
+            "expected an ELF64 little-endian code object".into(),
+        ));
+    }
+    let flags = u32::from_le_bytes(bytes[48..52].try_into().unwrap());
+    let machine = match target {
+        "gfx906" => 0x2f,
+        "gfx1151" => 0x4a,
+        _ => return Err(Error::Unsupported(format!("GPU code target {target}"))),
+    };
+    if flags & 0xff != machine {
+        return Err(Error::Unsupported(
+            "code object and GPU target differ".into(),
+        ));
+    }
+    // Radeon VII has SRAM ECC and XNACK disabled. ANY and OFF feature states
+    // are compatible; a code object requiring either feature ON is not.
+    if target == "gfx906" && (flags & 0x300 == 0x300 || flags & 0xc00 == 0xc00) {
+        return Err(Error::Unsupported(
+            "gfx906 code requires enabled XNACK or SRAM ECC".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// One loaded GPU entry and its immutable native code and metadata.
 #[derive(Clone)]
 pub struct Kernel(pub(super) Arc<KernelInner>);
@@ -339,7 +369,7 @@ impl Device {
         }
         unsafe { self.load_image(artifact.bytes(), artifact.symbol(), Some(options), None) }
     }
-    /// Load a native gfx1151 code object and select its named entry.
+    /// Load a native code object for this GPU and select its named entry.
     ///
     /// # Safety
     /// The native code must be trusted and obey its declared memory contract.
@@ -356,6 +386,7 @@ impl Device {
         if self.endpoint().engine() != Engine::Gpu {
             return Err(Error::Unsupported("GPU code requires a GPU device".into()));
         }
+        validate_code_target(bytes, self.target().as_str())?;
         let api = &self.0.endpoint.0.instance.api;
         let bridge = api.load_bridge()?;
         let symbol = CString::new(symbol)
@@ -511,6 +542,24 @@ impl Api {
 mod tests {
     use super::*;
     use crate::loom::{Compiler, CxxSource, Specialization};
+
+    #[test]
+    fn exact_code_target_and_gfx906_features_are_checked_before_loading() {
+        let mut elf = [0; 64];
+        elf[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        for flags in [0x2f_u32, 0x52f, 0xa2f] {
+            elf[48..52].copy_from_slice(&flags.to_le_bytes());
+            assert!(validate_code_target(&elf, "gfx906").is_ok());
+            assert!(validate_code_target(&elf, "gfx1151").is_err());
+        }
+        for flags in [0x32f_u32, 0xc2f, 0xf2f, 0x4a] {
+            elf[48..52].copy_from_slice(&flags.to_le_bytes());
+            assert!(validate_code_target(&elf, "gfx906").is_err());
+        }
+        elf[48..52].copy_from_slice(&0x4a_u32.to_le_bytes());
+        assert!(validate_code_target(&elf, "gfx1151").is_ok());
+        assert!(validate_code_target(&elf[..48], "gfx906").is_err());
+    }
 
     #[test]
     #[ignore = "requires native compiler, bridge, libamdf and gfx1151"]
