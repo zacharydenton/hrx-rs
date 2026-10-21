@@ -50,8 +50,8 @@ fn main() -> Result<()> {
         }?
         .wait()?;
         output.read(0, &mut readback)?;
-        for word in readback.chunks_exact(4) {
-            assert_eq!(u32::from_le_bytes(word.try_into().unwrap()), 42);
+        for word in readback.as_chunks::<4>().0 {
+            assert_eq!(u32::from_le_bytes(*word), 42);
         }
     }
     println!("four repeated wave64 dispatches and readback passed");
@@ -61,7 +61,7 @@ fn main() -> Result<()> {
     let transform = unsafe { gpu.load_bytes(&bytes, "transform") }?;
     for pass in 0..64_i32 {
         let mut values = [0; 64 * 4];
-        for (index, word) in values.chunks_exact_mut(4).enumerate() {
+        for (index, word) in values.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             word.copy_from_slice(&(index as i32 - pass).to_le_bytes());
         }
         input.write(0, &values)?;
@@ -83,9 +83,9 @@ fn main() -> Result<()> {
         }?
         .wait()?;
         output.read(0, &mut readback)?;
-        for (index, word) in readback.chunks_exact(4).enumerate() {
+        for (index, word) in readback.as_chunks::<4>().0.iter().enumerate() {
             assert_eq!(
-                i32::from_le_bytes(word.try_into().unwrap()),
+                i32::from_le_bytes(*word),
                 (index as i32 - pass) * 3 + pass * 7
             );
         }
