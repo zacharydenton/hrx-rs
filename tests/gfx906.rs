@@ -80,8 +80,8 @@ void fp64(const double* input, double* output) {
                 .chain(&actual[2112..])
                 .all(|&x| x == 0xa5)
         );
-        for (i, word) in actual[64..2112].chunks_exact(8).enumerate() {
-            let observed = f64::from_le_bytes(word.try_into().unwrap());
+        for (i, word) in actual[64..2112].as_chunks::<8>().0.iter().enumerate() {
+            let observed = f64::from_le_bytes(*word);
             let expected = f64::from(pass) * 2.5 + values[i] * 0.125;
             assert!(
                 (observed - expected).abs() <= expected.abs() * 1e-14,
