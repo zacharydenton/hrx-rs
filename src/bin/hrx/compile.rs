@@ -8,7 +8,7 @@ use hrx::{
 use std::{fs, path::Path};
 
 pub const HELP: &str = "hrx compile SOURCE SYMBOL [key=value ...] [--name=value ...]
-  --target=gfx1151|amd.xdna.strix_halo.17f0_11
+  --target=gfx906|gfx1151|amd.xdna.strix_halo.17f0_11
   --language=loom|c23|c++26
   --include=DIR  --define=NAME[=VALUE]  --header=VIRTUAL=FILE
   --report=none|summary|details  --report-output=FILE

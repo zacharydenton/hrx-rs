@@ -48,10 +48,9 @@ Earlier SMEM, GFX11 VMEM-source reuse, dependent-inline-type and allocation-layo
 patches are no longer in the active set. Patch 0011 is also retired: upstream now
 owns CFG unit-use indexing, storage leases and concat placement. The old
 per-segment liveness overlay is not carried into those analyses. VOPD source-cache routing and value-domain arena ownership are also
-upstream now (commits `7a947dce16` and `490a9ac096`). Only the seven files
-above are applied.
+upstream now (commits `7a947dce16` and `490a9ac096`). The active patch files are pinned in `native/release-inputs.json`.
 
-The matching native archive is built locally as `native-20261015-61c152ac4b`.
+The matching native archive is built locally as `native-20261021-gfx906`.
 Rust bindings require this compiler's current C API, including
 `loomc_compile_artifact`, link-index builder allocation/free, and the
 precise/fast C++ import policy. Older compiler bundles are
@@ -66,7 +65,7 @@ applies the active compiler set. `scripts/build-amdf.sh SOURCE BUILD` then appli
 the native build, queue and cache-policy patches and builds all three libraries.
 The compiler patches must be applied in filename order.
 
-## Experimental Radeon VII bringup
+## Radeon VII support
 
 `0018-gfx906-wave64.patch` adds an executable GCN5 descriptor family for gfx906,
 with wave64, ordinary vector FP32 arithmetic, software BF16 conversion, and no
@@ -81,6 +80,30 @@ in the target set when qualifying regressions on the original hardware.
 Qualification on a Radeon VII has passed scratch-free native wave64 launches,
 changed-input visibility checks, and authored Loom BF16 GEMMs with LDS staging
 and ragged tails. The MOSS repository's `examples/qualify_gfx906.rs` carries the
-kernel integration check. Scratch, comprehensive ISA coverage, device-local
-transfer paths, and model performance remain unqualified. Do not interpret
-these initial correctness checks as full GPU or inference support.
+kernel integration check. The in-repository `tests/gfx906.rs` also qualifies FP64 division and repeated
+device-local compute transfers with guard checking. Scratch, SDMA queues,
+comprehensive ISA coverage and model performance remain unqualified.
+
+`0019-gfx906-memory-coherence.patch` gives GCN5 its legacy GLC/wait/L1-invalidate
+recipe and supplies the `BUFFER_WBINVL1_VOL` descriptor. This avoids selecting
+CDNA scoped cache packets that GCN5 cannot encode. An isolated Clang build passed
+26 report-only operation, access, and workgroup-race control dispatches on a
+Radeon VII, including deliberate errors, clean cases, report consumption, and
+recovery. These controls do not qualify model execution or memory health. The
+MOSS `examples/qualify_hrx_sanitizer.rs` reproduces them; set `HRX_SANITIZER_MODE`
+to `operation`, `access`, or `race`, and set `HRX_LOOM_LIBRARY` to the same gfx906
+compiler passed to the example so runtime-generated race helpers use it too.
+
+`0020-gfx906-f64-fma.patch` restores the GCN5 FP64 FMA descriptor family,
+including the negated forms needed by exact division and square-root lowering.
+It keeps later CDNA FMAC and matrix instructions excluded. The regression checks
+that the complete exact FP64 arithmetic descriptor family is available without
+advertising those later instruction families. The VAE statistics kernel using
+this path is qualified separately in moss-hrx; this patch does not enable it.
+
+`0021-gfx906-descriptor-regressions.patch` enrolls GCN5 in the existing
+wave64 descriptor assertions: legacy unsigned subtract, neighbor-constrained
+wide shifts, scalar-addressed scratch descriptor spelling and the inherited
+estimated VALU schedule class. Scratch descriptor checks do not qualify native
+scratch dispatch. All 380 descriptor/overlay/memory/ALU checks pass with this
+patch, including the original architecture families.

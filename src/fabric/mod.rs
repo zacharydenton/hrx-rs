@@ -52,14 +52,17 @@ pub(crate) mod profile;
 pub use profile::{DeviceInterval, DeviceProfile, ProfiledGpu};
 mod queue;
 pub(crate) use queue::GraphArena;
-pub use queue::{Completion, PreparedGpu, Queue};
+pub use queue::{
+    Completion, GpuBatchRecorder, PreparedArgumentSnapshot, PreparedCommandSnapshot, PreparedGpu,
+    PreparedRingSnapshot, Queue, SerialGpuDispatcher,
+};
 mod sanitizer;
 pub use sanitizer::{
     SanitizerAccess, SanitizerAddress, SanitizerCheck, SanitizerRace, SanitizerReport,
     SanitizerReports, SanitizerRuntimeOptions, SanitizerSite,
 };
 mod executable;
-pub use executable::{Argument, Kernel};
+pub use executable::{Argument, Kernel, KernelImageSnapshot};
 mod aql;
 pub use aql::{AqlCompletion, AqlDispatchTiming, AqlQueue, PreparedAql};
 mod capabilities;

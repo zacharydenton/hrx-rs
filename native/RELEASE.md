@@ -11,13 +11,20 @@ pins its build dependencies. `provenance.json` records bridge source hashes,
 compiler version, CMake cache hash, and library hashes. OS package versions are
 included with the rebuild sources. Rebuilds may produce different binary hashes.
 
-Supported profiles are Linux x86_64 gfx1151 and
+Supported profiles are Linux x86_64 gfx906 (Radeon VII), gfx1151 and
 `amd.xdna.strix_halo.17f0_11`. Host requirements are glibc 2.43 or newer,
 compatible libstdc++/libgcc, amdgpu/KFD and amdxdna drivers, firmware, and device
 permissions. The bundle ships no HSA/ROCr, XRT, IRON, or Python runtime.
 HSA headers supply code-object definitions only. The C++ importer embeds the
 MIT-licensed cplusplus parser, including the patches in the pinned upstream
 source. Linux syscall headers retain their syscall exception and full notices.
+
+Gfx906 supports scratch-free wave64 PM4 dispatch and device-local transfers
+through compute kernels. Scratch dispatch and SDMA queues are not qualified and
+are rejected. No MFMA/AGPR support is advertised. The compiler includes both GPU
+targets; the manifest and archive filename retain gfx1151 as the default compiler
+profile. The same archive supports gfx906. Select
+`Compiler::for_target(None, device.target())` for gfx906 source compilation.
 
 ## Rebuild and stage
 
@@ -28,10 +35,10 @@ python3 scripts/fetch-native-inputs.py --work artifacts/native-release
 CONTAINER_ENGINE=podman HRX_BUILD_JOBS=2 HRX_BUILD_MEMORY=8g \
   bash scripts/rebuild-hrx.sh artifacts/native-release
 python3 scripts/stage-native-release.py --work artifacts/native-release \
-  --release-tag native-20261015-61c152ac4b
+  --release-tag native-20261021-gfx906
 cargo run --release --bin hrx -- pack artifacts/native-release/stage-amdf \
   artifacts/native-release/output \
-  https://github.com/zacharydenton/hrx-rs/releases/download/native-20261015-61c152ac4b/hrx-linux-x86_64-gfx1151.tar.gz \
+  https://github.com/zacharydenton/hrx-rs/releases/download/native-20261021-gfx906/hrx-linux-x86_64-gfx1151.tar.gz \
   'HRX 61c152ac4b; Ubuntu 26.04' gfx1151
 ```
 
@@ -58,3 +65,17 @@ Inspect `readelf -d` and symbol versions. Pack twice and compare archive hashes;
 install the local archive into an empty cache and rerun with `HRX_OFFLINE=1`.
 Publish the source archive alongside the binary and manifest, then update
 `bundle.json` and publish the matching crate. Do not mix different native builds.
+
+For Radeon VII, run `bash scripts/test-gfx906-hardware.sh PATH_TO_STAGE`.
+This selects the staged libraries explicitly and runs the gfx906 suite, buffer
+ownership/view/file-upload checks, serial argument reuse, executable-cache reuse,
+and queue retirement checks. The gfx1151/XDNA suites require their own hardware;
+the gfx906 run cannot qualify those devices. Compiler target-table regressions:
+
+```sh
+PYTHONPATH=artifacts/native-release/hrx-source/loom/py python3 \
+  -m loom.tools.pytest_style_runner \
+  loom.target.arch.amdgpu.target_info_test \
+  loom.target.arch.amdgpu.gcn5_fp64_test \
+  loom.target.arch.amdgpu.low_aliases_test
+```

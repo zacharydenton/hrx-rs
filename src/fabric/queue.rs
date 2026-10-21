@@ -1,5 +1,7 @@
 mod sdma;
+mod serial;
 use super::*;
+pub use serial::SerialGpuDispatcher;
 use std::{
     collections::VecDeque,
     sync::{
@@ -48,6 +50,7 @@ struct QueueInner {
     device: Device,
     family: u32,
     cache_control: CacheControl,
+    diagnostic_release_fence: bool,
     raw: *mut amdf_user_queue_t,
     mapping: *mut amdf_user_queue_mapping_t,
     info: amdf_user_queue_mapping_info_t,
@@ -235,11 +238,14 @@ pub(super) fn barrier(words: &mut Vec<u32>, protocol: CacheControl) {
     if matches!(protocol, CacheControl::Gfx9) {
         // GFX9 CP_COHER_CNTL: write back TC and invalidate vector L1, TC,
         // scalar data and instruction caches over the complete address range.
+        // Leave SH_KCACHE_VOL_ACTION_ENA (bit28) clear: setting it restricts
+        // scalar invalidation to volatile contents, excluding ordinary lines.
+        // Matches Linux gfx_v9_0_emit_mem_sync full-cache action mask.
         words.extend([
             header(0x46, 2),
             7 | (4 << 8),
             header(0x58, 7) | 2,
-            (1 << 18) | (1 << 22) | (1 << 23) | (1 << 27) | (1 << 28) | (1 << 29),
+            (1 << 18) | (1 << 22) | (1 << 23) | (1 << 27) | (1 << 29),
             u32::MAX,
             0xff,
             0,
@@ -266,6 +272,34 @@ pub(super) fn barrier(words: &mut Vec<u32>, protocol: CacheControl) {
         0x0a,
         GLI_INV_ALL | (1 << 4) | (1 << 5) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 14) | (1 << 15),
     ]);
+}
+// Default remains the established post-barrier WRITE_DATA fence. The opt-in
+// GFX9 diagnostic follows Linux gfx_v9_0_ring_emit_fence: timestamped cache
+// flush/invalidate RELEASE_MEM,32-bit data,without interrupt generation.
+fn completion_packet(words: &mut Vec<u32>, address: u64, release: bool) -> usize {
+    let start = words.len();
+    if release {
+        words.extend([
+            header(0x49, 8),
+            0x14 | (5 << 8) | (1 << 15) | (1 << 16) | (1 << 17) | (1 << 21),
+            1 << 29,
+            address as u32,
+            (address >> 32) as u32,
+            1,
+            0,
+            0,
+        ]);
+        start + 5
+    } else {
+        words.extend([
+            header(0x37, 5),
+            (2 << 8) | (1 << 20),
+            address as u32,
+            (address >> 32) as u32,
+            1,
+        ]);
+        start + 4
+    }
 }
 fn pad(words: &mut Vec<u32>) {
     let mut count = 8 - words.len() % 8;
@@ -433,6 +467,8 @@ impl Device {
                 device: self.clone(),
                 family: ordinal,
                 cache_control,
+                diagnostic_release_fence: matches!(cache_control, CacheControl::Gfx9)
+                    && std::env::var("HRX_DIAGNOSTIC_GFX9_RELEASE_FENCE").is_ok_and(|v| v == "1"),
                 raw,
                 mapping: ptr::null_mut(),
                 info: amdf_user_queue_mapping_info_t::default(),
@@ -478,8 +514,9 @@ impl Device {
     }
 }
 
-/// Private graph construction storage. Nodes are never submitted individually.
-/// Argument pages become immutable before the graph can be launched.
+/// Private pooled argument storage. Batch nodes share immutable construction
+/// pages; the serial dispatcher resets its private arena only after retirement.
+/// Neither owner exposes individually replayable mutable child commands.
 #[derive(Default)]
 pub(crate) struct GraphArena {
     page: Option<Buffer>,
@@ -518,7 +555,72 @@ impl GraphArena {
     }
 }
 
+/// Low-level immutable GPU batch recording with pooled argument storage.
+///
+/// Child commands share construction-only storage and cannot be submitted
+/// individually. Finishing retains their operands, code and argument pages in
+/// the returned batch. Dropping a recording submits no work.
+pub struct GpuBatchRecorder {
+    queue: Queue,
+    arena: GraphArena,
+    commands: Vec<(PreparedGpu, bool)>,
+}
+impl GpuBatchRecorder {
+    /// Number of recorded kernel dispatches.
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+    /// Whether no kernel dispatch has been recorded.
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+    /// Append a fixed kernel invocation, copying values into owned storage.
+    /// A dependency establishes a memory barrier against preceding nodes.
+    ///
+    /// # Safety
+    /// Geometry and arguments must obey the kernel's memory contract. The
+    /// dependency flags must order every conflict with preceding nodes on each
+    /// replay. Callers order accesses on other queues through completion.
+    pub unsafe fn dispatch(
+        &mut self,
+        kernel: &Kernel,
+        grid: [u32; 3],
+        block: [u16; 3],
+        arguments: &[Argument<'_>],
+        dependency: bool,
+    ) -> Result<()> {
+        // SAFETY: caller provides the same checked contracts as Queue::prepare;
+        // the private arena and child commands never escape this recording.
+        let command = unsafe {
+            self.queue
+                .prepare_graph(kernel, grid, block, arguments, &mut self.arena)
+        }?;
+        self.commands.push((command, dependency));
+        Ok(())
+    }
+    /// Freeze pooled pages and create one reusable indirect batch.
+    /// Empty recordings return an error. No GPU work is submitted.
+    pub fn finish(self) -> Result<PreparedGpu> {
+        // SAFETY: append contracts cover all node dependencies. Children are
+        // private, so their shared placeholder fence cannot be published.
+        unsafe { self.queue.prepare_batch(&self.commands) }
+    }
+}
+
 impl Queue {
+    /// Record kernels with pooled immutable arguments for a single GPU batch.
+    pub fn record_batch(&self) -> Result<GpuBatchRecorder> {
+        if self.0.info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 {
+            return Err(Error::Unsupported(
+                "kernel recording requires a PM4 queue".into(),
+            ));
+        }
+        Ok(GpuBatchRecorder {
+            queue: self.clone(),
+            arena: GraphArena::default(),
+            commands: Vec::new(),
+        })
+    }
     pub(super) fn identity(&self) -> usize {
         Arc::as_ptr(&self.0) as usize
     }
@@ -640,14 +742,7 @@ impl Queue {
         );
         let dispatch_end = words.len();
         barrier(&mut words, self.0.cache_control);
-        let fence_word = words.len() + 4;
-        words.extend([
-            header(0x37, 5),
-            (2 << 8) | (1 << 20),
-            address as u32,
-            (address >> 32) as u32,
-            1,
-        ]);
+        let fence_word = completion_packet(&mut words, address, self.0.diagnostic_release_fence);
         pad(&mut words);
         // Arena pages are charged once, at their first graph node.
         let storage_bytes =
@@ -658,11 +753,16 @@ impl Queue {
         }
         buffers.sort_by_key(|buffer| Arc::as_ptr(&buffer.0) as usize);
         buffers.dedup_by(|a, b| Arc::ptr_eq(&a.0, &b.0));
+        let argument_index = buffers
+            .iter()
+            .position(|buffer| Arc::ptr_eq(&buffer.0, &argument_buffer.0))
+            .expect("prepared arguments retained in work resources");
         let leases = Mutex::new(Vec::with_capacity(buffers.len()));
         Ok(PreparedGpu {
             prefix: Default::default(),
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
+                argument_binding: Some((argument_index, argument_offset)),
                 storage_bytes,
                 work: Arc::new(Work {
                     _kernels: vec![kernel.clone()],
@@ -834,20 +934,14 @@ impl Queue {
         ]);
         let dispatch_end = words.len();
         barrier(&mut words, self.0.cache_control);
-        let fence_word = words.len() + 4;
-        words.extend([
-            header(0x37, 5),
-            (2 << 8) | (1 << 20),
-            address as u32,
-            (address >> 32) as u32,
-            1,
-        ]);
+        let fence_word = completion_packet(&mut words, address, self.0.diagnostic_release_fence);
         pad(&mut words);
         let leases = Mutex::new(Vec::with_capacity(buffers.len()));
         Ok(PreparedGpu {
             prefix: Default::default(),
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
+                argument_binding: None,
                 storage_bytes,
                 work: Arc::new(Work {
                     fence,
@@ -918,19 +1012,13 @@ impl Queue {
         ]);
         barrier(&mut words, self.0.cache_control);
         let dispatch_end = words.len();
-        let fence_word = words.len() + 4;
-        words.extend([
-            header(0x37, 5),
-            (2 << 8) | (1 << 20),
-            output as u32,
-            (output >> 32) as u32,
-            1,
-        ]);
+        let fence_word = completion_packet(&mut words, output, self.0.diagnostic_release_fence);
         pad(&mut words);
         Ok(PreparedGpu {
             prefix: Default::default(),
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
+                argument_binding: None,
                 storage_bytes: fence.len(),
                 work: Arc::new(Work {
                     fence,
@@ -976,6 +1064,7 @@ pub struct PreparedGpu {
     inner: Arc<PreparedInner>,
 }
 struct PreparedInner {
+    argument_binding: Option<(usize, usize)>,
     storage_bytes: usize,
     work: Arc<Work>,
     words: Vec<u32>,
@@ -985,7 +1074,232 @@ struct PreparedInner {
     fence_word: usize,
     previous: Mutex<u32>,
 }
+/// Read-only packed argument bytes after dispatch retirement.
+pub struct PreparedArgumentSnapshot {
+    /// Address of the packed argument range, including an arena offset.
+    pub device_address: u64,
+    /// Bytes independently repacked from caller-provided expected arguments.
+    pub expected: Vec<u8>,
+    /// Bytes read directly from retained host-mapped storage.
+    pub observed: Vec<u8>,
+}
+/// A retained frame matching a completion packet, copied under the producer lock.
+/// Earlier released commands may have reused the same fence address/sequence.
+#[derive(Debug)]
+pub struct PreparedRingSnapshot {
+    /// Absolute producer position of the retained stream, in dwords.
+    pub start_dwords: u64,
+    /// Volatile copy of the currently retained mapped command words.
+    pub words: Vec<u32>,
+}
+/// Read-only PM4 command diagnostics, not proof of what the GPU consumed.
+#[derive(Debug)]
+pub struct PreparedCommandSnapshot {
+    /// Independently regenerated from caller geometry and current kernel metadata.
+    pub expected_template: Vec<u32>,
+    /// CPU-side immutable stream prepared before submission.
+    pub observed_template: Vec<u32>,
+    /// Expected published stream, including the latest completion sequence.
+    pub expected_publication: Vec<u32>,
+    /// Latest successfully published sequence, or zero before first dispatch.
+    pub sequence: u32,
+    /// Cached retirement sequence; taking a snapshot does not advance it.
+    pub retired_sequence: u32,
+    /// Current acquire-loaded completion word in coherent host storage.
+    pub observed_fence: u32,
+    /// Mapped physical ring extent, in dwords.
+    pub ring_capacity_dwords: u64,
+    /// Native consumer position sampled under the producer lock, in dwords.
+    pub ring_read_dwords: u64,
+    /// Absolute application producer position sampled under its lock, in dwords.
+    pub ring_write_dwords: u64,
+    /// Candidate frames: empty after overwrite/before dispatch. Multiple matches
+    /// are ambiguous, including fence-address reuse or shared graph fences.
+    pub publications: Vec<PreparedRingSnapshot>,
+}
 impl PreparedGpu {
+    /// Regenerate a single scratch-free PM4 dispatch and inspect retained ring
+    /// bytes after retirement. No GPU work, queue publication or progress occurs.
+    /// Kernargs must be checked separately with `argument_snapshot`. Missing ring
+    /// bytes are not corruption; consumed commands may already be overwritten.
+    pub fn command_snapshot(
+        &self,
+        grid: [u32; 3],
+        block: [u16; 3],
+        arguments: &[Argument<'_>],
+    ) -> Result<PreparedCommandSnapshot> {
+        if self.queue.0.info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4
+            || self.prefix.is_some()
+            || self.inner.indirect_words.is_some()
+            || self.inner.work._kernels.len() != 1
+        {
+            return Err(Error::Unsupported(
+                "command snapshot requires a single PM4 kernel".into(),
+            ));
+        }
+        let (index, offset) = self
+            .inner
+            .argument_binding
+            .ok_or_else(|| Error::Unsupported("command has no single argument binding".into()))?;
+        let previous = self
+            .inner
+            .previous
+            .lock()
+            .map_err(|_| Error::DeviceLost("prepared command poisoned".into()))?;
+        let sequence = *previous;
+        let retired_sequence = self.inner.work.retired.load(Ordering::Acquire);
+        if retired_sequence < sequence {
+            return Err(Error::Busy("command snapshot requires retirement".into()));
+        }
+        let kernel = &self.inner.work._kernels[0];
+        if kernel.0.info.private_bytes != 0 {
+            return Err(Error::Unsupported(
+                "command snapshot does not reconstruct scratch bindings".into(),
+            ));
+        }
+        let (packed, _resources) = kernel.arguments(arguments)?;
+        let address =
+            self.inner.work.buffers[index].device_address(self.queue.device())? + offset as u64;
+        let mut expected_template = Vec::new();
+        barrier(&mut expected_template, self.queue.0.cache_control);
+        expected_template.extend(kernel.dispatch_words(grid, block, &packed, address, None)?);
+        barrier(&mut expected_template, self.queue.0.cache_control);
+        let release = self.queue.0.diagnostic_release_fence;
+        let fence_word = completion_packet(
+            &mut expected_template,
+            self.inner.work.fence.device_address(self.queue.device())?,
+            release,
+        );
+        let completion_start = fence_word - if release { 5 } else { 4 };
+        let completion_end = completion_start + if release { 8 } else { 5 };
+        pad(&mut expected_template);
+        let mut expected_publication = expected_template.clone();
+        expected_publication[fence_word] = sequence;
+        // Same lock order as publication: prepared timeline, then queue producer.
+        let state = self
+            .queue
+            .0
+            .state
+            .lock()
+            .map_err(|_| Error::DeviceLost("queue producer poisoned".into()))?;
+        let capacity = self.queue.0.info.ring_byte_length / 4;
+        if capacity == 0
+            || !capacity.is_power_of_two()
+            || !capacity.is_multiple_of(8)
+            || !state.write.is_multiple_of(8)
+            || capacity > usize::MAX as u64
+        {
+            return Err(Error::Unsupported("command snapshot ring geometry".into()));
+        }
+        // SAFETY: queue owns the live native mapping and its aligned atomic
+        // read index; native consumers may update it concurrently.
+        let read = unsafe {
+            (&*(self.queue.0.info.read_index_address as *const AtomicU64)).load(Ordering::Acquire)
+        };
+        // SAFETY: all callers below check the complete contiguous frame
+        // against the mapped ring extent. Producer lock prevents rewrites;
+        // the GPU consumes but does not modify command bytes.
+        let read_word = |at: usize| unsafe {
+            ptr::read_volatile((self.queue.0.info.ring_address as *const u32).add(at))
+        };
+        let mut publications = Vec::new();
+        if sequence != 0 && expected_publication.len() as u64 <= capacity {
+            for absolute in (state.write.saturating_sub(capacity)..state.write).step_by(8) {
+                let start = (absolute & (capacity - 1)) as usize;
+                let len = expected_publication.len();
+                if absolute
+                    .checked_add(len as u64)
+                    .is_none_or(|end| end > state.write)
+                    || start
+                        .checked_add(len)
+                        .is_none_or(|end| end > capacity as usize)
+                {
+                    continue;
+                }
+                // Match the complete fence packet, not just a sequence value:
+                // consumers can also reference the producer's fence address.
+                if (completion_start..completion_end)
+                    .all(|i| read_word(start + i) == expected_publication[i])
+                {
+                    publications.push(PreparedRingSnapshot {
+                        start_dwords: absolute,
+                        words: (0..len).map(|i| read_word(start + i)).collect(),
+                    });
+                }
+            }
+        }
+        Ok(PreparedCommandSnapshot {
+            expected_template,
+            observed_template: self.inner.words.clone(),
+            expected_publication,
+            sequence,
+            retired_sequence,
+            observed_fence: self.inner.work.fence.fence_value()?,
+            ring_capacity_dwords: capacity,
+            ring_read_dwords: read,
+            ring_write_dwords: state.write,
+            publications,
+        })
+    }
+    /// Argument count for a single prepared kernel; absent for batches/transfers.
+    pub fn argument_count(&self) -> Option<usize> {
+        self.inner.argument_binding?;
+        Some(self.inner.work._kernels.first()?.0.info.argument_count as usize)
+    }
+    // Exact internal Buffer handles in an unshared, idle, ordinary command.
+    // Work identity lets the caller reject duplicates rather than overcounting
+    // the same handles and accidentally masking an external Buffer owner.
+    pub(super) fn private_retired_buffer_owners(&self, buffer: &Buffer) -> Option<(usize, usize)> {
+        let work = &self.inner.work;
+        if self.prefix.is_some()
+            || self.inner.indirect_words.is_some()
+            || self.inner.argument_binding.is_none()
+            || !work.dependencies.is_empty()
+            || Arc::strong_count(&self.inner) != 1
+            || Arc::strong_count(work) != 1
+            || work.retired.load(Ordering::Acquire) < work.active.load(Ordering::Acquire)
+        {
+            return None;
+        }
+        if !work.leases.try_lock().ok()?.is_empty() {
+            return None;
+        }
+        Some((
+            Arc::as_ptr(work) as usize,
+            work.buffers
+                .iter()
+                .filter(|b| b.same_backing(buffer))
+                .count(),
+        ))
+    }
+
+    /// Compare retained kernargs with independently supplied expected bindings.
+    /// No GPU work is submitted. Buffer reads return Busy until retired.
+    /// Batches and transfers have no single argument binding and are unsupported.
+    pub fn argument_snapshot(
+        &self,
+        arguments: &[Argument<'_>],
+    ) -> Result<PreparedArgumentSnapshot> {
+        let (index, offset) = self
+            .inner
+            .argument_binding
+            .ok_or_else(|| Error::Unsupported("command has no single argument binding".into()))?;
+        let kernel = self
+            .inner
+            .work
+            ._kernels
+            .first()
+            .ok_or_else(|| Error::Unsupported("command has no kernel".into()))?;
+        let (expected, _resources) = kernel.arguments(arguments)?;
+        let buffer = &self.inner.work.buffers[index];
+        let mut observed = vec![0; expected.len()];
+        buffer.read(offset, &mut observed)?;
+        Ok(PreparedArgumentSnapshot {
+            device_address: buffer.device_address(self.queue.device())? + offset as u64,
+            expected,
+            observed,
+        })
+    }
     fn dispatch_words(&self) -> &[u32] {
         self.inner
             .indirect_words
@@ -1328,12 +1642,6 @@ impl Queue {
     ) -> Result<PreparedGpu> {
         transfer_range(destination, destination_offset, length)?;
         transfer_range(source, source_offset, length)?;
-        if Arc::ptr_eq(&destination.0, &source.0)
-            && destination_offset < source_offset + length
-            && source_offset < destination_offset + length
-        {
-            return Err(Error::Message("native copy ranges overlap".into()));
-        }
         if self.0.info.command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA {
             return self.prepare_sdma_copy(
                 destination,
@@ -1344,7 +1652,10 @@ impl Queue {
             );
         }
         let kernels = self.transfer_kernels()?;
-        let wide = (destination_offset | source_offset | length) & 7 == 0;
+        let destination_address =
+            destination.device_address(self.device())? + destination_offset as u64;
+        let source_address = source.device_address(self.device())? + source_offset as u64;
+        let wide = (destination_address | source_address | length as u64) & 7 == 0;
         let copy = &kernels[if wide { 2 } else { 0 }];
         let elements = if wide { length / 8 } else { length };
         let count = (elements as u64).to_le_bytes();
@@ -1425,7 +1736,8 @@ impl Queue {
             return self.prepare_sdma_fill(destination, offset, length, value);
         }
         let kernels = self.transfer_kernels()?;
-        let wide = (offset | length) & 7 == 0;
+        let address = destination.device_address(self.device())? + offset as u64;
+        let wide = (address | length as u64) & 7 == 0;
         let fill = &kernels[if wide { 3 } else { 1 }];
         let elements = if wide { length / 8 } else { length };
         let count = (elements as u64).to_le_bytes();
@@ -1465,6 +1777,24 @@ fn transfer_range(buffer: &Buffer, offset: usize, length: usize) -> Result<()> {
 
 #[cfg(test)]
 mod event_tests {
+    #[test]
+    fn gfx9_barrier_invalidates_entire_scalar_cache() {
+        let mut words = Vec::new();
+        super::barrier(&mut words, super::CacheControl::Gfx9);
+        // CS_PARTIAL_FLUSH precedes compute ACQUIRE_MEM. Upstream Linux's
+        // full-sync mask requests TC writeback/L1/L2/scalar/instruction actions.
+        assert_eq!(words[0], super::header(0x46, 2));
+        assert_eq!(words[1], 7 | (4 << 8));
+        assert_eq!(words[2], super::header(0x58, 7) | 2);
+        assert_eq!(words[3], 0x28c4_0000);
+        assert_ne!(words[3] & (1 << 27), 0);
+        assert_eq!(
+            words[3] & (1 << 28),
+            0,
+            "volatile-only qualifier must not narrow invalidation"
+        );
+        assert_eq!(&words[4..], &[u32::MAX, 0xff, 0, 0, 0x0a]);
+    }
     use super::*;
 
     #[test]

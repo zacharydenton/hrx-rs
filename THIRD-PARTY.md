@@ -1,7 +1,7 @@
 # Native components and source provenance
 
 The unified native distribution contains three libraries built from
-HRX/IREE revision `7e9c7bbd5e93d20c1e1a64c60bb4644499404f9b`:
+HRX/IREE revision `61c152ac4b40dd758803a2cbcd237184a8dfb669`:
 
 | Library | Purpose | Principal license |
 | --- | --- | --- |

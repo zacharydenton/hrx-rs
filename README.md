@@ -2,7 +2,8 @@
 
 Rust APIs for AMD GPU and NPU execution, with an in-process
 [Loom](https://github.com/ROCm/hrx-system) compiler.
-Targets Strix Halo (`gfx1151`) and its XDNA NPU on Linux x86-64.
+Supports Radeon VII (`gfx906`, wave64 scratch-free kernels), Strix Halo
+(`gfx1151`), and its XDNA NPU on Linux x86-64.
 
 - GPU buffers, streams, events and reusable execution graphs.
 - Loom compilation, shared artifact caches, resource reports and sanitizers.
@@ -16,7 +17,7 @@ Requires Rust 1.91+. The Cargo package is `hrx-rs`; import it as `hrx`:
 
 ```toml
 [dependencies]
-hrx = { package = "hrx-rs", version = "0.11.0" }
+hrx = { package = "hrx-rs", version = "0.12.0" }
 ```
 
 ```rust,no_run
@@ -35,10 +36,16 @@ Use `loom::Compiler` for kernels and `Stream::graph` for reusable GPU work.
 for NPU execution. Native code loading, kernel dispatch and memory-access
 contracts require caller validation at the unsafe API boundaries.
 
+For Radeon VII, select `loom::Compiler::for_target(None, device.target())`
+using the opened device's target. Gfx906 uses wave64 and supports scratch-free
+kernels and compute-based device-local copies. Scratch dispatch, SDMA queues and
+MFMA/AGPR instructions are not supported. See [native qualification](native/RELEASE.md)
+for the hardware checks and exact bundle requirements.
+
 ## Install the CLI
 
 ```sh
-cargo install hrx-rs --version 0.11.0 --locked --features npu
+cargo install hrx-rs --version 0.12.0 --locked --features npu
 hrx prepare
 hrx doctor
 ```

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.12.0 — 2026-10-21
+
+- Add Radeon VII gfx906 native PM4 execution and Loom wave64 compilation,
+  including GCN5 memory coherence, software BF16 conversion and exact FP64
+  arithmetic. Build gfx906 and gfx1151 into the same native bundle.
+- Add device-local GPU buffers and checked buffer views, with retained backing,
+  shared device leases and bounded host/file transfers.
+- Add synchronous GFX9 serial dispatch with bounded private argument/fence
+  storage, retirement before reuse, and operand release after each call.
+- Expose immutable batch recording, command/argument/image snapshots and
+  conservative ownership checks for private retired command caches.
+- Qualify changing arguments, full scalar-cache invalidation, FP64 division,
+  device-local transfers and output guards on Radeon VII. Gfx906 scratch, SDMA
+  queues, matrix instructions and complete ISA/model coverage remain unsupported
+  or unqualified; unsupported paths return errors.
+
 ## 0.11.0 — 2026-10-15
 
 - Add optional automatic idle model unloading through

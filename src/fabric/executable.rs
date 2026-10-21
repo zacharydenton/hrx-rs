@@ -101,7 +101,49 @@ pub enum Argument<'a> {
     /// No buffer lease or address-sanitizer range is inferred from this value.
     Address(u64),
 }
+/// Read-only relocated executable storage captured after dispatch retirement.
+/// Includes descriptors, constants, and any globals; writable globals can
+/// legitimately differ. This does not inspect instruction caches.
+pub struct KernelImageSnapshot {
+    /// Address used to relocate the expected image.
+    pub device_address: u64,
+    /// Fresh loader output relocated to the current allocation.
+    pub expected: Vec<u8>,
+    /// Host-mapped allocation bytes, acquired without a GPU dispatch.
+    pub observed: Vec<u8>,
+}
 impl Kernel {
+    /// Snapshot executable storage without exposing mutable code handles.
+    /// Returns Busy while dispatches retain the allocation. Instrumented
+    /// images are unsupported because their runtime rewrites loader globals.
+    pub fn image_snapshot(&self) -> Result<KernelImageSnapshot> {
+        if self.0.sanitizer.is_some()
+            || self.0.instrumentation.is_some()
+            || self.0.address_state.is_some()
+            || self.0.race_state.is_some()
+        {
+            return Err(Error::Unsupported("instrumented image snapshot".into()));
+        }
+        let device_address = self.0.code.device_address(&self.0.device)?;
+        let mut observed = vec![0; self.0.code.len()];
+        self.0.code.read(0, &mut observed)?;
+        let mut expected = vec![0; observed.len()];
+        // SAFETY: immutable retained image; output spans the full allocation
+        // and relocation uses that allocation's actual device address.
+        bridge_check(&self.0.image.api, unsafe {
+            self.0.image.api.hrx_fabric_gpu_image_load(
+                self.0.image.raw,
+                expected.as_mut_ptr(),
+                expected.len(),
+                device_address,
+            )
+        })?;
+        Ok(KernelImageSnapshot {
+            device_address,
+            expected,
+            observed,
+        })
+    }
     /// Drain owned value/operation and workgroup race reports after all invocations retire.
     /// Returns Busy while any submitted invocation retains the feedback storage.
     /// A full channel reports dropped packets explicitly; it never stalls a kernel.

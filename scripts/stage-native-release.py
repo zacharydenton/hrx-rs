@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -18,6 +19,37 @@ def digest(path):
 
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
+
+def verify_patched_sources(source, upstream_archive, patches):
+    # Later patches can intentionally change earlier hunks. Reconstruct their
+    # ordered result instead of reverse-checking each patch in isolation.
+    paths = set()
+    for name in patches:
+        for line in (REPO / name).read_text().splitlines():
+            if line.startswith(("--- a/", "+++ b/")):
+                relative = line[6:].split("\t", 1)[0]
+                if Path(relative).is_absolute() or ".." in Path(relative).parts:
+                    raise ValueError(f'Unsafe patch path: {relative}')
+                paths.add(relative)
+    with tempfile.TemporaryDirectory(prefix='hrx-patch-verification-') as directory:
+        expected = Path(directory)
+        with tarfile.open(upstream_archive) as archive:
+            for member in archive:
+                relative = '/'.join(Path(member.name).parts[1:])
+                if relative in paths and member.isfile():
+                    destination = expected / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.extractfile(member) as stream:
+                        destination.write_bytes(stream.read())
+        for name in patches:
+            subprocess.run(['patch', '-p1', '--batch', '--forward', '--fuzz=0',
+                            '--input', str(REPO / name)], cwd=expected,
+                           check=True, stdout=subprocess.DEVNULL)
+        for relative in sorted(paths):
+            wanted, actual = expected / relative, source / relative
+            if wanted.exists() != actual.exists() or (wanted.exists() and
+                    (not actual.is_file() or digest(wanted) != digest(actual))):
+                raise ValueError(f'Source differs from ordered pinned patches: {relative}')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -40,8 +72,7 @@ def main():
     for name, sha in patches.items():
         if digest(REPO / name) != sha:
             raise ValueError(f'Patch differs from pin: {name}')
-        subprocess.run(['patch', '-p1', '--dry-run', '--batch', '--reverse', '--input', str(REPO / name)],
-                       cwd=source, check=True, stdout=subprocess.DEVNULL)
+    verify_patched_sources(source, downloaded['hrx-system'], patches)
     stage = work / 'stage-amdf'
     stage.mkdir(exist_ok=True)
     if any(stage.iterdir()):
@@ -114,7 +145,7 @@ def main():
     for name in ['native/release-inputs.json','native/RELEASE.md','scripts/stage-native-release.py',
                  'scripts/rebuild-hrx.sh','scripts/build-amdf.sh','scripts/build-gpu-runtime-container.sh',
                  'scripts/fetch-native-inputs.py','scripts/seed-native-file-cache.py',
-                 'scripts/generate-storage-bindings.py']:
+                 'scripts/generate-storage-bindings.py','scripts/test_stage_native_release.py']:
         members[name] = REPO/name
     members['build-packages.txt'] = build/'build-packages.txt'
     archive = work/'hrx-native-sources.tar.gz'

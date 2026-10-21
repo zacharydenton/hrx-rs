@@ -1,0 +1,41 @@
+--- a/loom/py/loom/target/arch/amdgpu/descriptors_test.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors_test.py
+@@ -1157,6 +1157,7 @@
+     descriptor_set: DescriptorSet,
+ ) -> None:
+     cdna_contracts = {
++        "amdgpu.gcn5.core",
+         "amdgpu.cdna2.core",
+         "amdgpu.cdna3.core",
+         "amdgpu.cdna4.core",
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/alu_test.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/alu_test.py
+@@ -77,7 +77,7 @@
+     descriptor = overlays["amdgpu.v_sub_u32.src0_inline"]
+ 
+     assert descriptor.instruction_name == (
+-        "V_SUB_U32" if target.startswith(("cdna", "gfx9_4")) else "V_SUB_NC_U32"
++        "V_SUB_U32" if target.startswith(("gcn5", "cdna", "gfx9_4")) else "V_SUB_NC_U32"
+     )
+     assert descriptor.semantic_tag == "integer.sub.u32"
+     assert tuple(
+@@ -95,7 +95,7 @@
+         overlay.descriptor_key: overlay
+         for overlay in _AMDGPU_CORE_DESCRIPTOR_SET_BUILDERS[target].overlay_rows()
+     }
+-    needs_neighbor = target.startswith(("cdna", "gfx9_4"))
++    needs_neighbor = target.startswith(("gcn5", "cdna", "gfx9_4"))
+     for mnemonic in ("v_lshlrev_b64", "v_lshrrev_b64", "v_ashrrev_i64"):
+         descriptor = overlays[f"amdgpu.{mnemonic}"]
+         result, shift, value = (
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/memory_test.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/memory_test.py
+@@ -214,7 +214,7 @@
+             f"amdgpu.global_store_b{width}_saddr",
+             f"amdgpu.scratch_store_b{width}_vaddr",
+             f"amdgpu.scratch_store_b{width}_saddr"
+-            if target == "cdna2"
++            if target in ("gcn5", "cdna2")
+             else f"amdgpu.scratch_store_b{width}_offset_only",
+             "amdgpu.buffer_store_dword"
+             if width == 32

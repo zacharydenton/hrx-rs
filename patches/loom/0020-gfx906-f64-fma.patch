@@ -1,0 +1,28 @@
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/sets.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/sets.py
+@@ -1016,4 +1016,7 @@
++    # GCN5 has FP64 FMA; the CDNA scalar-FMA group also contains later
++    # instructions and is deliberately excluded from this target above.
++    rows.extend(_v_fma_overlays(64))
+     return tuple(rows)
+ 
+ 
+ def _gfx906_core_overlay_descriptors(spec: AmdgpuIsaFactSource) -> tuple[Descriptor, ...]:
+--- /dev/null
++++ b/loom/py/loom/target/arch/amdgpu/gcn5_fp64_test.py
+@@ -0,0 +1,15 @@
++# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++"""GCN5 exact FP64 arithmetic needs the FMA family, without CDNA-only FMAC."""
++from loom.target.arch.amdgpu.descriptors import _gfx906_core_overlays
++
++
++def test_gcn5_exact_fp64_arithmetic_descriptors():
++    rows = _gfx906_core_overlays()
++    descriptors = {row.descriptor_key: row for row in rows}
++    assert len(descriptors) == len(rows)
++    for suffix in ("", ".neg_a", ".neg_a_one"):
++        assert descriptors["amdgpu.v_fma_f64" + suffix].instruction_name == "V_FMA_F64"
++    for name in ("v_div_scale_f64", "v_div_fmas_f64", "v_div_fixup_f64", "v_sqrt_f64"):
++        assert "amdgpu." + name in descriptors
++    assert "amdgpu.v_fmac_f64" not in descriptors
++    assert not any("mfma" in key for key in descriptors)

@@ -179,3 +179,34 @@ Completion profiles and bounded traces measure host-observed latency.
 - `onnx::Model`: owned graph indexes and checked attribute/tensor decoding.
 - `safetensors::FileView`: owned or mapped files, checked tensor ranges and page
   advice. See [native storage](STORAGE.md) for file-backed GPU loading.
+
+For a private cache of ordinary prepared GPU commands,
+`Buffer::exclusively_owned_with_commands(&[&command, ...])` can check ownership
+without treating the cache's own argument-buffer references as external users.
+It requires a whole non-imported allocation and counts actual retained operand
+handles in each unique, unshared, retired simple command. External views,
+cloned commands, retained completions, batches, dependencies, active leases and
+duplicate entries reject conservatively. Omitted commands that retain the buffer
+also cause rejection. The result is an ownership observation, not a reservation;
+keep the commands private and preserve normal dispatch/host-access ordering.
+
+### Awaited GFX9 argument storage
+
+`Queue::serial_dispatcher(maximum_argument_bytes)` creates a synchronous,
+scratch-free dispatcher for the qualified GFX9 PM4 full-scalar-cache protocol.
+`SerialGpuDispatcher::execute` packs current bindings, resets its private fence,
+submits, waits for retirement, and releases every operand owner before returning.
+It retains at most one 64 KiB argument page, one 64-byte fence extent, and the
+latest kernel metadata. Argument bounds are 1–4096 bytes. No prepared command or
+completion escapes; an execution error permanently rejects later execution and
+retains the uncertain command. Ordinary immutable `PreparedGpu` behavior is unchanged.
+Read-only `argument_snapshot` checks the latest successful packed bytes until the
+next execute; it does not prove historical GPU consumption.
+
+The gfx906 controls change kernels, source/output addresses and scalar arguments,
+check complete outputs and guards, verify released operand ownership, stable
+argument addresses, bounded storage, wrong-expectation snapshots, rejected arity
+and capacity, injected retained backing, and an injected uncertain state. A
+1024-i32 host benchmark measured about 92.7 us for ordinary prepare/wait/release
+and 13.5 us for serial execution; that component result is not a general GPU
+speed claim. MOSS separately qualifies selected full-panel PV consumers.

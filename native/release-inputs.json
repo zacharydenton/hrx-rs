@@ -11,7 +11,10 @@
       "0015-retain-partial-incoming-vmem-leases.patch": "03730e33b25542f8e261ce71b2bc1089ad0852bdb3b2028808a2af2ce2318141",
       "0016-honor-polled-feedback-and-active-masks.patch": "c20bcbb6d9f11ab123ed4a797dd6841d3f13a9a997a64ac139e11d549a6af4ae",
       "0017-bound-address-sanitizer-shadow-loads.patch": "e66298363fc997c05b45ac9c01a2c43a2e8f9ad307cd5236e3bcda465a12bfce",
-      "0018-gfx906-wave64.patch": "c032e1770e5bcc9cc83e2d79c977fc2ab395e4f34e844944d9b0e9bb41c89bc9"
+      "0018-gfx906-wave64.patch": "c032e1770e5bcc9cc83e2d79c977fc2ab395e4f34e844944d9b0e9bb41c89bc9",
+      "0019-gfx906-memory-coherence.patch": "1074517d216996a2cfeeae13e8e6a84997b1ea80219d6e9bb57127719641b8d6",
+      "0020-gfx906-f64-fma.patch": "5f989903a9ae6e8326bd3cfd31ab4f498a210e5e52056939d17b13bcde272174",
+      "0021-gfx906-descriptor-regressions.patch": "6e51bed542cef6bbc740d9e1875b3c87f56bf791f7a366962d32bfd546120713"
     }
   },
   "build_image": "docker.io/library/ubuntu@sha256:e5a4d6262ab5dbc25a85e60550dd7c87fd41a74fe43881534ed8288b2a7a3f8d",

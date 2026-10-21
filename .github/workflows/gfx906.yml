@@ -1,0 +1,24 @@
+name: gfx906
+on: [workflow_dispatch]
+permissions:
+  contents: read
+concurrency:
+  group: gfx906
+  cancel-in-progress: false
+jobs:
+  native:
+    runs-on: [self-hosted, linux, x64, gfx906]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - name: Provision and qualify the published native bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          export RUSTUP_TOOLCHAIN=stable
+          export XDG_CACHE_HOME="$RUNNER_TEMP/hrx-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          unset HRX_AMDF_LIBRARY HRX_FABRIC_LIBRARY HRX_RUNTIME_DIR HRX_LOOM_LIBRARY HRX_BUNDLE_MANIFEST HRX_OFFLINE
+          cargo run --locked --bin hrx -- prepare
+          native_dir="$(find "$XDG_CACHE_HOME/hrx/runtime" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          bash scripts/test-gfx906-hardware.sh "$native_dir"

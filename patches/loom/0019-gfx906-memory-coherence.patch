@@ -1,0 +1,114 @@
+--- a/loom/py/loom/target/arch/amdgpu/target_info.py
++++ b/loom/py/loom/target/arch/amdgpu/target_info.py
+@@ -239,6 +239,7 @@
+ AMDGPU_MEMORY_ORDERING_MODEL_GFX125 = "gfx125"
+ AMDGPU_MEMORY_ORDERING_MODEL_CDNA = "cdna"
+ AMDGPU_MEMORY_ORDERING_MODEL_CDNA2 = "cdna2"
++AMDGPU_MEMORY_ORDERING_MODEL_GCN5 = "gcn5"
+ AMDGPU_MEMORY_ORDERING_MODELS = (
+     AMDGPU_MEMORY_ORDERING_MODEL_NONE,
+     AMDGPU_MEMORY_ORDERING_MODEL_GFX11,
+@@ -246,6 +247,7 @@
+     AMDGPU_MEMORY_ORDERING_MODEL_GFX125,
+     AMDGPU_MEMORY_ORDERING_MODEL_CDNA,
+     AMDGPU_MEMORY_ORDERING_MODEL_CDNA2,
++    AMDGPU_MEMORY_ORDERING_MODEL_GCN5,
+ )
+ 
+ AMDGPU_VECTOR_MEMORY_CACHE_POLICY_ATTR_SCOPE = "scope"
+@@ -1408,7 +1410,7 @@
+         buffer_resource=AMDGPU_BUFFER_RESOURCE_INFO_BASE48_LEGACY,
+         vector_memory=AmdgpuDescriptorSetVectorMemoryInfo(
+             cache_policy_encoding=AMDGPU_VECTOR_MEMORY_CACHE_POLICY_ENCODING_CDNA2_GLC_SLC,
+-            ordering_model=AMDGPU_MEMORY_ORDERING_MODEL_CDNA,
++            ordering_model=AMDGPU_MEMORY_ORDERING_MODEL_GCN5,
+         ),
+     ),
+     AmdgpuDescriptorSetInfo(
+--- a/loom/src/loom/target/arch/amdgpu/target_info_defs.h
++++ b/loom/src/loom/target/arch/amdgpu/target_info_defs.h
+@@ -544,6 +544,8 @@
+   LOOM_AMDGPU_MEMORY_ORDERING_MODEL_CDNA = 4,
+   // CDNA2 write-through L1 and system-scope L2 writeback/invalidation.
+   LOOM_AMDGPU_MEMORY_ORDERING_MODEL_CDNA2 = 5,
++  // GCN5 write-through vector L1 with legacy volatile invalidation.
++  LOOM_AMDGPU_MEMORY_ORDERING_MODEL_GCN5 = 6,
+ } loom_amdgpu_memory_ordering_model_t;
+ 
+ typedef struct loom_amdgpu_descriptor_set_sopp_opcodes_t {
+--- a/loom/src/loom/target/arch/amdgpu/lower/memory_coherence.c
++++ b/loom/src/loom/target/arch/amdgpu/lower/memory_coherence.c
+@@ -239,6 +239,39 @@
+                 {
+                     .cache_scope = LOOM_CACHE_SCOPE_WORKGROUP,
+                     .release_wait_masks = {LOOM_AMDGPU_WAIT_COUNTER_MASK_LDS |
++                                           LOOM_AMDGPU_WAIT_COUNTER_MASK_SMEM},
++                    .release_wait_count = 1,
++                },
++        },
++    [LOOM_AMDGPU_MEMORY_ORDERING_MODEL_GCN5] =
++        {
++            // GFX6-GFX9 HSA ordering: GLC observations bypass vector L1;
++            // release drains prior memory and acquire invalidates vector L1.
++            // GCN5 has neither BUFFER_INV nor the CDNA2 L2 control packets.
++            .load_attrs =
++                {
++                    [LOOM_CACHE_SCOPE_DEVICE] =
++                        LOOM_AMDGPU_MEMORY_COHERENCE_ATTR_GLC,
++                    [LOOM_CACHE_SCOPE_SYSTEM] =
++                        LOOM_AMDGPU_MEMORY_COHERENCE_ATTR_GLC,
++                },
++            .release_wait_masks = {LOOM_AMDGPU_WAIT_COUNTER_MASK_VMEM_LOAD |
++                                   LOOM_AMDGPU_WAIT_COUNTER_MASK_VMEM_STORE |
++                                   LOOM_AMDGPU_WAIT_COUNTER_MASK_LDS |
++                                   LOOM_AMDGPU_WAIT_COUNTER_MASK_SMEM},
++            .release_wait_count = 1,
++            .local_wait_mask = LOOM_AMDGPU_WAIT_COUNTER_MASK_LDS |
++                               LOOM_AMDGPU_WAIT_COUNTER_MASK_SMEM,
++            .invalidates = {{.descriptor_ref =
++                                 LOOM_AMDGPU_DESCRIPTOR_REF_BUFFER_WBINVL1_VOL,
++                             .minimum_scope = LOOM_CACHE_SCOPE_DEVICE}},
++            .invalidate_count = 1,
++            .workgroup =
++                {
++                    .cache_scope = LOOM_CACHE_SCOPE_WORKGROUP,
++                    .release_wait_masks = {LOOM_AMDGPU_WAIT_COUNTER_MASK_VMEM_LOAD |
++                                           LOOM_AMDGPU_WAIT_COUNTER_MASK_VMEM_STORE |
++                                           LOOM_AMDGPU_WAIT_COUNTER_MASK_LDS |
+                                            LOOM_AMDGPU_WAIT_COUNTER_MASK_SMEM},
+                     .release_wait_count = 1,
+                 },
+--- a/loom/py/loom/target/arch/amdgpu/target_info_test.py
++++ b/loom/py/loom/target/arch/amdgpu/target_info_test.py
+@@ -98,6 +98,7 @@
+     assert {register.register_class for register in processor.occupancy.wave64.register_classes} == {
+         "amdgpu.sgpr", "amdgpu.vgpr"}
+     donor = amdgpu_descriptor_set_info_by_generator_target("gcn5")
++    assert donor.vector_memory.ordering_model == "gcn5"
+     validate_amdgpu_descriptor_set_isa_xml(donor, _IsaArchitecture("cdna1", "AMD CDNA 1", 0))
+ 
+ 
+--- a/loom/py/loom/target/arch/amdgpu/descriptors_test.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors_test.py
+@@ -6890,3 +6890,9 @@
+         "sc0",
+         "sc1",
+     )
++
++
++def test_gcn5_coherence_uses_legacy_cache_packets() -> None:
++    names = set(amdgpu_core_descriptor_set_instruction_names("gcn5"))
++    assert "BUFFER_WBINVL1_VOL" in names
++    assert not {"BUFFER_INV", "BUFFER_INVL2", "BUFFER_WBL2"} & names
+--- a/loom/py/loom/target/arch/amdgpu/descriptors/sets.py
++++ b/loom/py/loom/target/arch/amdgpu/descriptors/sets.py
+@@ -1013,6 +1013,9 @@
+                 mnemonic=row.mnemonic.replace("v_mad_mix", "v_fma_mix"),
+                 semantic_tag=row.semantic_tag.replace("float.mad.mix", "float.fma.mix"))
+         rows.append(row)
++    # GCN5 retains the legacy vector-L1 invalidate, not CDNA L2 controls.
++    rows.extend(row for row in _cdna_cache_control_overlays(isa_generation=2)
++                if row.instruction_name == "BUFFER_WBINVL1_VOL")
+     return tuple(rows)
+ 
+ 

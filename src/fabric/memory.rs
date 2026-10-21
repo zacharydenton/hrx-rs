@@ -41,7 +41,7 @@ impl AllocationOptions {
 /// Owned backing with explicit device access and checked host transfers.
 /// Device-only local buffers reject host operations and require device copies.
 #[derive(Clone)]
-pub struct Buffer(pub(super) Arc<Memory>);
+pub struct Buffer(pub(super) Arc<Memory>, usize, usize);
 pub(super) struct Memory {
     pub(super) instance: Arc<Instance>,
     pub(super) devices: Vec<Device>,
@@ -89,8 +89,50 @@ impl Buffer {
     pub(crate) fn same_backing(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
-    pub(crate) fn exclusively_owned(&self) -> bool {
-        Arc::strong_count(&self.0) == 1
+    /// Whether this whole-allocation handle is its only retained Buffer owner.
+    /// Prepared commands and in-flight work retain owners and prevent reuse.
+    /// This does not replace completion waits for externally managed raw accesses.
+    pub fn exclusively_owned(&self) -> bool {
+        self.is_whole_allocation() && self.0.source.is_none() && Arc::strong_count(&self.0) == 1
+    }
+    /// Whether this whole allocation is owned only by this handle and the given
+    /// private, unshared, retired simple commands. This is an observation, not a
+    /// reservation: callers must keep commands private and order later accesses.
+    /// Cloned commands, completions, batches, dependencies and duplicate entries
+    /// are conservatively rejected. External Buffer views/owners still reject.
+    pub fn exclusively_owned_with_commands(&self, commands: &[&PreparedGpu]) -> bool {
+        if !self.is_whole_allocation() || self.0.source.is_some() {
+            return false;
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut expected = 1usize;
+        for command in commands {
+            let Some((identity, owners)) = command.private_retired_buffer_owners(self) else {
+                return false;
+            };
+            if !seen.insert(identity) {
+                return false;
+            }
+            let Some(total) = expected.checked_add(owners) else {
+                return false;
+            };
+            expected = total;
+        }
+        Arc::strong_count(&self.0) == expected
+    }
+    pub(super) fn is_whole_allocation(&self) -> bool {
+        self.1 == 0 && self.2 == self.0.bytes
+    }
+    /// Retain a nonempty checked byte subrange of this buffer.
+    /// Views share the backing's device leases and host cache policy. Dropping
+    /// the parent does not invalidate a view. Alignment remains the consumer's
+    /// responsibility. Native imports and XDNA bindings require whole buffers.
+    pub fn view(&self, offset: usize, length: usize) -> Result<Self> {
+        self.range(offset, length)?;
+        if length == 0 {
+            return Err(Error::Message("buffer views must be nonempty".into()));
+        }
+        Ok(Self(self.0.clone(), self.1 + offset, length))
     }
     pub(crate) fn zero(&self) -> Result<()> {
         self.require_host_mapping()?;
@@ -138,8 +180,7 @@ impl Buffer {
                 ));
             }
             Ok(self
-                .0
-                .pointer
+                .host_pointer()
                 .cast::<std::sync::atomic::AtomicU32>()
                 .as_ref()
                 .unwrap()
@@ -147,7 +188,11 @@ impl Buffer {
         }
     }
     pub(crate) fn host_pointer(&self) -> *mut u8 {
-        self.0.pointer
+        if self.0.pointer.is_null() {
+            ptr::null_mut()
+        } else {
+            self.0.pointer.wrapping_add(self.1)
+        }
     }
     /// Publish or acquire a mapped range under an external scheduling lease.
     ///
@@ -157,6 +202,7 @@ impl Buffer {
     pub unsafe fn cache_control(&self, flush: bool, offset: usize, length: usize) -> Result<()> {
         self.range(offset, length)?;
         self.require_host_mapping()?;
+        let offset = self.1 + offset;
         // Owned imports retain the original mapping as the maintenance site
         // for these exact physical bytes, including its cache-policy contract.
         if let Some(source) = &self.0.source {
@@ -185,7 +231,7 @@ impl Buffer {
     }
     /// Logical byte length; allocation rounding grants no additional access.
     pub fn len(&self) -> usize {
-        self.0.bytes
+        self.2
     }
     /// Allocations are always nonempty.
     pub fn is_empty(&self) -> bool {
@@ -223,8 +269,100 @@ impl Buffer {
             // A partial host write must preserve bytes in the same cache line
             // that the GPU may have changed since the last host read.
             self.cache_control(false, offset, bytes.len())?;
-            ptr::copy_nonoverlapping(bytes.as_ptr(), self.0.pointer.add(offset), bytes.len());
+            ptr::copy_nonoverlapping(bytes.as_ptr(), self.host_pointer().add(offset), bytes.len());
             self.cache_control(true, offset, bytes.len())
+        }
+    }
+    /// Fill and publish a host-mapped range directly from a file without a
+    /// temporary byte vector. In-flight device use returns Busy. The file's
+    /// cursor is unchanged. A read error can leave partial bytes, which are
+    /// published before returning the error; callers must not consume them.
+    pub fn write_from_file(
+        &self,
+        offset: usize,
+        length: usize,
+        file: &std::fs::File,
+        file_offset: u64,
+    ) -> Result<()> {
+        use std::os::unix::fs::FileExt;
+        self.range(offset, length)?;
+        file_offset
+            .checked_add(length as u64)
+            .ok_or_else(|| Error::Message("file range overflows".into()))?;
+        let uses = self
+            .0
+            .uses
+            .lock()
+            .map_err(|_| Error::DeviceLost("memory ownership poisoned".into()))?;
+        if *uses != 0 {
+            return Err(Error::Busy("buffer is in use by a device".into()));
+        }
+        // SAFETY: validated mapped range, exclusive host/device admission lock,
+        // and no borrowed mapping escapes the synchronous file operation.
+        unsafe {
+            self.cache_control(false, offset, length)?;
+            let result = file.read_exact_at(
+                std::slice::from_raw_parts_mut(self.host_pointer().add(offset), length),
+                file_offset,
+            );
+            self.cache_control(true, offset, length)?;
+            result.map_err(Error::from)
+        }
+    }
+    /// Fill a mapped range with up to eight parallel positional file reads.
+    /// Holds exclusive host/device admission until every worker joins and the
+    /// entire range is published. Errors may leave partial published bytes;
+    /// callers must not consume the range on error. The file cursor is unchanged.
+    pub fn write_from_file_parallel(
+        &self,
+        offset: usize,
+        length: usize,
+        file: &std::fs::File,
+        file_offset: u64,
+        workers: usize,
+    ) -> Result<()> {
+        use std::os::unix::fs::FileExt;
+        if !(1..=8).contains(&workers) {
+            return Err(Error::Message("parallel file workers must be1..8".into()));
+        }
+        if workers == 1 || length == 0 {
+            return self.write_from_file(offset, length, file, file_offset);
+        }
+        self.range(offset, length)?;
+        file_offset
+            .checked_add(length as u64)
+            .ok_or_else(|| Error::Message("file range overflows".into()))?;
+        let uses = self
+            .0
+            .uses
+            .lock()
+            .map_err(|_| Error::DeviceLost("memory ownership poisoned".into()))?;
+        if *uses != 0 {
+            return Err(Error::Busy("buffer is in use by a device".into()));
+        }
+        // SAFETY: validated mapped extent and exclusive admission lock. Scoped
+        // workers borrow disjoint mutable slices and all join before publication
+        // or releasing the lock; no mapping reference escapes this operation.
+        unsafe {
+            self.cache_control(false, offset, length)?;
+            let target = std::slice::from_raw_parts_mut(self.host_pointer().add(offset), length);
+            let chunk_bytes = length.div_ceil(workers);
+            let result = std::thread::scope(|scope| -> std::io::Result<()> {
+                let mut handles = Vec::with_capacity(workers);
+                for (index, chunk) in target.chunks_mut(chunk_bytes).enumerate() {
+                    handles.push(std::thread::Builder::new().spawn_scoped(scope, move || {
+                        file.read_exact_at(chunk, file_offset + (index * chunk_bytes) as u64)
+                    })?);
+                }
+                for handle in handles {
+                    handle
+                        .join()
+                        .map_err(|_| std::io::Error::other("file read worker panicked"))??;
+                }
+                Ok(())
+            });
+            self.cache_control(true, offset, length)?;
+            result.map_err(Error::from)
         }
     }
     /// Acquire and copy completed device results. In-flight use returns Busy.
@@ -240,7 +378,11 @@ impl Buffer {
         }
         unsafe {
             self.cache_control(false, offset, bytes.len())?;
-            ptr::copy_nonoverlapping(self.0.pointer.add(offset), bytes.as_mut_ptr(), bytes.len());
+            ptr::copy_nonoverlapping(
+                self.host_pointer().add(offset),
+                bytes.as_mut_ptr(),
+                bytes.len(),
+            );
         }
         Ok(())
     }
@@ -260,7 +402,10 @@ impl Buffer {
         }
         unsafe {
             self.cache_control(false, 0, self.len())?;
-            let result = action(std::slice::from_raw_parts_mut(self.0.pointer, self.len()));
+            let result = action(std::slice::from_raw_parts_mut(
+                self.host_pointer(),
+                self.len(),
+            ));
             self.cache_control(true, 0, self.len())?;
             result
         }
@@ -276,7 +421,13 @@ impl Buffer {
         let Some(index) = index else {
             return self.0.source.as_ref().map_or_else(
                 || Err(Error::Message("device has no access to this buffer".into())),
-                |source| source.device_address(device),
+                |source| {
+                    source.device_address(device).and_then(|address| {
+                        address
+                            .checked_add(self.1 as u64)
+                            .ok_or_else(|| Error::Message("buffer view address overflow".into()))
+                    })
+                },
             );
         };
         let kind = match device.endpoint().engine() {
@@ -292,7 +443,9 @@ impl Buffer {
                 &mut address,
             )
         })?;
-        Ok(address)
+        address
+            .checked_add(self.1 as u64)
+            .ok_or_else(|| Error::Message("buffer view address overflow".into()))
     }
 }
 
@@ -632,6 +785,11 @@ impl Fabric {
         let _ = entry!(api, host_mapping_destroy);
         let _ = entry!(api, host_mapping_cache_control);
         let mut external = if let Some(source) = &owners.source {
+            if !source.is_whole_allocation() {
+                return Err(Error::Unsupported(
+                    "native imports require a whole buffer".into(),
+                ));
+            }
             let _ = entry!(api, external_memory_release);
             let mut external = ExternalMemory {
                 api: self.0.api.clone(),
@@ -871,7 +1029,7 @@ impl Fabric {
                         .map_or_else(|| Arc::new(Mutex::new(0)), |source| source.0.uses.clone()),
                 };
                 if owners.device_only {
-                    return Ok(Buffer(Arc::new(memory)));
+                    return Ok(Buffer(Arc::new(memory), 0, bytes));
                 }
                 let options = amdf_memory_map_info_t {
                     type_: AMDF_STRUCTURE_TYPE_MEMORY_MAP_INFO,
@@ -907,7 +1065,7 @@ impl Fabric {
                         }
                     }
                 }
-                let buffer = Buffer(Arc::new(memory));
+                let buffer = Buffer(Arc::new(memory), 0, bytes);
                 unsafe {
                     buffer.cache_control(true, 0, bytes)?;
                 }
@@ -917,6 +1075,244 @@ impl Fabric {
         Err(Error::Unsupported(
             "no memory profile admits the requested placement and consumers".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod file_fill_tests {
+    use super::*;
+    use std::io::{Seek, SeekFrom, Write};
+    #[test]
+    #[ignore = "requires a provisioned GPU and native libraries"]
+    fn cached_commands_exclusive_ownership_rejects_external_aliases() -> Result<()> {
+        let device = Device::open(Engine::Gpu, 0)?;
+        let fabric = device.fabric();
+        let queue = device.queue()?;
+        for coherent in [false, true] {
+            let root = if coherent {
+                fabric.allocate_shared(512, std::slice::from_ref(&device))?
+            } else {
+                fabric.allocate(512, std::slice::from_ref(&device))?
+            };
+            root.write(0, &[0xa5; 512])?;
+            let source = fabric.allocate_shared(64, std::slice::from_ref(&device))?;
+            let payload: Vec<u8> = (0..64).map(|x| ((x * 131) ^ 37) as u8).collect();
+            source.write(0, &payload)?;
+            assert!(root.exclusively_owned_with_commands(&[]));
+            let first = queue.prepare_copy(&root, 64, &source, 0, 64)?;
+            let second = queue.prepare_copy(&root, 192, &source, 0, 64)?;
+            assert!(!root.exclusively_owned());
+            assert!(root.exclusively_owned_with_commands(&[&first, &second]));
+            assert!(!root.exclusively_owned_with_commands(&[&first]));
+            // Without duplicate detection two copies of the first entry would
+            // overcount exactly one owner and could hide an external alias.
+            assert!(!root.exclusively_owned_with_commands(&[&first, &first]));
+            let view = root.view(64, 64)?;
+            assert!(!root.exclusively_owned_with_commands(&[&first, &second]));
+            assert!(!view.exclusively_owned_with_commands(&[&first, &second]));
+            drop(view);
+            let clone = first.clone();
+            assert!(!root.exclusively_owned_with_commands(&[&first, &second]));
+            drop(clone);
+            assert!(root.exclusively_owned_with_commands(&[&first, &second]));
+            // SAFETY: retained initialized buffers and ordered copy are valid;
+            // this command is only used to check conservative batch rejection.
+            let batch = unsafe { queue.prepare_batch(&[(first.clone(), false)]) }?;
+            assert!(!root.exclusively_owned_with_commands(&[&first, &second]));
+            assert!(!root.exclusively_owned_with_commands(&[&batch]));
+            drop(batch);
+            assert!(root.exclusively_owned_with_commands(&[&first, &second]));
+            // SAFETY: source initialized, distinct checked target extent, all
+            // owners retained and host access waits for explicit retirement.
+            let completion = unsafe { first.dispatch() }?;
+            assert!(!root.exclusively_owned_with_commands(&[&first, &second]));
+            assert!(matches!(root.read(0, &mut [0]), Err(Error::Busy(_))));
+            completion.wait()?;
+            assert!(!root.exclusively_owned_with_commands(&[&first, &second]));
+            drop(completion);
+            assert!(root.exclusively_owned_with_commands(&[&first, &second]));
+            for iteration in 0..4u8 {
+                let data: Vec<u8> = payload.iter().map(|&x| x ^ iteration).collect();
+                source.write(0, &data)?;
+                // SAFETY: preceding copy retired; both copies remain checked
+                // and disjoint, source publication precedes each replay.
+                unsafe { first.dispatch() }?.wait()?;
+                // SAFETY: same retained validated copy; previous replay retired.
+                unsafe { second.dispatch() }?.wait()?;
+                let mut observed = [0; 512];
+                root.read(0, &mut observed)?;
+                let mut expected = [0xa5; 512];
+                expected[64..128].copy_from_slice(&data);
+                expected[192..256].copy_from_slice(&data);
+                assert_eq!(observed, expected);
+                assert!(root.exclusively_owned_with_commands(&[&first, &second]));
+            }
+            drop(first);
+            drop(second);
+            assert!(root.exclusively_owned());
+        }
+        Ok(())
+    }
+    #[test]
+    #[ignore = "requires a provisioned GPU and native libraries"]
+    fn checked_buffer_views_preserve_bounds_leases_and_owners() -> Result<()> {
+        let device = Device::open(Engine::Gpu, 0)?;
+        let fabric = device.fabric();
+        for coherent in [false, true] {
+            let root = if coherent {
+                fabric.allocate_shared(1024, std::slice::from_ref(&device))?
+            } else {
+                fabric.allocate(1024, std::slice::from_ref(&device))?
+            };
+            root.write(0, &[0xa5; 1024])?;
+            let address = root.device_address(&device)?;
+            assert!(root.view(0, 0).is_err());
+            assert!(root.view(1024, 1).is_err());
+            assert!(root.view(usize::MAX, 2).is_err());
+            assert!(root.view(1, usize::MAX).is_err());
+            let view = root.view(128, 512)?;
+            let nested = view.view(64, 256)?;
+            assert_eq!(nested.len(), 256);
+            assert_eq!(nested.device_address(&device)?, address + 192);
+            assert!(!view.exclusively_owned());
+            assert!(!root.exclusively_owned());
+            assert!(nested.view(255, 2).is_err());
+            assert!(nested.write(256, &[1]).is_err());
+            nested.write(0, &[0x37; 256])?;
+            let mut actual = [0; 1024];
+            root.read(0, &mut actual)?;
+            assert_eq!(&actual[..192], &[0xa5; 192]);
+            assert_eq!(&actual[192..448], &[0x37; 256]);
+            assert_eq!(&actual[448..], &[0xa5; 576]);
+            let lease = nested.retain_use()?;
+            assert!(matches!(root.write(0, &[1]), Err(Error::Busy(_))));
+            assert!(matches!(view.read(0, &mut [0]), Err(Error::Busy(_))));
+            drop(lease);
+            let mut file = tempfile::tempfile()?;
+            file.write_all(&[0x4b; 64])?;
+            nested.write_from_file_parallel(32, 64, &file, 0, 2)?;
+            let mut bytes = [0; 256];
+            nested.read(0, &mut bytes)?;
+            assert_eq!(&bytes[32..96], &[0x4b; 64]);
+            assert_eq!(&bytes[..32], &[0x37; 32]);
+            assert_eq!(&bytes[96..], &[0x37; 160]);
+            let destination = fabric.allocate(1024, std::slice::from_ref(&device))?;
+            destination.write(0, &[0xcc; 1024])?;
+            let target = destination.view(320, 256)?;
+            let queue = device.queue()?;
+            assert!(queue.prepare_copy(&view, 64, &nested, 0, 256).is_err());
+            let command = queue.prepare_copy(&target, 0, &nested, 0, 256)?;
+            drop(root);
+            drop(view);
+            drop(nested);
+            drop(target);
+            // Prepared work owns both complete backing allocations even after
+            // every source view and the parent have been dropped.
+            unsafe { command.dispatch() }?.wait()?;
+            let mut copied = [0; 1024];
+            destination.read(0, &mut copied)?;
+            assert_eq!(&copied[..320], &[0xcc; 320]);
+            assert_eq!(&copied[320..576], &bytes);
+            assert_eq!(&copied[576..], &[0xcc; 448]);
+            drop(command);
+            assert!(destination.exclusively_owned());
+            let survivor = destination.view(320, 256)?;
+            drop(destination);
+            assert!(!survivor.exclusively_owned());
+            let mut actual = [0; 256];
+            survivor.read(0, &mut actual)?;
+            assert_eq!(actual, bytes);
+        }
+        Ok(())
+    }
+    #[test]
+    #[ignore = "requires a provisioned GPU and native libraries"]
+    fn parallel_file_reads_preserve_guards_and_leases() -> Result<()> {
+        let device = Device::open(Engine::Gpu, 0)?;
+        let fabric = device.fabric();
+        let data: Vec<u8> = (0..131072usize)
+            .map(|i| ((i * 7919) ^ (i >> 5)) as u8)
+            .collect();
+        let mut file = tempfile::tempfile()?;
+        file.write_all(&data)?;
+        file.seek(SeekFrom::Start(13))?;
+        for coherent in [false, true] {
+            for bytes in [1usize, 7, 63, 4097, 65539] {
+                for workers in [1usize, 2, 3, 4, 8] {
+                    let buffer = if coherent {
+                        fabric.allocate_shared(bytes + 74, std::slice::from_ref(&device))?
+                    } else {
+                        fabric.allocate(bytes + 74, std::slice::from_ref(&device))?
+                    };
+                    let original = vec![0xa5; bytes + 74];
+                    buffer.write(0, &original)?;
+                    let lease = buffer.retain_use()?;
+                    assert!(matches!(
+                        buffer.write_from_file_parallel(37, bytes, &file, 19, workers),
+                        Err(Error::Busy(_))
+                    ));
+                    drop(lease);
+                    let mut actual = vec![0; bytes + 74];
+                    buffer.read(0, &mut actual)?;
+                    assert_eq!(actual, original);
+                    buffer.write_from_file_parallel(37, bytes, &file, 19, workers)?;
+                    buffer.read(0, &mut actual)?;
+                    assert_eq!(&actual[..37], &original[..37]);
+                    assert_eq!(&actual[37..37 + bytes], &data[19..19 + bytes]);
+                    assert_eq!(&actual[37 + bytes..], &original[37 + bytes..]);
+                    assert_eq!(file.stream_position()?, 13);
+                    let expected = actual.clone();
+                    for invalid in [0, 9] {
+                        assert!(
+                            buffer
+                                .write_from_file_parallel(37, bytes, &file, 19, invalid)
+                                .is_err()
+                        );
+                    }
+                    assert!(
+                        buffer
+                            .write_from_file_parallel(37, bytes, &file, u64::MAX, workers)
+                            .is_err()
+                    );
+                    assert!(
+                        buffer
+                            .write_from_file_parallel(bytes + 74, 1, &file, 19, workers)
+                            .is_err()
+                    );
+                    buffer.read(0, &mut actual)?;
+                    assert_eq!(actual, expected);
+                    assert!(
+                        buffer
+                            .write_from_file_parallel(37, bytes, &file, data.len() as u64, workers)
+                            .is_err()
+                    );
+                    buffer.read(0, &mut actual)?;
+                    assert_eq!(&actual[..37], &original[..37]);
+                    assert_eq!(&actual[37 + bytes..], &original[37 + bytes..]);
+                    if bytes > 1 {
+                        assert!(
+                            buffer
+                                .write_from_file_parallel(
+                                    37,
+                                    bytes,
+                                    &file,
+                                    data.len() as u64 - 1,
+                                    workers
+                                )
+                                .is_err()
+                        );
+                        buffer.read(0, &mut actual)?;
+                        assert_eq!(actual[37], data[data.len() - 1]);
+                        assert_eq!(&actual[..37], &original[..37]);
+                        assert_eq!(&actual[37 + bytes..], &original[37 + bytes..]);
+                    }
+                    buffer.write_from_file_parallel(37, bytes, &file, 19, workers)?;
+                    buffer.read(0, &mut actual)?;
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+        Ok(())
     }
 }
 

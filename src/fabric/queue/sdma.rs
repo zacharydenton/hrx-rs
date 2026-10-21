@@ -33,10 +33,15 @@ impl Queue {
     }
     fn sdma_visibility(&self, buffer: &Buffer) -> Result<()> {
         let device = MemorySite::Device(self.device(), self.family_ordinal());
-        for plan in [
-            buffer.visibility(MemorySite::Host, device)?,
-            buffer.visibility(device, MemorySite::Host)?,
-        ] {
+        // Device-only allocations have no host mapping to query. Still require
+        // the provider to qualify backing reachability and SDMA cache actions.
+        let sites = if buffer.host_pointer().is_null() {
+            [(device, device), (device, device)]
+        } else {
+            [(MemorySite::Host, device), (device, MemorySite::Host)]
+        };
+        for (producer, consumer) in sites {
+            let plan = buffer.visibility(producer, consumer)?;
             if !plan.shared_backing_reachable {
                 return Err(Error::Unsupported(
                     "SDMA cannot reach shared backing".into(),
@@ -110,6 +115,7 @@ impl Queue {
             prefix: Default::default(),
             queue: self.clone(),
             inner: Arc::new(PreparedInner {
+                argument_binding: None,
                 storage_bytes: fence.len(),
                 work: Arc::new(Work {
                     fence,

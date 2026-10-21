@@ -283,6 +283,11 @@ impl Device {
         let mut native = Vec::with_capacity(bindings.len());
         let mut buffers = Vec::with_capacity(bindings.len());
         for binding in bindings {
+            if !binding.buffer.is_whole_allocation() {
+                return Err(Error::Unsupported(
+                    "XDNA bindings require a whole buffer".into(),
+                ));
+            }
             if binding.length == 0
                 || binding
                     .offset

@@ -5,7 +5,7 @@
     "libamdf.so": {
       "project": "HRX / libamdf / Loom / hrx-rs native bridge",
       "version": "61c152ac4b40dd758803a2cbcd237184a8dfb669",
-      "sha256": "bb5a02441616698251669944a9126bbda327407779813e660a77643db10b0d2f",
+      "sha256": "5ecbb6c18a670db8732deed771a4e8cbc841bee7a9d938a9e60549e5a125d0b6",
       "needed": [
         "libm.so.6",
         "libc.so.6"
@@ -125,7 +125,7 @@
     "libloomc.so": {
       "project": "HRX / libamdf / Loom / hrx-rs native bridge",
       "version": "61c152ac4b40dd758803a2cbcd237184a8dfb669",
-      "sha256": "09f3a3d410f6dfe3bbd97a2c6a19a2fad861d9d77730bc59749f29e5705ff46b",
+      "sha256": "2117deca449a0fddc45828c2b4a58ee450544b694849c549d6a85103ad7809ee",
       "needed": [
         "libm.so.6",
         "libstdc++.so.6",
@@ -247,7 +247,7 @@
     "libhrx_fabric.so": {
       "project": "HRX / libamdf / Loom / hrx-rs native bridge",
       "version": "61c152ac4b40dd758803a2cbcd237184a8dfb669",
-      "sha256": "fd955ca8dc55d10073980d02b59260189648f2aac692d6c7f8a571b1ea02c553",
+      "sha256": "f57f9d763bc93b956eda6a9a5435a345f8d4bae8c9f94fd43518cdb4de49c8c7",
       "needed": [
         "libm.so.6",
         "libc.so.6",
@@ -413,8 +413,8 @@
     }
   },
   "corresponding_source": {
-    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20261015-61c152ac4b/hrx-native-sources.tar.gz",
-    "sha256": "a113e8baaaf79b26b0498fac8d113d9ca42900c05e430f10c728d869e3b534ff"
+    "url": "https://github.com/zacharydenton/hrx-rs/releases/download/native-20261021-gfx906/hrx-native-sources.tar.gz",
+    "sha256": "715fe7f3c758402e26bb9163cb2ae82d0a764b7b71f5ac430c06a48ec40b6581"
   },
   "system_dependencies_not_shipped": [
     "ld-linux-x86-64.so.2",
