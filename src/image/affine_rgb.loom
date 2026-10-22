@@ -1,5 +1,5 @@
 // Source extents substituted by prepare_affine_rgb; inverse matrices are data.
-amdgpu.target<gfx11-generic> @affine_target {subgroup_size = 32}
+@TARGET@
 kernel.def target(@affine_target) export("affine_rgb") @affine_rgb(%unused: index) {
   %one = index.constant 1 : index
   %threads = index.constant 256 : index

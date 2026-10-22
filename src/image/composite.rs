@@ -93,8 +93,12 @@ impl ImageOps {
             let mut bindings = inputs.iter().map(|(r, _)| r.read()).collect::<Vec<_>>();
             bindings.push(dst.write());
             // The source guards float-to-integer conversion and bounds every access.
-            let kernel =
-                unsafe { model.compile(&[(&source, Specialization::new("composite_rgb"))])? }[0];
+            let kernel = unsafe {
+                model.compile(&[(
+                    &source.replace("@TARGET@", &model.target().loom_record("composite_target")),
+                    Specialization::new("composite_rgb"),
+                )])?
+            }[0];
             unsafe {
                 model.freeze(&self.context)?.fragment(
                     &[Command::Dispatch(Dispatch::indices(

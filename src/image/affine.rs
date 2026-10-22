@@ -187,7 +187,12 @@ impl ImageOps {
             args.push(geometry.read());
         }
         // Kernel loads are guarded before conversion and bounded to these extents.
-        let kernel = unsafe { model.compile(&[(&source, Specialization::new("affine_rgb"))])? }[0];
+        let kernel = unsafe {
+            model.compile(&[(
+                &source.replace("@TARGET@", &model.target().loom_record("affine_target")),
+                Specialization::new("affine_rgb"),
+            )])?
+        }[0];
         unsafe {
             model.freeze(&self.context)?.fragment(
                 &[Command::Dispatch(Dispatch::indices(

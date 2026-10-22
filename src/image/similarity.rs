@@ -172,8 +172,12 @@ impl ImageOps {
         let forward = model.allocate(matrices.bytes())?;
         let inverse = model.allocate(matrices.bytes())?;
         let flags = model.allocate_shared(status.bytes())?;
-        let kernel =
-            unsafe { model.compile(&[(&source, Specialization::new("similarity_2d"))])? }[0];
+        let kernel = unsafe {
+            model.compile(&[(
+                &source.replace("@TARGET@", &model.target().loom_record("similarity_target")),
+                Specialization::new("similarity_2d"),
+            )])?
+        }[0];
         unsafe {
             model.freeze(&self.context)?.fragment(
                 &[Command::Dispatch(Dispatch::indices(

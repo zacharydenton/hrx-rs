@@ -1,4 +1,4 @@
-amdgpu.target<gfx11-generic> @resize_target {subgroup_size = 32}
+@TARGET@
 kernel.def target(@resize_target) export("resize_rgb") @resize_rgb(%unused: index) {
   %one = index.constant 1 : index
   %threads = index.constant 256 : index

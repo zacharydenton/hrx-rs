@@ -121,6 +121,52 @@ impl StreamTimeline {
     }
 }
 impl Inner {
+    /// Discrete GPUs keep stream allocations in VRAM. Host bytes reach that
+    /// storage through system staging and a device copy, never a mapping.
+    fn device_local(&self) -> bool {
+        self.device.target().as_str() == "gfx906"
+    }
+    /// Copy host bytes into device-only storage and wait for completion. The
+    /// uncached command keeps the transient staging out of the transfer cache.
+    fn stage(self: &Arc<Self>, dst: View<'_>, bytes: &[u8]) -> Result<()> {
+        if bytes.len() != dst.len() {
+            return Err(Error::Message("staged upload requires equal spans".into()));
+        }
+        let staging = self
+            .device
+            .fabric()
+            .allocate_from(bytes, std::slice::from_ref(&self.device))?;
+        let copy =
+            self.queue
+                .prepare_copy(&dst.owner.native, dst.offset, &staging, 0, bytes.len())?;
+        self.submit(&Command::Gpu(copy, 0))?;
+        self.wait()
+    }
+    /// Read device-only storage through system staging after preceding work.
+    fn unstage(self: &Arc<Self>, src: View<'_>, bytes: &mut [u8]) -> Result<()> {
+        if bytes.len() != src.len() {
+            return Err(Error::Message(
+                "staged readback requires equal spans".into(),
+            ));
+        }
+        let staging = self
+            .device
+            .fabric()
+            .allocate(bytes.len(), std::slice::from_ref(&self.device))?;
+        let copy =
+            self.queue
+                .prepare_copy(&staging, 0, &src.owner.native, src.offset, bytes.len())?;
+        self.submit(&Command::Gpu(copy, 0))?;
+        self.wait()?;
+        staging.read(0, bytes)
+    }
+    fn fill_now(self: &Arc<Self>, dst: View<'_>, value: u8) -> Result<()> {
+        let fill = self
+            .queue
+            .prepare_fill(&dst.owner.native, dst.offset, dst.length, value)?;
+        self.submit(&Command::Gpu(fill, 0))?;
+        self.wait()
+    }
     fn submit(&self, command: &Command) -> Result<()> {
         self.timeline.submit(|| {
             if let Some(previous) = self.timeline.snapshot()?
@@ -553,7 +599,13 @@ impl Buffer {
     /// Ordinary allocations additionally require `cache_control` before host
     /// reads (including partial cache-line updates) and after host writes;
     /// `allocate_shared` omits that requirement.
+    /// Device-local storage on discrete GPUs has no mapping and returns Unsupported.
     pub fn device_ptr(&self) -> Result<*mut std::ffi::c_void> {
+        if self.native.is_device_only() {
+            return Err(Error::Unsupported(
+                "device-local buffer has no host mapping; use a stream transfer".into(),
+            ));
+        }
         Ok(self.native.host_pointer().cast())
     }
     /// Publish host writes (`flush = true`) or acquire device writes (`false`).
@@ -837,10 +889,22 @@ impl Stream {
         };
         let native = match reused {
             Some(native) => {
-                if let Some(data) = data {
+                if let Some(data) = data
+                    && !native.is_device_only()
+                {
                     native.write(0, data)?;
                 }
                 native
+            }
+            None if self.inner.device_local() => {
+                // SAFETY: `allocate` promises unspecified contents, and
+                // `allocate_from` stages its bytes below before returning.
+                unsafe {
+                    self.inner
+                        .device
+                        .fabric()
+                        .allocate_device_local(bytes, &self.inner.device)?
+                }
             }
             None => {
                 let fabric = self.inner.device.fabric();
@@ -851,18 +915,43 @@ impl Stream {
                 }
             }
         };
-        Ok(Buffer {
+        let buffer = Buffer {
             native,
             bytes,
             owner: self.inner.clone(),
             reservation,
             poolable: true,
+        };
+        if let Some(data) = data
+            && buffer.native.is_device_only()
+        {
+            self.inner.stage(buffer.try_slice(0, bytes)?, data)?;
+        }
+        Ok(buffer)
+    }
+    /// Host-mapped system storage for transfers into device-local buffers.
+    fn allocate_staging(&self, bytes: usize) -> Result<Buffer> {
+        let native = self
+            .inner
+            .device
+            .fabric()
+            .allocate(bytes, std::slice::from_ref(&self.inner.device))?;
+        Ok(Buffer {
+            native,
+            bytes,
+            owner: self.inner.clone(),
+            reservation: self.reserve(bytes)?,
+            poolable: false,
         })
     }
     /// Allocate initialized storage containing zero bytes.
     pub fn allocate_zeroed(&self, bytes: usize) -> Result<Buffer> {
         let buffer = self.allocate(bytes)?;
-        buffer.native.zero()?;
+        if buffer.native.is_device_only() {
+            self.inner.fill_now(buffer.try_slice(0, buffer.bytes)?, 0)?;
+        } else {
+            buffer.native.zero()?;
+        }
         Ok(buffer)
     }
     /// Allocate GPU-coherent host storage for direct, synchronized host access.
@@ -954,6 +1043,9 @@ impl Stream {
         self.owns(dst.owner)?;
         checked_span(0, bytes.len(), dst.len())?;
         self.synchronize()?;
+        if dst.owner.native.is_device_only() {
+            return self.inner.stage(dst, bytes);
+        }
         dst.owner.native.write(dst.offset, bytes)
     }
     /// Write at an allocation-relative byte offset.
@@ -965,6 +1057,9 @@ impl Stream {
         self.owns(src.owner)?;
         checked_span(0, bytes.len(), src.len())?;
         self.synchronize()?;
+        if src.owner.native.is_device_only() {
+            return self.inner.unstage(src, bytes);
+        }
         src.owner.native.read(src.offset, bytes)
     }
     /// Read at an allocation-relative byte offset.
@@ -1024,7 +1119,7 @@ impl Stream {
         {
             self.staging_pool.swap_remove(index)
         } else {
-            self.allocate(bytes.len())?
+            self.allocate_staging(bytes.len())?
         };
         staging.native.write(0, bytes)?;
         self.copy(
@@ -1229,7 +1324,7 @@ impl Stream {
     }
     /// Queue an owned readback.
     pub fn read(&mut self, source: View<'_>) -> Result<Readback> {
-        let buffer = self.allocate(source.len())?;
+        let buffer = self.allocate_staging(source.len().max(1))?;
         if !source.is_empty() {
             self.copy(buffer.try_slice(0, source.len())?, source)?;
         }

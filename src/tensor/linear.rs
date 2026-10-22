@@ -73,17 +73,30 @@ impl TensorOps {
             return Err(Error::Message("linear requires BF16 [1,K], one to three contiguous BF16 [N,K] weights, K divisible by 128, and BF16/F32 output".into()));
         }
         let k = input.shape()[1];
+        let mut model = ModelSession::in_context(&self.context)?;
+        let wave = model.target().subgroup_size() as usize;
+        let rows = 256 / wave;
         let grid = weights
             .iter()
-            .map(|w| w.shape()[0].div_ceil(8))
+            .map(|w| w.shape()[0].div_ceil(rows))
             .max()
             .unwrap();
-        let mut model = ModelSession::in_context(&self.context)?;
+        // Butterfly the four-lane partial sums across the wave into lane zero.
+        let mut reduce = String::new();
+        let mut sum = "%sum".to_owned();
+        let mut distance = wave / 2;
+        while distance > 0 {
+            reduce += &format!(
+                "  %d{distance} = scalar.constant {distance} : i32\n  %sh{distance}, %ok{distance} = kernel.subgroup.shuffle<xor> {sum}, %d{distance}, %width : f32, i32, i32\n  %sum{distance} = scalar.addf {sum}, %sh{distance} : f32\n"
+            );
+            sum = format!("%sum{distance}");
+            distance /= 2;
+        }
         let x = model.allocate(input.bytes())?;
         let mut inputs = vec![(x, input.clone())];
         let mut outputs = Vec::new();
         let mut bindings = vec![x.read()];
-        let mut source = "amdgpu.target<gfx11-generic> @target {subgroup_size = 32}\n".to_owned();
+        let mut source = model.target().loom_record("target") + "\n";
         let mut spec = Specialization::new("hrx_linear");
         for (key, value) in [("k", k), ("grid_x", grid), ("grid_y", weights.len())] {
             source += &format!(
@@ -130,7 +143,11 @@ impl TensorOps {
                 " %p{i} = index.constant {i} : index\n %is{i} = index.cmp eq, %projection, %p{i} : index\n scf.if %is{i} {{\n"
             );
             source += &include_str!("linear.loom")
+                .replace("@REDUCE@", reduce.trim_end())
                 .replace("@P@", &i.to_string())
+                .replace("@ROWS@", &rows.to_string())
+                .replace("@STEP@", &(wave * 4).to_string())
+                .replace("@WAVE@", &wave.to_string())
                 .replace("@TYPE@", dtype)
                 .replace("@CONVERT@", convert);
             source += "\n }\n";

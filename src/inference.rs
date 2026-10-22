@@ -13,11 +13,46 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+/// Host-visible transfer buffers reused once their last copy has completed.
+/// Discrete GPUs stage every frame-sized transfer; reuse avoids allocating
+/// and zeroing that staging per call. Budgeted runtimes do not pool, so
+/// their reservations still end with the transfer.
+#[derive(Default)]
+struct StagingPool(Mutex<Vec<(Buffer, Completion)>>);
+const STAGING_POOL_ENTRIES: usize = 32;
+impl StagingPool {
+    /// The smallest idle buffer of at least `bytes`, and at most twice that so
+    /// small transfers do not retain frame-sized staging; callers use a prefix.
+    fn take(&self, runtime: &Runtime, bytes: usize) -> Result<Buffer> {
+        let reused = self.0.lock().ok().and_then(|mut pool| {
+            let index = pool
+                .iter()
+                .enumerate()
+                .filter(|(_, (buffer, done))| {
+                    (bytes..=bytes.saturating_mul(2)).contains(&buffer.len()) && done.is_complete()
+                })
+                .min_by_key(|(_, (buffer, _))| buffer.len())?
+                .0;
+            Some(pool.swap_remove(index).0)
+        });
+        reused.map_or_else(|| runtime.allocate(bytes, MemoryPlacement::HostVisible), Ok)
+    }
+    fn recycle(&self, buffer: Buffer, done: Completion) {
+        if let Ok(mut pool) = self.0.lock() {
+            if pool.len() == STAGING_POOL_ENTRIES {
+                pool.remove(0);
+            }
+            pool.push((buffer, done));
+        }
+    }
+}
+
 /// Explicitly shared allocation, compilation, and scheduling domain for models.
 #[derive(Clone)]
 pub struct ModelContext {
     runtime: Runtime,
     compiler: Arc<Mutex<Option<Compiler>>>,
+    staging: Arc<StagingPool>,
 }
 impl ModelContext {
     /// Construct a context; hardware and compiler initialization remain lazy.
@@ -25,6 +60,7 @@ impl ModelContext {
         Ok(Self {
             runtime: Runtime::with_options(options)?,
             compiler: Arc::new(Mutex::new(None)),
+            staging: Arc::default(),
         })
     }
     /// Coordinated runtime shared by every model and tensor in this context.
@@ -99,15 +135,65 @@ impl ModelContext {
                 "upload byte count does not match tensor".into(),
             ));
         }
-        let mut tensor = self.allocate(desc)?;
+        // The copy below writes every byte before any reader is ordered after it.
+        let mut tensor = DeviceTensor {
+            runtime: self.runtime.clone(),
+            view: (!desc.is_empty())
+                .then(|| Ok::<_, Error>(self.runtime.allocate_overwritten(desc.bytes())?.view()))
+                .transpose()?,
+            desc,
+            producer: Completion::ready(),
+            lease: None,
+        };
         if let Some(destination) = tensor.binding() {
-            let staging = self
-                .runtime
-                .allocate(bytes.len(), MemoryPlacement::HostVisible)?;
-            staging.map_write()?.copy_from_slice(bytes);
+            let staging = self.staging.take(&self.runtime, bytes.len())?;
+            staging.map_write()?[..bytes.len()].copy_from_slice(bytes);
             let mut graph = self.runtime.graph();
-            graph.copy(destination, staging.view())?;
+            graph.copy(destination, staging.slice(0..bytes.len())?)?;
             tensor.producer = graph.prepare()?.submit()?;
+            if self.runtime.memory_budget().is_none() {
+                self.staging.recycle(staging, tensor.producer.clone());
+            }
+        }
+        Ok(tensor)
+    }
+    /// Upload consecutive host slices, such as a batch of frames, as one tensor
+    /// through one staging copy. The parts' total length must match the tensor.
+    pub fn upload_parts(&self, desc: TensorDesc, parts: &[&[u8]]) -> Result<DeviceTensor> {
+        let total = parts.iter().map(|part| part.len()).sum::<usize>();
+        if total != desc.bytes() {
+            return Err(Error::Message(
+                "upload byte count does not match tensor".into(),
+            ));
+        }
+        if let [part] = parts {
+            return self.upload(desc, part);
+        }
+        let mut tensor = DeviceTensor {
+            runtime: self.runtime.clone(),
+            view: (!desc.is_empty())
+                .then(|| Ok::<_, Error>(self.runtime.allocate_overwritten(desc.bytes())?.view()))
+                .transpose()?,
+            desc,
+            producer: Completion::ready(),
+            lease: None,
+        };
+        if let Some(destination) = tensor.binding() {
+            let staging = self.staging.take(&self.runtime, total)?;
+            {
+                let mut mapped = staging.map_write()?;
+                let mut at = 0;
+                for part in parts {
+                    mapped[at..at + part.len()].copy_from_slice(part);
+                    at += part.len();
+                }
+            }
+            let mut graph = self.runtime.graph();
+            graph.copy(destination, staging.slice(0..total)?)?;
+            tensor.producer = graph.prepare()?.submit()?;
+            if self.runtime.memory_budget().is_none() {
+                self.staging.recycle(staging, tensor.producer.clone());
+            }
         }
         Ok(tensor)
     }
@@ -214,20 +300,27 @@ impl ModelContext {
         let Some(source) = tensor.binding() else {
             return Ok(TensorReadback {
                 buffer: None,
+                length: 0,
                 completion: tensor.producer.clone(),
+                pool: None,
             });
         };
-        let staging = self
-            .runtime
-            .allocate(tensor.desc.bytes(), MemoryPlacement::HostVisible)?;
+        let length = tensor.desc.bytes();
+        let staging = self.staging.take(&self.runtime, length)?;
         let mut graph = self.runtime.graph();
-        graph.copy(staging.view(), source)?;
+        graph.copy(staging.slice(0..length)?, source)?;
         let completion = graph
             .prepare()?
             .submit_after(std::slice::from_ref(&tensor.producer))?;
         Ok(TensorReadback {
             buffer: Some(staging),
+            length,
             completion,
+            pool: self
+                .runtime
+                .memory_budget()
+                .is_none()
+                .then(|| self.staging.clone()),
         })
     }
     /// Reject a tensor from another allocation domain before any work is queued.
@@ -244,7 +337,10 @@ impl ModelContext {
 /// Owned asynchronous readback. Dropping it never invalidates queued work.
 pub struct TensorReadback {
     buffer: Option<Buffer>,
+    /// Bytes read back; pooled staging may be longer.
+    length: usize,
     completion: Completion,
+    pool: Option<Arc<StagingPool>>,
 }
 impl TensorReadback {
     /// Readback completion, suitable for polling or awaiting.
@@ -252,14 +348,20 @@ impl TensorReadback {
         &self.completion
     }
     /// Wait and return the tensor's storage bytes, including declared stride gaps.
-    pub fn wait(self) -> Result<Vec<u8>> {
+    pub fn wait(mut self) -> Result<Vec<u8>> {
         self.completion.wait()?;
         self.bytes()
     }
-    fn bytes(&self) -> Result<Vec<u8>> {
-        self.buffer
-            .as_ref()
-            .map_or_else(|| Ok(Vec::new()), |buffer| Ok(buffer.map_read()?.to_vec()))
+    /// Copy out the completed bytes and return the staging to its pool.
+    fn bytes(&mut self) -> Result<Vec<u8>> {
+        let Some(buffer) = self.buffer.take() else {
+            return Ok(Vec::new());
+        };
+        let bytes = buffer.map_read()?[..self.length].to_vec();
+        if let Some(pool) = &self.pool {
+            pool.recycle(buffer, self.completion.clone());
+        }
+        Ok(bytes)
     }
 }
 impl Future for TensorReadback {

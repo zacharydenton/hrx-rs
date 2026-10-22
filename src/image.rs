@@ -86,7 +86,7 @@ impl ImageOps {
         let output = TensorDesc::new(DType::F32, vec![batch, cells, patch_elements])?;
         let source = format!(
             r#"
-amdgpu.target<gfx11-generic> @image_target {{subgroup_size = 32}}
+@TARGET@
 kernel.def target(@image_target) export("patchify") @patchify(%unused: index) {{
   %one = index.constant 1 : index
   %threads = index.constant 256 : index
@@ -150,7 +150,12 @@ kernel.def target(@image_target) export("patchify") @patchify(%unused: index) {{
         let src = model.allocate(input.bytes())?;
         let dst = model.allocate(output.bytes())?;
         // The generated kernel's scalar and memory extents are fixed above.
-        let kernel = unsafe { model.compile(&[(&source, Specialization::new("patchify"))])? }[0];
+        let kernel = unsafe {
+            model.compile(&[(
+                &source.replace("@TARGET@", &model.target().loom_record("image_target")),
+                Specialization::new("patchify"),
+            )])?
+        }[0];
         let definition = model.freeze(&self.context)?;
         unsafe {
             definition.fragment(

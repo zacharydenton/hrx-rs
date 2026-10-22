@@ -76,3 +76,56 @@ impl Default for Target {
         Self::new(TARGET_KEY).expect("valid default target")
     }
 }
+
+impl Target {
+    /// Hardware wavefront width that [`Target::loom_record`] selects.
+    ///
+    /// GCN and CDNA (`gfx9xx`) run wave64; RDNA targets run wave32.
+    pub fn subgroup_size(&self) -> u32 {
+        if self.as_str().starts_with("gfx9") {
+            64
+        } else {
+            32
+        }
+    }
+
+    /// A Loom `amdgpu.target` record named `@symbol` for this device.
+    ///
+    /// RDNA3 devices share the `gfx11-generic` family, so one artifact serves
+    /// every gfx11 key; other targets name their exact architecture. The record
+    /// fixes [`Target::subgroup_size`], so kernels that exchange values across
+    /// lanes must size their reductions and wave layout from it.
+    pub fn loom_record(&self, symbol: &str) -> String {
+        let key = self.as_str();
+        let family = if key.starts_with("gfx11") {
+            "gfx11-generic"
+        } else {
+            key
+        };
+        format!(
+            "amdgpu.target<{family}> @{symbol} {{subgroup_size = {}}}",
+            self.subgroup_size()
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Target;
+
+    #[test]
+    fn loom_records_select_family_and_wave_width() {
+        let rdna = Target::new("gfx1151").unwrap();
+        assert_eq!(rdna.subgroup_size(), 32);
+        assert_eq!(
+            rdna.loom_record("t"),
+            "amdgpu.target<gfx11-generic> @t {subgroup_size = 32}"
+        );
+        let gcn = Target::new("gfx906").unwrap();
+        assert_eq!(gcn.subgroup_size(), 64);
+        assert_eq!(
+            gcn.loom_record("t"),
+            "amdgpu.target<gfx906> @t {subgroup_size = 64}"
+        );
+    }
+}

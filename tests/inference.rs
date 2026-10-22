@@ -18,8 +18,8 @@ fn graph_reuses_private_scratch_without_aliasing_outputs() -> hrx::Result<()> {
     let mut model = ModelSession::in_context(&context)?;
     let temporary = model.allocate(64)?;
     let output = model.allocate_shared(64)?;
-    let source = r#"
-amdgpu.target<gfx11-generic> @t {subgroup_size = 32}
+    let source = model.target().loom_record("t")
+        + r#"
 kernel.def target(@t) export("copy") @copy(%unused: index) {
   %one = index.constant 1 : index
   %threads = index.constant 64 : index
@@ -37,7 +37,7 @@ kernel.def target(@t) export("copy") @copy(%unused: index) {
   kernel.return
 }
 "#;
-    let kernel = unsafe { model.compile(&[(source, Specialization::new("copy"))])? }[0];
+    let kernel = unsafe { model.compile(&[(&source, Specialization::new("copy"))])? }[0];
     let engine = model.freeze(&context)?;
     let fragment = |value| -> hrx::Result<_> {
         // The full temporary is initialized by Fill before its only read.

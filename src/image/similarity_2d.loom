@@ -1,4 +1,4 @@
-amdgpu.target<gfx11-generic> @similarity_target {subgroup_size = 32}
+@TARGET@
 kernel.def target(@similarity_target) export("similarity_2d") @similarity_2d(%unused: index) {
   %one = index.constant 1 : index
   %threads = index.constant 64 : index

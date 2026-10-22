@@ -76,7 +76,12 @@ impl TensorOps {
             code = code.replace(&format!("@{name}@"), &value.to_string());
         }
         // The embedded kernel checks indices and bounds every byte access.
-        let kernel = unsafe { model.compile(&[(&code, Specialization::new("gather"))])? }[0];
+        let kernel = unsafe {
+            model.compile(&[(
+                &code.replace("@TARGET@", &model.target().loom_record("target")),
+                Specialization::new("gather"),
+            )])?
+        }[0];
         unsafe {
             model.freeze(&self.context)?.fragment(
                 &[Command::Dispatch(Dispatch::indices(
@@ -189,8 +194,12 @@ impl TensorOps {
                     source = source.replace(&format!("@{name}@"), &value.to_string());
                 }
                 // Static bounds above cover every load, reduction flag and store.
-                let kernel =
-                    unsafe { model.compile(&[(&source, Specialization::new("finite"))])? }[0];
+                let kernel = unsafe {
+                    model.compile(&[(
+                        &source.replace("@TARGET@", &model.target().loom_record("finite_target")),
+                        Specialization::new("finite"),
+                    )])?
+                }[0];
                 commands.push(Command::Dispatch(Dispatch::indices(
                     kernel,
                     [0],

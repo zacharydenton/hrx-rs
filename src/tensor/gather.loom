@@ -1,5 +1,5 @@
 // Bit-preserving row gather: dtype-independent byte copies with checked indices.
-amdgpu.target<gfx11-generic> @target {subgroup_size = 32}
+@TARGET@
 kernel.def target(@target) export("gather") @gather(%unused:index) {
   %one=index.constant 1 : index
   %threads=index.constant 256 : index

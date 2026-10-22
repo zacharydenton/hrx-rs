@@ -307,6 +307,16 @@ impl Runtime {
         self.allocate_inner(bytes, placement, None)
     }
 
+    /// GPU-local storage whose every byte the caller's first device write covers,
+    /// such as an upload copy, so it skips the zero fill of [`Self::allocate`].
+    pub(crate) fn allocate_overwritten(&self, bytes: usize) -> Result<Buffer> {
+        let buffer = {
+            let mut allocation = self.allocation_stream()?;
+            allocation.as_mut().unwrap().allocate(bytes)?
+        };
+        self.allocate_inner(bytes, MemoryPlacement::GpuLocal, Some(buffer))
+    }
+
     /// Transfer an initialized allocation into this runtime, optionally importing
     /// it into an NPU program once. Only GpuLocal and Shared placement are accepted.
     ///

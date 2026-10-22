@@ -187,6 +187,10 @@ impl Buffer {
                 .load(std::sync::atomic::Ordering::Acquire))
         }
     }
+    /// Whether this is device-local backing without a host mapping.
+    pub(crate) fn is_device_only(&self) -> bool {
+        self.0.pointer.is_null()
+    }
     pub(crate) fn host_pointer(&self) -> *mut u8 {
         if self.0.pointer.is_null() {
             ptr::null_mut()

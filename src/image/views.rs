@@ -190,7 +190,7 @@ impl ImageOps {
             let ty = if encode { "i8" } else { "f32" };
             let source = format!(
                 r#"
-amdgpu.target<gfx11-generic> @views_target {{subgroup_size = 32}}
+@TARGET@
 kernel.def target(@views_target) export("rgb_views") @rgb_views(%unused: index) {{
   %one = index.constant 1 : index
   %threads = index.constant 256 : index
@@ -233,8 +233,12 @@ kernel.def target(@views_target) export("rgb_views") @rgb_views(%unused: index) 
             let src = model.allocate(input.bytes())?;
             let dst = model.allocate(output.bytes())?;
             // Permutations above are bijections within checked input/output extents.
-            let kernel =
-                unsafe { model.compile(&[(&source, Specialization::new("rgb_views"))])? }[0];
+            let kernel = unsafe {
+                model.compile(&[(
+                    &source.replace("@TARGET@", &model.target().loom_record("views_target")),
+                    Specialization::new("rgb_views"),
+                )])?
+            }[0];
             unsafe {
                 model.freeze(&self.context)?.fragment(
                     &[Command::Dispatch(Dispatch::indices(

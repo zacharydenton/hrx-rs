@@ -210,8 +210,12 @@ impl ImageOps {
             }
             // All table entries are generated within the source extent;
             // output coordinates are guarded before addressing the table.
-            let kernel =
-                unsafe { model.compile(&[(&source, Specialization::new("resize_rgb"))])? }[0];
+            let kernel = unsafe {
+                model.compile(&[(
+                    &source.replace("@TARGET@", &model.target().loom_record("resize_target")),
+                    Specialization::new("resize_rgb"),
+                )])?
+            }[0];
             commands.push(Command::Dispatch(Dispatch::indices(
                 kernel,
                 [0],

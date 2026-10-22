@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Add `Target::loom_record` and `Target::subgroup_size` for kernels that run
+  on both RDNA3 (`gfx11-generic`, wave32) and gfx906 (wave64). Built-in image,
+  gather, finiteness and decode-linear kernels now compile for the opened
+  device, so they run on Radeon VII.
+- Keep stream allocations, and therefore model weights, activations and
+  `GpuLocal` buffers, in device-local VRAM on gfx906. Initial data, blocking
+  uploads/reads and readbacks go through system staging and a device copy;
+  `Buffer::device_ptr` returns Unsupported for device-local storage. INSwapper
+  on Radeon VII drops from 230 to 37 ms per view with identical outputs.
+- Reuse host-visible staging across `ModelContext` uploads and downloads once
+  each transfer completes (unbudgeted runtimes), and skip zero-filling upload
+  destinations. Add `ModelContext::upload_parts` to upload consecutive slices,
+  such as a frame batch, through one staging copy.
+
 ## 0.12.0 — 2026-10-21
 
 - Add Radeon VII gfx906 native PM4 execution and Loom wave64 compilation,

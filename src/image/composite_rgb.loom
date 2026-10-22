@@ -1,4 +1,4 @@
-amdgpu.target<gfx11-generic> @composite_target {subgroup_size = 32}
+@TARGET@
 kernel.def target(@composite_target) export("composite_rgb") @composite_rgb(%unused: index) {
   %one = index.constant 1 : index
   %threads = index.constant 256 : index

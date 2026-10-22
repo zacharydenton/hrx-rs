@@ -45,7 +45,7 @@ impl ImageOps {
             .with_layout(Layout::Nchw)?;
         let source = format!(
             r#"
-amdgpu.target<gfx11-generic> @normalize_target {{subgroup_size = 32}}
+@TARGET@
 kernel.def target(@normalize_target) export("normalize_rgb") @normalize_rgb(%unused: index) {{
   %one = index.constant 1 : index
   %threads = index.constant 256 : index
@@ -118,8 +118,12 @@ kernel.def target(@normalize_target) export("normalize_rgb") @normalize_rgb(%unu
         let src = model.allocate(input.bytes())?;
         let dst = model.allocate(output.bytes())?;
         // The generated source's accesses are bounded to these descriptors.
-        let kernel =
-            unsafe { model.compile(&[(&source, Specialization::new("normalize_rgb"))])? }[0];
+        let kernel = unsafe {
+            model.compile(&[(
+                &source.replace("@TARGET@", &model.target().loom_record("normalize_target")),
+                Specialization::new("normalize_rgb"),
+            )])?
+        }[0];
         unsafe {
             model.freeze(&self.context)?.fragment(
                 &[Command::Dispatch(Dispatch::indices(

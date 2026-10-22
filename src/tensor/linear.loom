@@ -1,12 +1,12 @@
-// One wave per output row. Instantiated per projection by linear.rs.
+// One wave per output row. Instantiated per projection and wave width by linear.rs.
 
  %offset = index.constant 0 : offset
  %zero = index.constant 0 : index
  %four = index.constant 4 : index
- %eight = index.constant 8 : index
- %step = index.constant 128 : index
+ %rows = index.constant @ROWS@ : index
+ %step = index.constant @STEP@ : index
  %zf = scalar.constant 0.0 : f32
- %width = scalar.constant 32 : i32
+ %width = scalar.constant @WAVE@ : i32
  %lane = kernel.subgroup.lane.id : index
  %wave = kernel.subgroup.id : index
  %group = kernel.workgroup.id<x> : index
@@ -19,7 +19,7 @@
  %xv = buffer.view %xg[%offset] : buffer -> view<[%k]xbf16>
  %wv = buffer.view %wg[%offset] : buffer -> view<[%wn]xbf16>
  %ov = buffer.view %og[%offset] : buffer -> view<[%n]x@TYPE@>
- %r0 = index.mul %group, %eight : index
+ %r0 = index.mul %group, %rows : index
  %row = index.add %r0, %wave : index
  %valid = index.cmp ult, %row, %n : index
  scf.if %valid {
@@ -62,21 +62,7 @@
   %s01 = scalar.addf %s0, %s1 : f32
   %s23 = scalar.addf %s2, %s3 : f32
   %sum = scalar.addf %s01, %s23 : f32
-  %d16 = scalar.constant 16 : i32
-  %sh16, %ok16 = kernel.subgroup.shuffle<xor> %sum, %d16, %width : f32, i32, i32
-  %sum16 = scalar.addf %sum, %sh16 : f32
-  %d8 = scalar.constant 8 : i32
-  %sh8, %ok8 = kernel.subgroup.shuffle<xor> %sum16, %d8, %width : f32, i32, i32
-  %sum8 = scalar.addf %sum16, %sh8 : f32
-  %d4 = scalar.constant 4 : i32
-  %sh4, %ok4 = kernel.subgroup.shuffle<xor> %sum8, %d4, %width : f32, i32, i32
-  %sum4 = scalar.addf %sum8, %sh4 : f32
-  %d2 = scalar.constant 2 : i32
-  %sh2, %ok2 = kernel.subgroup.shuffle<xor> %sum4, %d2, %width : f32, i32, i32
-  %sum2 = scalar.addf %sum4, %sh2 : f32
-  %d1 = scalar.constant 1 : i32
-  %sh1, %ok1 = kernel.subgroup.shuffle<xor> %sum2, %d1, %width : f32, i32, i32
-  %sum1 = scalar.addf %sum2, %sh1 : f32
+@REDUCE@
   %leader = index.cmp eq, %lane, %zero : index
   scf.if %leader {
    %oi = index.assume %row [range(%row, 0, 1073741824), lt(%row, %n)] : index
