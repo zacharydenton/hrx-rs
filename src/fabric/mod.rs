@@ -53,7 +53,7 @@ pub use profile::{DeviceInterval, DeviceProfile, ProfiledGpu};
 mod queue;
 pub(crate) use queue::GraphArena;
 pub use queue::{
-    Completion, GpuBatchRecorder, PreparedArgumentSnapshot, PreparedCommandSnapshot, PreparedGpu,
+    Completion, GpuBatchRecorder, GpuBatchStorage, PreparedArgumentSnapshot, PreparedCommandSnapshot, PreparedGpu,
     PreparedRingSnapshot, Queue, SerialGpuDispatcher,
 };
 mod sanitizer;

@@ -564,8 +564,77 @@ pub struct GpuBatchRecorder {
     queue: Queue,
     arena: GraphArena,
     commands: Vec<(PreparedGpu, bool)>,
+    completion_fence: Option<Buffer>,
+}
+/// Private recording storage that can be recycled after every prepared owner
+/// and in-flight lease has been released. This does not retain operand buffers.
+/// Reuse is restricted to the qualified GFX9 scalar-cache protocol.
+pub struct GpuBatchStorage {
+    queue: Queue,
+    arena: GraphArena,
+    completion_fence: Option<Buffer>,
+}
+impl GpuBatchStorage {
+    /// Bytes retained for arguments, placeholder fence and optional completion fence.
+    pub fn retained_bytes(&self) -> usize {
+        self.arena.page.as_ref().map_or(0, Buffer::len)
+            + self.arena.fence.as_ref().map_or(0, Buffer::len)
+            + self.completion_fence.as_ref().map_or(0, Buffer::len)
+    }
+    /// Current CPU-visible private completion word, when fence recycling is enabled.
+    /// This is a current observation, not historical command-consumption evidence.
+    pub fn completion_fence_value(&self) -> Result<Option<u32>> {
+        self.completion_fence.as_ref().map(Buffer::fence_value).transpose()
+    }
+    /// Begin another recording, rejecting storage still owned by commands or work.
+    /// A busy result preserves storage for a later attempt. A successful call
+    /// transfers its storage to the recorder, leaving this handle empty.
+    /// Externally managed raw accesses still require explicit completion ordering.
+    pub fn record(&mut self) -> Result<GpuBatchRecorder> {
+        if self.arena.page.as_ref().is_some_and(|b| !b.exclusively_owned())
+            || self.arena.fence.as_ref().is_some_and(|b| !b.exclusively_owned())
+            || self.completion_fence.as_ref().is_some_and(|b| !b.exclusively_owned())
+        {
+            return Err(Error::Busy("batch recording storage is still retained".into()));
+        }
+        if let Some(fence) = &self.arena.fence {
+            fence.write(0, &0u32.to_le_bytes())?;
+        }
+        self.arena.used = 0;
+        Ok(GpuBatchRecorder {
+            queue: self.queue.clone(),
+            arena: std::mem::take(&mut self.arena),
+            commands: Vec::new(),
+            completion_fence: self.completion_fence.take(),
+        })
+    }
 }
 impl GpuBatchRecorder {
+    /// Freeze this batch and retain private argument storage for later recycling.
+    /// The returned storage rejects reuse until the batch, its clones/completions
+    /// and any in-flight owners have all released it. This does not recycle the
+    /// batch's separate indirect command allocation or completion fence.
+    pub fn finish_recyclable(self) -> Result<(PreparedGpu, GpuBatchStorage)> {
+        self.finish_recyclable_inner(false)
+    }
+    /// Also retain the batch completion fence. Recycling still requires all
+    /// prepared/completion owners to drop; each new Work starts from a cleared
+    /// fence at sequence one. Indirect commands remain newly allocated immutable
+    /// storage. The ordinary recyclable API retains its fresh-fence behavior.
+    pub fn finish_recyclable_with_fence(self) -> Result<(PreparedGpu, GpuBatchStorage)> {
+        self.finish_recyclable_inner(true)
+    }
+    fn finish_recyclable_inner(self, reuse_fence: bool) -> Result<(PreparedGpu, GpuBatchStorage)> {
+        if !matches!(self.queue.0.cache_control, CacheControl::Gfx9) {
+            return Err(Error::Unsupported("batch storage reuse requires qualified GFX9 cache protocol".into()));
+        }
+        let Self {queue, arena, commands, completion_fence} = self;
+        let batch = queue.prepare_batch_inner_with_fence(&commands, None, 0,
+            if reuse_fence {completion_fence} else {None})?;
+        let completion_fence = reuse_fence.then(|| batch.inner.work.fence.clone());
+        drop(commands);
+        Ok((batch, GpuBatchStorage {queue, arena, completion_fence}))
+    }
     /// Number of recorded kernel dispatches.
     pub fn len(&self) -> usize {
         self.commands.len()
@@ -619,6 +688,7 @@ impl Queue {
             queue: self.clone(),
             arena: GraphArena::default(),
             commands: Vec::new(),
+            completion_fence: None,
         })
     }
     pub(super) fn identity(&self) -> usize {
@@ -846,6 +916,15 @@ impl Queue {
         profile: Option<&profile::ProfileCapture>,
         profile_start: usize,
     ) -> Result<PreparedGpu> {
+        self.prepare_batch_inner_with_fence(commands, profile, profile_start, None)
+    }
+    fn prepare_batch_inner_with_fence(
+        &self,
+        commands: &[(PreparedGpu, bool)],
+        profile: Option<&profile::ProfileCapture>,
+        profile_start: usize,
+        completion_fence: Option<Buffer>,
+    ) -> Result<PreparedGpu> {
         if self.0.info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 {
             return Err(Error::Unsupported(
                 "indirect compute batches require a PM4 queue".into(),
@@ -921,7 +1000,15 @@ impl Queue {
         buffers.push(storage);
         buffers.sort_by_key(|buffer| Arc::as_ptr(&buffer.0) as usize);
         buffers.dedup_by(|a, b| Arc::ptr_eq(&a.0, &b.0));
-        let fence = fabric.allocate_shared(64, std::slice::from_ref(self.device()))?;
+        let fence = match completion_fence {
+            Some(fence) => {
+                // Caller transfers private storage only after exclusive-owner
+                // checks in GpuBatchStorage::record. No previous Work remains.
+                fence.write(0, &0u32.to_le_bytes())?;
+                fence
+            }
+            None => fabric.allocate_shared(64, std::slice::from_ref(self.device()))?,
+        };
         let address = fence.device_address(self.device())?;
         let mut words = Vec::new();
         barrier(&mut words, self.0.cache_control);
