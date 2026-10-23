@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Preserve partial and empty blocking transfers on gfx906. Charge synchronous
+  transfer staging to the stream budget, retain charges through retirement, and
+  reserve asynchronous staging before native allocation.
+
 - Add `Target::loom_record` and `Target::subgroup_size` for kernels that run
   on both RDNA3 (`gfx11-generic`, wave32) and gfx906 (wave64). Built-in image,
   gather, finiteness and decode-linear kernels now compile for the opened

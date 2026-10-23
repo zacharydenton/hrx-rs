@@ -11,6 +11,8 @@ export HRX_OFFLINE=1
 cargo run --locked --bin hrx -- info
 # Bound each process too: a broken driver must not hang a qualification runner.
 timeout 180 cargo test --locked --test gfx906 -- --ignored --test-threads=1
+timeout 180 cargo test --locked --lib runtime::staging_tests::blocking_staging -- --ignored --test-threads=1
+timeout 180 cargo test --locked --lib staging_reserves_before_native_validation_and_rolls_back_errors -- --ignored --test-threads=1
 timeout 180 cargo test --locked --lib fabric::memory::file_fill_tests -- --ignored --test-threads=1
 timeout 180 cargo test --locked --lib fabric::queue::serial::tests -- --ignored --test-threads=1
 timeout 180 cargo test --locked --lib fabric::executable::tests -- --ignored --test-threads=1

@@ -126,40 +126,6 @@ impl Inner {
     fn device_local(&self) -> bool {
         self.device.target().as_str() == "gfx906"
     }
-    /// Copy host bytes into device-only storage and wait for completion. The
-    /// uncached command keeps the transient staging out of the transfer cache.
-    fn stage(self: &Arc<Self>, dst: View<'_>, bytes: &[u8]) -> Result<()> {
-        if bytes.len() != dst.len() {
-            return Err(Error::Message("staged upload requires equal spans".into()));
-        }
-        let staging = self
-            .device
-            .fabric()
-            .allocate_from(bytes, std::slice::from_ref(&self.device))?;
-        let copy =
-            self.queue
-                .prepare_copy(&dst.owner.native, dst.offset, &staging, 0, bytes.len())?;
-        self.submit(&Command::Gpu(copy, 0))?;
-        self.wait()
-    }
-    /// Read device-only storage through system staging after preceding work.
-    fn unstage(self: &Arc<Self>, src: View<'_>, bytes: &mut [u8]) -> Result<()> {
-        if bytes.len() != src.len() {
-            return Err(Error::Message(
-                "staged readback requires equal spans".into(),
-            ));
-        }
-        let staging = self
-            .device
-            .fabric()
-            .allocate(bytes.len(), std::slice::from_ref(&self.device))?;
-        let copy =
-            self.queue
-                .prepare_copy(&staging, 0, &src.owner.native, src.offset, bytes.len())?;
-        self.submit(&Command::Gpu(copy, 0))?;
-        self.wait()?;
-        staging.read(0, bytes)
-    }
     fn fill_now(self: &Arc<Self>, dst: View<'_>, value: u8) -> Result<()> {
         let fill = self
             .queue
@@ -925,12 +891,49 @@ impl Stream {
         if let Some(data) = data
             && buffer.native.is_device_only()
         {
-            self.inner.stage(buffer.try_slice(0, bytes)?, data)?;
+            self.stage(buffer.try_slice(0, bytes)?, data)?;
         }
         Ok(buffer)
     }
+    /// Use an uncached copy so transient host staging never enters the cache.
+    /// Keep both reservations through retirement or stream-drop quarantine.
+    fn copy_staging(&self, dst: View<'_>, src: View<'_>) -> Result<()> {
+        let copy = self.inner.queue.prepare_copy(
+            &dst.owner.native,
+            dst.offset,
+            &src.owner.native,
+            src.offset,
+            dst.len(),
+        )?;
+        self.budget_uses.borrow_mut().retain(&[dst, src]);
+        self.inner.submit(&Command::Gpu(copy, 0))?;
+        self.inner.wait()?;
+        self.budget_uses.borrow_mut().clear();
+        Ok(())
+    }
+    /// Publish just the supplied prefix; empty transfers require no staging.
+    fn stage(&self, dst: View<'_>, bytes: &[u8]) -> Result<()> {
+        let dst = dst.slice(0, bytes.len())?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let staging = self.allocate_staging(bytes.len())?;
+        staging.native.write(0, bytes)?;
+        self.copy_staging(dst, staging.binding())
+    }
+    /// Acquire just the requested prefix after the staging copy retires.
+    fn unstage(&self, src: View<'_>, bytes: &mut [u8]) -> Result<()> {
+        let src = src.slice(0, bytes.len())?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let staging = self.allocate_staging(bytes.len())?;
+        self.copy_staging(staging.binding(), src)?;
+        staging.native.read(0, bytes)
+    }
     /// Host-mapped system storage for transfers into device-local buffers.
     fn allocate_staging(&self, bytes: usize) -> Result<Buffer> {
+        let reservation = self.reserve(bytes)?;
         let native = self
             .inner
             .device
@@ -940,7 +943,7 @@ impl Stream {
             native,
             bytes,
             owner: self.inner.clone(),
-            reservation: self.reserve(bytes)?,
+            reservation,
             poolable: false,
         })
     }
@@ -1044,7 +1047,7 @@ impl Stream {
         checked_span(0, bytes.len(), dst.len())?;
         self.synchronize()?;
         if dst.owner.native.is_device_only() {
-            return self.inner.stage(dst, bytes);
+            return self.stage(dst, bytes);
         }
         dst.owner.native.write(dst.offset, bytes)
     }
@@ -1058,7 +1061,7 @@ impl Stream {
         checked_span(0, bytes.len(), src.len())?;
         self.synchronize()?;
         if src.owner.native.is_device_only() {
-            return self.inner.unstage(src, bytes);
+            return self.unstage(src, bytes);
         }
         src.owner.native.read(src.offset, bytes)
     }
@@ -1928,6 +1931,93 @@ mod tests {
 #[cfg(test)]
 mod staging_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires gfx906 and the native compiler/runtime"]
+    fn blocking_staging_preserves_prefixes_and_empty_transfers() -> Result<()> {
+        let mut stream = Stream::open()?;
+        let buffer = stream.allocate(32)?;
+        assert!(buffer.native.is_device_only());
+        stream.fill(buffer.binding(), 0xa5)?;
+        stream.upload_blocking(buffer.slice(3, 20), &[1, 2, 3, 4])?;
+        let mut prefix = [0; 4];
+        stream.read_blocking(buffer.slice(3, 20), &mut prefix)?;
+        assert_eq!(prefix, [1, 2, 3, 4]);
+        stream.upload_blocking(buffer.binding(), &[])?;
+        stream.read_blocking(buffer.binding(), &mut [])?;
+        stream.upload_blocking(buffer.slice(32, 0), &[])?;
+        stream.read_blocking(buffer.slice(32, 0), &mut [])?;
+        assert!(stream.upload_blocking(buffer.binding(), &[0; 33]).is_err());
+        assert!(
+            stream
+                .read_blocking(buffer.binding(), &mut [0; 33])
+                .is_err()
+        );
+        let mut actual = [0; 32];
+        stream.read_blocking(buffer.binding(), &mut actual)?;
+        let mut expected = [0xa5; 32];
+        expected[3..7].copy_from_slice(&prefix);
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires gfx906 and the native compiler/runtime"]
+    fn blocking_staging_charges_and_releases_transfer_reservations() -> Result<()> {
+        let device = Device::open(0)?;
+        let manager = crate::residency::ResidencyManager::new(64)?;
+        {
+            let mut stream = device.stream()?.with_memory_budget(manager.budget());
+            let buffer = stream.allocate(64)?;
+            assert!(buffer.native.is_device_only());
+            assert!(matches!(
+                stream.upload_blocking(buffer.binding(), &[9; 64]),
+                Err(Error::Busy(_))
+            ));
+            assert!(matches!(
+                stream.read_blocking(buffer.binding(), &mut [0; 64]),
+                Err(Error::Busy(_))
+            ));
+            assert!(matches!(stream.allocate_from(&[1]), Err(Error::Busy(_))));
+            assert!(matches!(stream.read(buffer.binding()), Err(Error::Busy(_))));
+            stream.upload_blocking(buffer.binding(), &[])?;
+            stream.read_blocking(buffer.binding(), &mut [])?;
+            assert_eq!(manager.statistics().reserved_bytes, 64);
+        }
+        assert_eq!(manager.statistics().reserved_bytes, 0);
+        let manager = crate::residency::ResidencyManager::new(128)?;
+        {
+            let mut stream = device.stream()?.with_memory_budget(manager.budget());
+            let input = stream.allocate_from(&[0x37; 64])?;
+            assert_eq!(manager.statistics().reserved_bytes, 64);
+            for value in [0x51, 0x92] {
+                stream.upload_blocking(input.binding(), &[value; 64])?;
+                assert_eq!(manager.statistics().reserved_bytes, 64);
+                let mut actual = [0; 64];
+                stream.read_blocking(input.binding(), &mut actual)?;
+                assert_eq!(actual, [value; 64]);
+                assert_eq!(manager.statistics().reserved_bytes, 64);
+            }
+        }
+        assert_eq!(manager.statistics().reserved_bytes, 0);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires a provisioned GPU runtime"]
+    fn staging_reserves_before_native_validation_and_rolls_back_errors() -> Result<()> {
+        let manager = crate::residency::ResidencyManager::new(64)?;
+        let stream = Stream::open()?.with_memory_budget(manager.budget());
+        // Native allocation rejects this extent too, but the budget must
+        // reject it first without entering native validation or allocation.
+        assert!(matches!(stream.allocate_staging(usize::MAX),
+            Err(Error::Message(message)) if message == "allocation exceeds residency budget"));
+        assert_eq!(manager.statistics().reserved_bytes, 0);
+        // Zero passes the reservation step but fails native allocation.
+        assert!(stream.allocate_staging(0).is_err());
+        assert_eq!(manager.statistics().reserved_bytes, 0);
+        Ok(())
+    }
 
     #[test]
     #[ignore = "requires gfx1151 and native SDMA"]
