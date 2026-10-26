@@ -3,7 +3,7 @@ use crate::{Error, Result};
 use std::{
     cell::RefCell,
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
-    sync::Arc,
+    sync::{Arc, Mutex, TryLockError},
 };
 
 thread_local! {
@@ -35,15 +35,101 @@ impl Drop for Entered {
 /// Owned stream-bound model state scheduled alongside prepared GPU graphs.
 ///
 /// Stages execute synchronously on the calling thread and may borrow inputs and
-/// progress callbacks. They reserve the compute lane, without blocking unrelated
-/// upload/download/NPU lanes. Earlier submissions drain before admission; later
-/// compute cannot overtake a waiting stage. Admission uses the runtime's bounded
-/// submission capacity. This is a stage boundary, not asynchronous inference or
-/// separate transfer scheduling within a stage.
+/// progress callbacks. They reserve the compute lane and bounded submission
+/// capacity through the final fence. Earlier submissions drain before admission;
+/// later compute cannot overtake a waiting stage. Long stages may opt into
+/// [`Self::run_cooperative`] to yield at explicitly fenced boundaries.
 pub struct NativeSession<T> {
     runtime: Runtime,
     state: Option<T>,
     fence: fn(&mut T) -> Result<()>,
+}
+
+struct Cooperation {
+    owner: std::thread::ThreadId,
+    lease: Option<NativeLease>,
+    failure: Option<Arc<Error>>,
+}
+
+/// Explicit fenced checkpoints for one synchronous native stage.
+/// Clones may be passed to model helpers, but checkpoints are valid only on the
+/// stage's calling thread and until `run_cooperative` returns or unwinds.
+#[derive(Clone)]
+pub struct NativeCooperator(Arc<Mutex<Cooperation>>);
+
+impl NativeCooperator {
+    /// Fence private work, then let already queued submissions run before
+    /// reacquiring compute. Returns whether the stage yielded. With no waiters,
+    /// the fence still runs, bounding how much native work can be queued ahead.
+    /// Capacity remains reserved throughout the handoff, even at a full runtime.
+    /// A failed or panicking fence quarantines the session on exit, even if the
+    /// stage catches the panic or ignores the returned error.
+    ///
+    /// # Safety
+    /// `fence` must drain every private stream used by this stage before returning
+    /// success. No native work may be submitted concurrently during a checkpoint.
+    /// All owners must remain in the session through the checkpoint and final fence.
+    pub unsafe fn checkpoint(&self, fence: impl FnOnce() -> Result<()>) -> Result<bool> {
+        self.checkpoint_inner(fence, false)
+    }
+
+    /// Like [`Self::checkpoint`], but skip the fence if no submissions are waiting.
+    /// Use unconditional checkpoints as well to bound native work queued ahead.
+    ///
+    /// # Safety
+    /// The complete-stream fence and ownership requirements of [`Self::checkpoint`]
+    /// apply whenever the fence is invoked.
+    pub unsafe fn yield_if_waiting(&self, fence: impl FnOnce() -> Result<()>) -> Result<bool> {
+        self.checkpoint_inner(fence, true)
+    }
+
+    fn checkpoint_inner(
+        &self,
+        fence: impl FnOnce() -> Result<()>,
+        conditional: bool,
+    ) -> Result<bool> {
+        let mut state = match self.0.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                return Err(Error::Busy("native checkpoint already active".into()));
+            }
+        };
+        if state.owner != std::thread::current().id() || state.lease.is_none() {
+            return Err(Error::Busy(
+                "native checkpoint outside its calling stage".into(),
+            ));
+        }
+        if let Some(error) = &state.failure {
+            return Err(Error::Execution {
+                source: error.clone(),
+            });
+        }
+        if conditional && !state.lease.as_ref().unwrap().has_waiters() {
+            return Ok(false);
+        }
+        match catch_unwind(AssertUnwindSafe(fence)) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                let source = Arc::new(error);
+                state.failure = Some(source.clone());
+                return Err(Error::Execution { source });
+            }
+            Err(panic) => {
+                state.failure = Some(Arc::new(Error::DeviceLost(
+                    "native checkpoint fence panicked".into(),
+                )));
+                drop(state);
+                resume_unwind(panic);
+            }
+        }
+        let lease = state.lease.as_mut().unwrap();
+        let waiting = lease.has_waiters();
+        if waiting {
+            lease.yield_now();
+        }
+        Ok(waiting)
+    }
 }
 
 impl<T> NativeSession<T> {
@@ -86,14 +172,38 @@ impl<T> NativeSession<T> {
     /// Do not wait for coordinated compute or another native session in this
     /// runtime from the callback: this stage already holds its compute lane.
     pub unsafe fn run<R>(&mut self, stage: impl FnOnce(&mut T) -> R) -> Result<R> {
+        // SAFETY: identical stage contract; the checkpoint handle is not exposed.
+        unsafe { self.run_cooperative(|state, _| stage(state)) }
+    }
+
+    /// Run an exclusive native stage with explicit opportunities to yield compute.
+    /// The supplied cooperator must fence every private stream before a handoff.
+    /// It does not preempt kernels or cancel running work. Final fencing and
+    /// quarantine apply on every exit path, as with [`Self::run`].
+    ///
+    /// # Safety
+    /// All ownership and access requirements of [`Self::run`] apply. Each
+    /// checkpoint must additionally satisfy [`NativeCooperator::checkpoint`].
+    pub unsafe fn run_cooperative<R>(
+        &mut self,
+        stage: impl FnOnce(&mut T, &NativeCooperator) -> R,
+    ) -> Result<R> {
         self.state()?;
         let _entered = Entered::new(&self.runtime)?;
-        let _lane = NativeLease::acquire(&self.runtime.inner.core)?;
+        let cooperation = NativeCooperator(Arc::new(Mutex::new(Cooperation {
+            owner: std::thread::current().id(),
+            lease: Some(NativeLease::acquire(&self.runtime.inner.core)?),
+            failure: None,
+        })));
         let started = std::time::Instant::now();
         let state = self.state.as_mut().expect("checked before admission");
-        let outcome = catch_unwind(AssertUnwindSafe(|| stage(state)));
+        let outcome = catch_unwind(AssertUnwindSafe(|| stage(state, &cooperation)));
         let completion = catch_unwind(AssertUnwindSafe(|| (self.fence)(state)));
-        let failed = !matches!(completion, Ok(Ok(())));
+        let (checkpoint_failure, _lease) = {
+            let mut state = cooperation.0.lock().unwrap_or_else(|e| e.into_inner());
+            (state.failure.take(), state.lease.take())
+        };
+        let failed = checkpoint_failure.is_some() || !matches!(completion, Ok(Ok(())));
         self.runtime.inner.core.tracer.record(
             started,
             started.elapsed(),
@@ -110,7 +220,10 @@ impl<T> NativeSession<T> {
             Err(panic) => resume_unwind(panic),
             Ok(value) => match completion {
                 Err(panic) => resume_unwind(panic),
-                Ok(result) => result.map(|()| value),
+                Ok(result) => result.and_then(|()| match checkpoint_failure {
+                    Some(source) => Err(Error::Execution { source }),
+                    None => Ok(value),
+                }),
             },
         }
     }
@@ -210,7 +323,7 @@ mod tests {
             drop(session);
             assert_eq!(fences.load(Ordering::SeqCst), 1);
             assert_eq!(drops.load(Ordering::SeqCst), 0);
-            // The failed owner is quarantined, not the entire runtime lane.
+            // The failed owner is quarantined, not the runtime's capacity.
             let mut next = super::tests::session(&runtime);
             unsafe { next.run(|_| ()) }.unwrap();
         }
@@ -224,5 +337,84 @@ mod tests {
         let result = unsafe { outer.run(|_| inner.run(|_| ())) }.unwrap();
         assert!(matches!(result, Err(Error::Busy(_))));
         unsafe { inner.run(|_| ()) }.unwrap();
+    }
+
+    #[test]
+    fn idle_checkpoints_and_expired_or_foreign_handles() {
+        let runtime = Runtime::new().unwrap();
+        let mut session = session(&runtime);
+        let retained = unsafe {
+            session.run_cooperative(|_, cooperate| {
+                assert!(
+                    !cooperate
+                        .yield_if_waiting(|| panic!("idle conditional fence"))
+                        .unwrap()
+                );
+                let mut fenced = false;
+                assert!(
+                    !cooperate
+                        .checkpoint(|| {
+                            fenced = true;
+                            Ok(())
+                        })
+                        .unwrap()
+                );
+                assert!(fenced);
+                let foreign = cooperate.clone();
+                std::thread::spawn(move || {
+                    assert!(matches!(
+                        foreign.checkpoint(|| panic!("foreign fence")),
+                        Err(Error::Busy(_))
+                    ));
+                })
+                .join()
+                .unwrap();
+                cooperate.clone()
+            })
+        }
+        .unwrap();
+        assert!(matches!(
+            unsafe { retained.checkpoint(|| panic!("expired fence")) },
+            Err(Error::Busy(_))
+        ));
+        unsafe { session.run(|_| ()) }.unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "deliberate quarantine leak")]
+    fn ignored_checkpoint_failures_and_caught_panics_still_quarantine() {
+        for panic in [false, true] {
+            let runtime = Runtime::new().unwrap();
+            let mut session = session(&runtime);
+            let drops = session.state().unwrap().drops.clone();
+            let fences = session.state().unwrap().fences.clone();
+            let result = unsafe {
+                session.run_cooperative(|_, cooperate| {
+                    let _ = catch_unwind(AssertUnwindSafe(|| {
+                        cooperate.checkpoint(|| {
+                            if panic {
+                                panic!("checkpoint fence panic");
+                            }
+                            Err(Error::DeviceLost("checkpoint fence failed".into()))
+                        })
+                    }));
+                    assert!(
+                        cooperate
+                            .checkpoint(|| panic!("failed checkpoint reused"))
+                            .is_err()
+                    );
+                })
+            };
+            assert!(result.is_err());
+            assert!(session.state().is_err());
+            assert_eq!(
+                fences.load(Ordering::SeqCst),
+                1,
+                "final fence must still run"
+            );
+            drop(session);
+            assert_eq!(drops.load(Ordering::SeqCst), 0);
+            assert_eq!(runtime.inner.core.state.lock().unwrap().occupied(), 0);
+        }
     }
 }

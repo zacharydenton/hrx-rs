@@ -456,7 +456,12 @@ fn writer_waits_for_all_readers_completed_out_of_order() {
     let buffer = buffer(&runtime);
     let reads = mock(&runtime, Engine::Gpu, &buffer, Access::Read, || Ok(()));
     let writes = mock(&runtime, Engine::Npu, &buffer, Access::Write, || Ok(()));
-    let first = reads.submit().unwrap();
+    // Keep the older reader unready so the fair scheduler can select the
+    // second slot first, without using a helper to bypass a ready job.
+    let gate = completion::Signal::new();
+    gate.reset();
+    let dependency = Completion::new(gate.clone(), Arc::downgrade(&runtime.inner.core));
+    let first = reads.submit_after(&[dependency]).unwrap();
     let second = reads.submit().unwrap();
     let writer = writes.submit().unwrap();
     let core = &runtime.inner.core;
@@ -467,6 +472,7 @@ fn writer_waits_for_all_readers_completed_out_of_order() {
     second.wait().unwrap();
     scheduler::help(core, &writer.signal);
     assert!(!writer.is_complete());
+    gate.finish(None);
     first.wait().unwrap();
     writer.wait().unwrap();
     // Reusing slots must not retain dependency counts from an earlier run.
@@ -485,7 +491,10 @@ fn cancelling_a_blocked_job_preserves_other_dependencies() {
     });
     let reads = mock(&runtime, Engine::Npu, &shared, Access::Read, || Ok(()));
     let independent = mock(&runtime, Engine::Npu, &separate, Access::Write, || Ok(()));
-    let first = writes.submit().unwrap();
+    let gate = completion::Signal::new();
+    gate.reset();
+    let dependency = Completion::new(gate.clone(), Arc::downgrade(&runtime.inner.core));
+    let first = writes.submit_after(&[dependency]).unwrap();
     let middle = cancelled.submit().unwrap();
     let last = reads.submit().unwrap();
     let other = independent.submit().unwrap();
@@ -498,6 +507,7 @@ fn cancelling_a_blocked_job_preserves_other_dependencies() {
     scheduler::help(core, &last.signal);
     assert!(!last.is_complete());
     other.wait().unwrap();
+    gate.finish(None);
     first.wait().unwrap();
     last.wait().unwrap();
 }

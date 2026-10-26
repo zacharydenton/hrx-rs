@@ -19,7 +19,7 @@ use buffer::{Engine, HostState, Storage, Visibility};
 pub use completion::{Completion, CompletionProfile};
 pub use contract::{Access, BindingContract, KernelContract};
 pub use graph::{ExecutableGraph, GpuKernel, GpuLane, Graph, Node};
-pub use native_session::NativeSession;
+pub use native_session::{NativeCooperator, NativeSession};
 use scheduler::Core;
 pub use statistics::Statistics;
 use std::sync::{Arc, Mutex};
@@ -129,7 +129,9 @@ impl Default for RuntimeOptions {
 ///
 /// Upload, compute, download, and NPU regions have independent scheduling lanes.
 /// Each lane runs one region at a time; conflicting memory accesses are ordered
-/// across all lanes and submissions. Actual device overlap depends on hardware.
+/// across all lanes and submissions. Ready graphs take turns between regions;
+/// a running region is not preempted. Native sessions reserve compute until
+/// completion or an explicit fenced checkpoint. Device overlap depends on hardware.
 #[derive(Clone)]
 pub struct Runtime {
     pub(super) inner: Arc<RuntimeOwner>,

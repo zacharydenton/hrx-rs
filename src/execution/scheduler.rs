@@ -23,6 +23,8 @@ pub(super) struct Scheduler {
     finishing: Vec<u64>,
     running: [bool; 5],
     sequence: u64,
+    last_started: [Option<u64>; 5],
+    next_lane: usize,
     native: std::collections::VecDeque<u64>,
     native_active: bool,
 }
@@ -45,6 +47,8 @@ impl Core {
                 finishing: Vec::with_capacity(capacity),
                 running: [false; 5],
                 sequence: 0,
+                last_started: [None; 5],
+                next_lane: 0,
                 native: Default::default(),
                 native_active: false,
             }),
@@ -119,6 +123,33 @@ impl Scheduler {
 /// Earlier submissions drain first; later compute cannot overtake the waiter.
 pub(super) struct NativeLease(Arc<Core>);
 impl NativeLease {
+    pub fn has_waiters(&self) -> bool {
+        let state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
+        !state.pending.is_empty() || !state.finishing.is_empty() || !state.native.is_empty()
+    }
+
+    // The caller has fenced every private stream. Exchange the active lease
+    // for a fresh FIFO ticket atomically: yielding never releases capacity or
+    // fails admission when the runtime is full. Later arrivals cannot overtake.
+    pub fn yield_now(&mut self) {
+        let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
+        let ticket = state.sequence();
+        state.native.push_back(ticket);
+        state.native_active = false;
+        state.running[super::GpuLane::Compute as usize] = false;
+        self.0.changed.notify_all();
+        while !state.native_ready(ticket) {
+            state = self
+                .0
+                .changed
+                .wait(state)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+        state.native.pop_front();
+        state.native_active = true;
+        state.running[super::GpuLane::Compute as usize] = true;
+    }
+
     pub fn acquire(core: &Arc<Core>) -> crate::Result<Self> {
         let mut state = core.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.occupied() >= state.capacity {
@@ -155,12 +186,14 @@ fn next_action(
     scheduler: &mut Scheduler,
     target: Option<&Arc<super::completion::Signal>>,
 ) -> Option<Action> {
-    let mut action = None;
+    let mut candidates: [Option<(usize, usize)>; 5] = [None; 5];
+    // Keep pending in submission order for hazard accounting, but give each
+    // ready submission a turn between regions on each lane. Other lanes must
+    // not reset a busy lane's cursor while its current region is running.
     for job_index in 0..scheduler.pending.len() {
         let job = &scheduler.pending[job_index];
-        if target.is_some_and(|signal| !Arc::ptr_eq(signal, &job.graph.signals[job.slot])) {
-            continue;
-        }
+        let is_target =
+            target.is_none_or(|signal| Arc::ptr_eq(signal, &job.graph.signals[job.slot]));
         let mut slots = job.graph.slots.lock().unwrap_or_else(|e| e.into_inner());
         let slot = &mut slots[job.slot];
         let mut waiting = false;
@@ -182,23 +215,26 @@ fn next_action(
             }
         }
         if slot.nodes.iter().all(|node| *node == NodeState::Done) {
+            if !is_target {
+                continue;
+            }
             let failure = slot.failure.take();
             // Keep occupied until signal publication, preventing a
             // detached completion from being reset during finish.
             drop(slots);
-            action = Some(Action::Finish(scheduler.remove(job_index), failure));
-            break;
+            return Some(Action::Finish(scheduler.remove(job_index), failure));
         }
         if job.blockers != 0 || waiting {
             continue;
         }
         for (index, operation) in job.graph.operations.iter().enumerate() {
-            let native_precedes = operation.queue() == super::GpuLane::Compute as usize
+            let lane = operation.queue();
+            let native_precedes = lane == super::GpuLane::Compute as usize
                 && scheduler
                     .native
                     .front()
                     .is_some_and(|ticket| job.sequence > *ticket);
-            if !scheduler.running[operation.queue()]
+            if !scheduler.running[lane]
                 && !native_precedes
                 && slot.nodes[index] == NodeState::Pending
                 && operation
@@ -206,19 +242,39 @@ fn next_action(
                     .iter()
                     .all(|&dep| slot.nodes[dep] == NodeState::Done)
             {
-                slot.nodes[index] = NodeState::Running;
-                action = Some(Action::Run(job.graph.clone(), job.slot, index));
-                break;
+                let rank = |sequence| {
+                    (
+                        scheduler.last_started[lane].is_some_and(|last| sequence <= last),
+                        sequence,
+                    )
+                };
+                if candidates[lane].is_none_or(|(earlier, _)| {
+                    rank(job.sequence) < rank(scheduler.pending[earlier].sequence)
+                }) {
+                    candidates[lane] = Some((job_index, index));
+                }
             }
         }
-        if action.is_some() {
-            break;
+    }
+    for offset in 0..candidates.len() {
+        let lane = (scheduler.next_lane + offset) % candidates.len();
+        let Some((job_index, node)) = candidates[lane] else {
+            continue;
+        };
+        let job = &scheduler.pending[job_index];
+        // Helpers may use another free lane, but cannot overtake a ready job
+        // on their target's lane. Finalizing their target is always allowed.
+        if target.is_some_and(|signal| !Arc::ptr_eq(signal, &job.graph.signals[job.slot])) {
+            continue;
         }
+        job.graph.slots.lock().unwrap_or_else(|e| e.into_inner())[job.slot].nodes[node] =
+            NodeState::Running;
+        scheduler.running[lane] = true;
+        scheduler.last_started[lane] = Some(job.sequence);
+        scheduler.next_lane = (lane + 1) % candidates.len();
+        return Some(Action::Run(job.graph.clone(), job.slot, node));
     }
-    if let Some(Action::Run(graph, _, node)) = &action {
-        scheduler.running[graph.operations[*node].queue()] = true;
-    }
-    action
+    None
 }
 
 pub(super) fn worker(core: Arc<Core>) {

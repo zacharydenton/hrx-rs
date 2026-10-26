@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add explicit fenced checkpoints through `NativeSession::run_cooperative`.
+  Native stages keep exclusive compute admission, but can hand off to queued
+  work at model-chosen boundaries without releasing capacity. Checkpoint failures
+  quarantine the owner even when ignored. Ready tracked graphs take turns per
+  lane between regions, including blocking wait helpers, while preserving memory
+  hazards and explicit dependencies.
+
 - Preserve partial and empty blocking transfers on gfx906. Charge synchronous
   transfer staging to the stream budget, retain charges through retirement, and
   reserve asynchronous staging before native allocation.

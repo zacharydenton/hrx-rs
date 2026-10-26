@@ -107,9 +107,27 @@ outputs and weights remain distinct, and independent slots retain private scratc
 
 `Graph::gpu_scoped` integrates native clients with tracked buffers.
 `execution::NativeSession` serves synchronous, stream-bound models with borrowed
-inputs and progress callbacks. It reserves the compute lane on the calling
-thread, fences errors and panics, and retains owners when completion is uncertain.
-Its transfers remain part of that synchronous stage.
+inputs and progress callbacks. It reserves the compute lane and submission
+capacity on the calling thread through the final fence, fences errors and panics,
+and retains owners when completion is uncertain. Earlier submissions drain first;
+later compute cannot overtake a waiting stage.
+
+Long stages can use `NativeSession::run_cooperative`. Its `NativeCooperator`
+accepts an explicit fence at a model-chosen boundary. `checkpoint` always drains
+the stage's private streams, then yields to already queued work if needed;
+`yield_if_waiting` skips the fence when there are no waiters. Use unconditional
+checkpoints too, such as after each transformer block, to bound queued work.
+The native stage retains its capacity slot and rejoins FIFO admission, so a full
+runtime cannot reject its resumption and later arrivals cannot starve it. A
+checkpoint fence error or panic quarantines the session even if the stage ignores
+the error. Handles expire on stage exit and reject calls from other threads.
+
+Ready tracked graphs take turns after each prepared region. Blocking completion
+waits use the same ordering, and buffer conflicts and explicit dependencies still
+take precedence. A region can contain many kernels, and neither regions nor native
+kernels are preempted. Shared native queues, GPU contention and an application's
+host job pool can still delay small jobs. Cooperative responsiveness depends on
+the longest fenced chunk chosen by the native model.
 
 ## Tensor and image operations
 
